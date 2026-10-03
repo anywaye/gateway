@@ -1,0 +1,157 @@
+version: 1
+service: guard
+
+# account_scope.yml — every entry point `guard` mounts, and which of them can
+# reach another account's data.
+#
+# Checked by cafaye/core's contract harness:
+#
+#     /Users/kaka/Code/any/moon/cafaye/core/harness/bin/account-scope-check .
+#
+# `guard` holds NO customer rows: `kit/reports/tenant-adapter-ts-01/subject-audit.sh`
+# sweeps every TypeScript service in the fleet for a driver import, a driver
+# declaration and a `.sql` file and finds none in any of them. What it DOES hold
+# is the caller's identity: guard verifies the bearer token, puts the principal on
+# the request context, keys the rate limiter by the account in it, and forwards.
+#
+# So this file is not empty and it is not all-false either: one route DOES resolve
+# an account and return it, and that route is the one this file cannot declare.
+# Read the block above the browser-surface rows before reading this as a
+# complete enumeration.
+#
+# `surface.minimum: 7` is the honest count and it is NOT lowered to hide the
+# missing row. A floor set below the truth is a floor that stops being a floor,
+# and `undeclared` is decided by the REGISTRATIONS in the source, never by this
+# file's row count — so lowering it would buy nothing and cost the only
+# decrease-detector this surface has.
+surface:
+  kind: http
+  # ONE FILE. Every route in `src/index.ts` is registered on the `app` this one
+  # function builds, and naming the directory instead would drag in the 40-odd
+  # `_test.ts` files beside it — where `route_defs` counts and D18's three
+  # different answers came from.
+  sources:
+    - src/index.ts
+  # 7 registrations in that file.
+  minimum: 7
+  accountKey: account_id
+
+entryPoints:
+  # --- the two probes -------------------------------------------------------
+  # Liveness is unconditional and touches nothing; a dependency outage must not
+  # get the process restarted out from under in-flight requests.
+  - id: healthz
+    kind: http
+    method: GET
+    path: /healthz
+    accountScoped: false
+    reason: public
+    registeredAt:
+      file: src/index.ts
+      line: 115
+
+  - id: readyz
+    kind: http
+    method: GET
+    path: /readyz
+    accountScoped: false
+    reason: public
+    registeredAt:
+      file: src/index.ts
+      line: 117
+
+  # --- THE ONE ENTRY POINT THIS DECLARATION CANNOT CONTAIN -------------------
+  # `GET /v1/me` (src/index.ts:187) resolves an account and returns it, and BOTH
+  # of the ways to say so are answered by a FAILURE. Measured, not reasoned:
+  #
+  #   accountScoped: true, accountFrom.via: requireJwt,
+  #   file src/middleware/jwt.ts, line 346
+  #                 ->  FAIL account-scope.scoping-bypassed
+  #                     "registered at src/index.ts:187, which does not go
+  #                      through requireJwt"
+  #
+  #   accountScoped: false, reason: public
+  #                 ->  FAIL account-scope.declaration-contradicts-code
+  #                     "the registration line itself resolves an account, in an
+  #                      inline handler: app.get("/v1/me", (c) =>
+  #                      c.json(c.get("principal")));"
+  #
+  # BOTH ARE FALSE ON THIS ROUTE, and the reason is Hono's registration order.
+  # The JWT gate is `app.use("/v1/*", ...)` at src/index.ts:160 — TWENTY-SEVEN
+  # LINES ABOVE the route — and Hono answers in registration order, so a route
+  # registered after a `use` IS behind it. The file's own comment at
+  # src/index.ts:157 says so: "Hono matches handlers in registration order and a
+  # route registered before a `use` answers first and never calls `next`." The
+  # registration line therefore says NOTHING about whether the route is scoped.
+  #
+  # core reaches the same conclusion about two other frameworks for the same
+  # reason. `Recogniser.carries_handler` is False for Phoenix and axum precisely
+  # because "for those two the route's own line says nothing about scoping, and
+  # reporting it would report courier's real router as unscoped — a rule that
+  # cries wolf on correct code is the same defect as one that stays quiet on
+  # broken code." A Hono route with an INLINE handler is the third member of that
+  # set and is not in it, which is why `scoping-bypassed` fires here and would
+  # not fire on a `bff.me`-style route whose handler is a bare reference.
+  #
+  # So the route is left OUT rather than declared wrong.
+  # `account-scope.undeclared` is what answers, and it is TRUE: a registration in
+  # a file this declaration names, which no row covers. That is the honest answer
+  # and it is a finding for `core` — REPORT-identity-account-scope-01.md §6.7,
+  # measured on this repository.
+  # ---------------------------------------------------------------------------
+  # The route, for the record:
+  #
+  #   GET /v1/me   src/index.ts:187   resolves the account at
+  #                 src/middleware/jwt.ts:346 — `accountId: typeof
+  #                 payload.account_id === "string" && payload.account_id !== ""
+  #                 ? payload.account_id : undefined`, inside `principalOf` —
+  #                 through the `requireJwt` gate at
+  #                 src/middleware/jwt.ts:241, which is mounted on `/v1/*` at
+  #                 src/index.ts:160.
+  # ---------------------------------------------------------------------------
+
+  # --- the browser surface --------------------------------------------------
+  # Four routes, all reached through `createBffAuth`, and NONE of them resolves
+  # an account: they resolve a USER. Register creates one, login authenticates one
+  # and mints a session, logout ends one, and `me` returns the session's own user.
+  # There is no account in the path of any of them, so there is nothing for a
+  # caller to point at somebody else's.
+  - id: bff-register
+    kind: http
+    method: POST
+    path: /auth/register
+    accountScoped: false
+    reason: public
+    registeredAt:
+      file: src/index.ts
+      line: 216
+
+  - id: bff-login
+    kind: http
+    method: POST
+    path: /auth/login
+    accountScoped: false
+    reason: public
+    registeredAt:
+      file: src/index.ts
+      line: 217
+
+  - id: bff-logout
+    kind: http
+    method: POST
+    path: /auth/logout
+    accountScoped: false
+    reason: public
+    registeredAt:
+      file: src/index.ts
+      line: 218
+
+  - id: bff-me
+    kind: http
+    method: GET
+    path: /auth/me
+    accountScoped: false
+    reason: none
+    registeredAt:
+      file: src/index.ts
+      line: 219
