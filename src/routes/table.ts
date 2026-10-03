@@ -33,7 +33,11 @@
 //   * `/v1/me` is guard's own route, registered before the pass-through, so a
 //     table claiming it describes a route that can never run;
 //   * a token with a line break in it is header injection through configuration
-//     rather than through a request, which is not a smaller problem.
+//     rather than through a request, which is not a smaller problem;
+//   * a `public` value that is not a boolean, and a `public` entry that also
+//     carries a `token`, are both refusals for the same reason: a security field
+//     an operator half-configured must not resolve to anything at all. See
+//     `checkPublic`.
 import { assertNonEmptyString } from "../middleware/assert";
 
 /** One upstream, and the credential guard attaches when it calls. */
@@ -58,6 +62,26 @@ export type RouteTarget = {
    * what would have to be true to change that.
    */
   token?: string;
+  /**
+   * Whether this prefix is mounted with **no caller credential required**.
+   *
+   * Optional, and absent means `false`: a route that requires a caller is the
+   * default because the safe reading of "I did not say" is the one where
+   * nothing is opened by omission.
+   *
+   * It is about the CALLER and `token` is about the SERVICE, which is the whole
+   * distinction this field exists to be careful about — two credentials answering
+   * two different questions, so an entry carrying both is refused rather than
+   * resolved (see `checkPublic`), and a `public` entry is not a weakening of
+   * anything the upstream declared: pantry's own `openapi/v1.yaml:82` says
+   * `security: []` for the read surface, so an anonymous mount is the first
+   * implementation of that contract rather than a hole in it.
+   *
+   * One entry, named, in a table a human reads. There is no wildcard and no
+   * prefix-independent switch, and `false` is what every existing entry already
+   * means — the field is additive and no deployed route changes behaviour.
+   */
+  public?: boolean;
 };
 
 /** Path prefix -> upstream. The whole of routing's configuration. */
@@ -69,6 +93,14 @@ export type ResolvedRoute = {
   prefix: string;
   baseUrl: string;
   token?: string;
+  /**
+   * True only when the claimed entry asked for it.
+   *
+   * Absent rather than `false` when the entry is not public, for the same reason
+   * `token` is absent when there is none: a reader should not have to tell "no
+   * credential" from "a credential named false".
+   */
+  public?: boolean;
 };
 
 /**
@@ -106,10 +138,56 @@ export function routeTable(table: RouteTable): RouteTable {
   const checked: RouteTable = {};
   for (const [prefix, target] of entries) {
     const key = checkPrefix(prefix);
-    checked[key] = { baseUrl: checkBaseUrl(key, target?.baseUrl), token: checkToken(key, target?.token) };
+    const baseUrl = checkBaseUrl(key, target?.baseUrl);
+    const token = checkToken(key, target?.token);
+    // In the same pass as `baseUrl` and `token` rather than a later sweep: a
+    // field that is only checked once the table is otherwise whole is a field
+    // whose rule has already been half-kept by the time it runs.
+    const open = checkPublic(key, target?.public);
+
+    // The contradiction, refused rather than resolved. Both resolutions are
+    // wrong in a way an operator cannot see from the running service: honouring
+    // `public` hands an anonymous caller an upstream that may be authenticating
+    // guard's calls, and honouring `token` quietly answers 401 to a route the
+    // table says is open. What is certain is that nobody reading this table can
+    // say which of the two was meant, so it does not boot and the message names
+    // both ways out.
+    if (open === true && token !== undefined) {
+      throw new RangeError(
+        `routeTable: ${key} is declared public AND carries an upstream token, which are two different ` +
+          `credentials answering two different questions. "public" is about the CALLER: the prefix is mounted ` +
+          `with no caller credential required. "token" is guard's own credential to the SERVICE, attached on ` +
+          `every call it makes. An entry carrying both is an operator who has not decided which of the two they ` +
+          `meant, and choosing here would either hand an anonymous caller a credential-protected upstream or ` +
+          `silently require a credential the table says is not required. Drop "token" if the route is meant to be ` +
+          `caller-anonymous and the service takes nothing from guard; drop "public" if the caller must present a ` +
+          `credential.`,
+      );
+    }
+
+    checked[key] = { baseUrl, token, public: open };
   }
 
   return checked;
+}
+
+/**
+ * Whether this path is mounted with no caller credential required.
+ *
+ * Reads `resolveRoute` rather than scanning for a public entry itself, and that
+ * is the property worth having: the token gate in `src/index.ts` asks this
+ * question, and the pass-through asks `resolveRoute` the same one a few lines
+ * later. Two scans would be two spellings of "which prefix claims this path",
+ * and a routing rule tightened in one of them would leave the other deciding who
+ * may reach it.
+ *
+ * `public` is on the *entry*, not on the prefix as a name, so this is decided by
+ * the longest match exactly like the destination is: a public `/v1/catalog` and a
+ * private `/v1/catalog/imports` are a public read surface and a private write
+ * surface, and the longer prefix wins for both questions at once.
+ */
+export function isPublicRoute(table: RouteTable, path: string): boolean {
+  return resolveRoute(table, path)?.public === true;
 }
 
 /**
@@ -128,6 +206,12 @@ export function routeTable(table: RouteTable): RouteTable {
  * it is registered before the pass-through, so Hono answers it first and the
  * mount never runs. `checkPrefix` refuses the prefix that *is* `/v1/me`,
  * because a table entry that can never fire is a claim, not a configuration.
+ *
+ * `public` rides along on the resolved entry rather than being looked up again,
+ * for the reason `token` rides along: the caller credential requirement and the
+ * destination are two properties of the *same winning entry*, and a resolver that
+ * returned the destination from one match and the openness from another would be
+ * two answers to "which prefix claimed this".
  */
 export function resolveRoute(table: RouteTable, path: string): ResolvedRoute | null {
   const target = pathname(path);
@@ -137,7 +221,12 @@ export function resolveRoute(table: RouteTable, path: string): ResolvedRoute | n
   for (const [prefix, upstream] of Object.entries(table)) {
     if (prefix.length <= bestLength || !claims(prefix, target)) continue;
 
-    best = { prefix, baseUrl: upstream.baseUrl, ...(upstream.token === undefined ? {} : { token: upstream.token }) };
+    best = {
+      prefix,
+      baseUrl: upstream.baseUrl,
+      ...(upstream.token === undefined ? {} : { token: upstream.token }),
+      ...(upstream.public === true ? { public: true } : {}),
+    };
     bestLength = prefix.length;
   }
 
@@ -262,6 +351,37 @@ function checkToken(prefix: string, value: string | undefined): string | undefin
     throw new RangeError(
       `routeTable: ${prefix} token must not contain whitespace or control characters. It is written ` +
         `into an Authorization header verbatim.`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Whether a prefix is caller-anonymous, or nothing when the field is absent.
+ *
+ * `true`, `false` and absent are the three values that mean something, and the
+ * refusal is everything else. The case that earns the rule is the string:
+ * `ROUTE_TABLE` is JSON, and `{"public":"true"}` is exactly what an operator
+ * writes when they mean it to be public and have not checked that JSON has no
+ * booleans-as-strings. Coerced, that is a route serving anyone, which is the one
+ * outcome on this field that a silent default must never produce — so it refuses
+ * to boot and the message says what to type instead.
+ *
+ * Absent rather than `false` on the way out, matching `token`: the caller reads
+ * `entry.public` and wants to know whether the route is open, not to
+ * distinguish two spellings of "not".
+ */
+function checkPublic(prefix: string, value: unknown): boolean | undefined {
+  if (value === undefined) return undefined;
+
+  if (typeof value !== "boolean") {
+    throw new RangeError(
+      `routeTable: ${prefix} public must be true or false, got ${JSON.stringify(value)}. ` +
+        `It is a boolean in JSON and not a string: {"public":"true"} is a route that does not mean what it ` +
+        `says, and the string a reader would take for permission is the one value that must never be coerced ` +
+        `into it. Write true or false without quotes, or omit the field — an entry with no public field requires ` +
+        `a caller credential.`,
     );
   }
 

@@ -9,7 +9,7 @@ import { createApiKeyAuth, type ApiKeyStore } from "./middleware/apiKey";
 import { DEFAULT_LIMIT_TABLE, limitTable, resolveLimit, type LimitTable } from "./middleware/limits";
 import { createBffAuth, DEFAULT_IDENTITY_URL, identityProbe, type BffOptions } from "./bff/auth";
 import { createRouteProxy, type ProxyFetch } from "./routes/proxy";
-import { ROUTE_MOUNT, routeTable, type RouteTable } from "./routes/table";
+import { ROUTE_MOUNT, isPublicRoute, routeTable, type RouteTable } from "./routes/table";
 import type { Probe, ProbeStatus } from "./probe";
 
 export type { Probe, ProbeStatus } from "./probe";
@@ -63,11 +63,17 @@ export type AppOptions = {
    * destination would be an open proxy.
    *
    * Validated at construction like everything else here — a prefix outside
-   * `/v1/`, a glob, a base URL carrying a path, a token with a newline in it are
-   * all a refusal to boot rather than a request that goes somewhere nobody
-   * intended. The table is a plain object on purpose: the service registry that
-   * would *populate* it is a later packet, and filling it from somewhere else
-   * changes this option and nothing else.
+   * `/v1/`, a glob, a base URL carrying a path, a token with a newline in it, a
+   * `public` that is not a boolean, and an entry that is public *and* carries a
+   * token are all a refusal to boot rather than a request that goes somewhere
+   * nobody intended. The table is a plain object on purpose: the service registry
+   * that would *populate* it is a later packet, and filling it from somewhere
+   * else changes this option and nothing else.
+   *
+   * An entry with `public: true` mounts with no caller credential required. It is
+   * the only way to answer without one, it is per entry and never a wildcard, and
+   * the limiter still counts the traffic — see `RouteTarget`'s own comment and the
+   * README's routing section.
    */
   routes?: RouteTable;
   /**
@@ -155,10 +161,28 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
   // ordering is not cosmetic: Hono matches handlers in registration order and a
   // route registered before a `use` answers first and never calls `next`. A
   // limiter mounted after a route is a limiter that does not run.
+  //
+  // A prefix the table declares `public` is the one exception, and it is a
+  // decision an operator makes by name in a table a human reads — never a
+  // wildcard, never "the table has one, so the whole surface is open".
+  // `isPublicRoute` asks `resolveRoute` the same question the pass-through below
+  // asks, so the entry that mounts without a credential is the entry that
+  // forwards: a change to the matching rule cannot leave this gate and that
+  // mount disagree about which paths are open.
+  //
+  // Nothing else moves. The API-key gate is still above this line, so a caller
+  // who presents a key is judged on the key whether or not the route is public.
+  // The limiter is still below it, so an anonymous request still spends the
+  // `guard-api` bucket — keyed on the client address, which with no trusted proxy
+  // chain is one shared budget for every anonymous visitor. That cost is real and
+  // it is the price of a public catalog read; it is documented in the README
+  // rather than designed around, because the alternative is a credential every
+  // anonymous visitor has to be handed.
   const jwt = options.jwt ? createJwtVerifier(options.jwt) : null;
   if (jwt) {
     app.use("/v1/*", async (c, next) => {
       if (c.get("principal")) return next();
+      if (routes !== null && isPublicRoute(routes, new URL(c.req.url).pathname)) return next();
 
       return jwt.requireJwt(c, next);
     });
@@ -337,6 +361,15 @@ export function runtimeOptions(env: Record<string, string | undefined> = Bun.env
  *
  *   ROUTE_TABLE={"/v1/pantry":{"baseUrl":"http://pantry:8080","token":"…"}}
  *
+ * and the one entry that answers to nobody:
+ *
+ *   ROUTE_TABLE={"/v1/catalog":{"baseUrl":"http://pantry:8080","public":true}}
+ *
+ * `public` is per entry, default `false`, and means the prefix is mounted with no
+ * caller credential required. It is refused in any form that could mean something
+ * other than what it says — `"true"` as a string, or alongside a `token` — which
+ * is `checkPublic`'s rule and not this file's.
+ *
  * Unset or empty means no routing at all, which is the honest default for a
  * deployment that has not decided where anything goes. A value that is not JSON,
  * or JSON of the wrong shape, or JSON that `routeTable()` refuses is a refusal
@@ -357,8 +390,8 @@ function routesFromEnv(env: Record<string, string | undefined>): { routes?: Rout
     parsed = JSON.parse(raw);
   } catch {
     throw new RangeError(
-      `guard: ROUTE_TABLE must be a JSON object mapping a path prefix to {"baseUrl": …, "token": …}, ` +
-        `and it is not JSON. It names ${JSON.stringify(raw)}.`,
+      `guard: ROUTE_TABLE must be a JSON object mapping a path prefix to {"baseUrl": …, "token"?: …, ` +
+        `"public"?: true|false}, and it is not JSON. It names ${JSON.stringify(raw)}.`,
     );
   }
 

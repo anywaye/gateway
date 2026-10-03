@@ -38,6 +38,15 @@
 #   * a warm gate is ~36s wall clock including `bun install --frozen-lockfile`;
 #     the suite alone is ~8-10s.
 #
+# THE FOUR NUMBERS ABOVE ARE A SNAPSHOT OF 97d83e9 AND HAVE MOVED SINCE, which is
+# why the floors further down quote their own measurements rather than these
+# ones. Re-measured on the public-route commit, `bin/prime` prints 540 pass /
+# 15 skip / 0 fail, `Ran 555 tests across 24 files`, and the live tier alone
+# still prints `0 pass / 15 skip` — so which file skips has not changed and the
+# count has. The header is left as it was written because it is the record of a
+# measurement rather than a claim about the tree; the stale direction is the one
+# nobody reads, and it is corrected at the floor it affects.
+#
 # WHAT THE DEVELOPER'S COMMAND IS NOT, MEASURED. `mise run prime` does not
 # resolve in this repository. `mise.toml` carries `[tools]` and `[env]` and NO
 # `[tasks]` table, and `mise tasks` in a clean worktree prints nothing at all.
@@ -131,39 +140,44 @@ gate:
       # re.MULTILINE was checked against a real run's full output and matched
       # exactly once, so `minimum` is read from the number and not from a
       # substring of a longer line. `seen` is the LAST match, so a run that
-      # printed 428 and then something smaller is still caught.
+      # printed 540 and then something smaller is still caught.
       match: '^\s*([0-9]+) pass$'
-      # 462, against a measured 467. The margin is deliberate and small, and
+      # 535, against a measured 540. The margin is deliberate and small, and
       # it is the same margin muse and courier use (890 for 895, 530 for 535):
       # a floor at exactly today's number is a floor that has to be raised by
       # hand before a single test can be added, and a ratchet nobody can move
       # is a ratchet that gets deleted. It is still a detector — a suite that
       # quietly lost six tests is `gate.floor`, which is a failure.
       #
-      # 467 is the number for a run with NO Redis, which is what `bin/prime`
+      # 540 is the number for a run with NO Redis, which is what `bin/prime`
       # does: it never sets `GUARD_REDIS_URL`, so the live tier is always
-      # skipped here. A run WITH Redis prints 482 and clears this floor by 20.
+      # skipped here. A run WITH Redis prints 555 and clears this floor by 20.
       # The floor is set from the smaller of the two on purpose — a
       # declaration that only holds when an environment variable happens to be
       # exported is a declaration that is red on a clean machine.
       #
-      # RAISED 423 -> 462, MEASURED, and the delta is the finding rather than
-      # the fix. The floor had been sitting 44 below the tree while the comment
-      # above it still said "against a measured 428": it was accurate when
-      # written and wrong by the time of the next three landings, and nothing
-      # said so, because a floor below the truth passes every check that reads
-      # it. gate_check.py cannot see this direction at all — it reports a floor
-      # ABOVE the tree, which is the loud one. `harness/floors_check.py` is
-      # the checker that measures it, and it reported:
+      # RAISED 462 -> 535, MEASURED, in the commit that added the public-route
+      # tests. 517 pass on master before it and 540 after: 23 tests, which is 17
+      # in `src/routes/publicRoute.test.ts` and 6 added to
+      # `src/routes/table.test.ts`.
       #
-      #     declared:  pass 423
-      #     measured:  467 pass   (no Redis; `bin/prime` never sets the URL)
-      #     verdict:   below
-      minimum: 462
+      # And the delta is the finding rather than the fix, which is why this
+      # movement has the same shape as the one before it. The floor had been
+      # sitting 55 below the tree while the comment above it still said "against
+      # a measured 467": accurate when written, wrong by the time of the next
+      # landings, and nothing said so — because a floor BELOW the truth passes
+      # every check that reads it. gate_check.py cannot see this direction at
+      # all; it reports a floor ABOVE the tree, which is the loud one.
+      # `harness/floors_check.py` is the checker that measures it, and it said,
+      # for this repository, before and after:
+      #
+      #     declared 462  measured 517   verdict below
+      #     declared 535  measured 540   verdict above
+      minimum: 535
     # ---------------------------------------------------------------------
     # The structural detector, and the one proof here that is immune to the
     # environment-gated tier. `Ran N tests across M files` counts every
-    # REGISTERED test, so it reads 482 across 21 with Redis and 482 across 21
+    # REGISTERED test, so it reads 555 across 24 with Redis and 555 across 24
     # without it. That invariance is the whole reason it is here.
     - id: files
       # The test count is non-capturing on purpose: `minimum` is read from the
@@ -173,7 +187,7 @@ gate:
       # exactly that finding — the check working on the declaration that
       # declares the checks.
       match: '^Ran [0-9]+ tests across ([0-9]+) files\.'
-      # 21 exactly, and not a rounded number. There is no margin here and that
+      # 24 exactly, and not a rounded number. There is no margin here and that
       # is a DIFFERENT rule from the one on the floor above, for a measured
       # reason: deleting `test/noSkips.test.ts` took the suite from 428 to 423
       # — five tests — and 423 is exactly the `pass` floor, so that proof stayed
@@ -182,25 +196,21 @@ gate:
       # `pass` is pure loss here, and losing it is what let a five-test deletion
       # through the other floor.
       #
-      # RAISED 19 -> 21, MEASURED. Two test files have landed since this number
-      # was written and it did not move, which is the whole defect in one line:
-      # `19` was exact when written and is two below the tree now, and a floor
-      # two below the tree is a floor that has stopped checking. The same sweep
-      # that read `pass` read this one:
+      # RAISED 21 -> 24, MEASURED, with `src/routes/publicRoute.test.ts` — one
+      # file, for the one behaviour that belongs to no single module: the token
+      # gate reading a route table. It is in the Dockerfile's test stage, so the
+      # `image` job's `find` diff below already agrees with 24.
       #
-      #     declared:  files 19
-      #     measured:  Ran 482 tests across 21 files
-      #     verdict:   below
-      #
-      # `test/dockerStage.test.ts` and `test/tenantEntryPoints.test.ts` are what
-      # took it from 19 to 21; both are named in AGENTS.md, and both are in the
-      # Dockerfile's test stage, so the `image` job's `find` diff below already
-      # agrees with 21 rather than with this floor.
+      # The reason this floor has moved twice and the `pass` floor four times is
+      # the same reason both were stale when found, and it is worth stating once
+      # here rather than in either block: a declared floor is only a check while
+      # somebody moves it when the tree moves. Nothing enforces that, and every
+      # checker that reads a floor reports only the direction that is loud.
       #
       # It is the same set the `image` CI job diffs against `find`; this is the
       # cheap half, running everywhere the gate runs, and the image job is the
       # half that reads the built tree rather than the source.
-      minimum: 21
+      minimum: 24
     # ---------------------------------------------------------------------
     # The step markers, and the reason there are three of them.
     #
@@ -234,10 +244,10 @@ gate:
       match: '^== prime ok \(bun '
     #
     # NOT ASSERTED HERE, BECAUSE THE FORMAT CANNOT EXPRESS IT, and guard is the
-    # repository where that matters most. The suite legitimately skips 14 tests
+    # repository where that matters most. The suite legitimately skips 15 tests
     # when `GUARD_REDIS_URL` is unset, so no floor on the skip line is
     # honest — `minimum` is a LOWER bound, and the failure guard cares about is
-    # the skip count going UP (14 → 428, which is what deleting the tier's
+    # the skip count going UP (15 → 540, which is what deleting the tier's
     # tests, or converting them to `test.skip`, would look like). A lower bound
     # cannot catch an increase. So the skip count is stated here in prose and
     # enforced in the three places that CAN see it, all pre-existing:
@@ -314,7 +324,7 @@ external:
   #     print a token, a key or a JWT if it did, and a gate that could is a
   #     defect to fix rather than a threshold to raise.
   #   * no Redis, and this one is worth reading twice. The live tier
-  #     (`src/middleware/rateLimitRedisLive.test.ts`, 14 tests) needs a real
+  #     (`src/middleware/rateLimitRedisLive.test.ts`, 15 tests) needs a real
   #     `redis-server`, and it is gated on `GUARD_REDIS_URL`. It is NOT a
   #     requirement of THIS gate: `bin/prime` never sets that variable, so the
   #     tier skips by design and the gate is green. Only the `redis` CI job

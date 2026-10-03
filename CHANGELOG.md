@@ -10,6 +10,54 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **A routed entry can declare itself public, and that is the only way to be
+  let in without a credential.** A `ROUTE_TABLE` entry may carry `"public": true`,
+  and that prefix is mounted **without** `jwt.requireJwt`:
+
+  ```sh
+  ROUTE_TABLE='{"/v1/catalog":{"baseUrl":"http://pantry:8080","public":true},
+                "/v1/catalog/imports":{"baseUrl":"http://pantry:8080"}}'
+  ```
+
+  `GET /v1/catalog/items` now reaches `http://pantry:8080/items` with no
+  `Authorization` header of any kind. Before it, **no** credential could reach
+  any routed prefix: site's client claims guard gates `/v1/*` on a `guard-api`
+  scope, `requireScope` is never called outside tests, `runtimeOptions` never sets
+  `apiKeys`, guard's key gate matches `/^apikey(?:\s|$)/i` while the SDK sends
+  `Authorization: Bearer cafaye_…`, and `guard-api` is not a scope identity has.
+  Closing that the way the comment imagines is four repositories in sequence;
+  this is one field, in a table a human already reads.
+
+  **Per entry, default `false`, and no wildcard.** Every existing route behaves
+  exactly as it did, which is what makes the field safe to add to a deployed
+  gateway. Openness is decided by the **longest matching prefix** — the same rule
+  the destination and the limiter already use — so a public read surface cannot
+  hand its own write surface to the internet by sharing a name with it, and
+  `/v1/me` and every unrouted `/v1/` path still answer an anonymous caller with
+  `401`.
+
+  **Rate limiting does not move.** A public route spends the `guard-api` bucket
+  like everything else under `/v1/`, so anonymous traffic stays bounded. The
+  documented cost is that the bucket is keyed on the account, the key, or the
+  client address, in that order — and an anonymous request has none of the first
+  two, so **every anonymous visitor to a public prefix shares one budget**. A
+  per-prefix allowance is named in the README's *Not built yet*, and this packet
+  is what makes it urgent rather than tidy.
+
+  **A `public` entry cannot carry a `token`, and that combination refuses to
+  boot.** `public` is about the *caller* and `token` is guard's own credential to
+  the *service* — two questions, two answers — so an entry holding both is an
+  operator who has not decided which they meant. Guessing would either hand an
+  anonymous caller a credential-protected upstream or quietly answer `401` to a
+  route the table calls open. The refusal names both ways out. `{"public":"true"}`
+  is refused too: `ROUTE_TABLE` is JSON, and a string a reader takes for
+  permission is the one value on this field that must never be coerced into it.
+
+  `src/routes/publicRoute.test.ts` holds the five cases this has to answer —
+  it serves, a non-public entry still `401`s, it is still throttled, it still
+  refuses a nonsense value, and it leaks no upstream credential — with the
+  mutation evidence in `REPORT-mvp-guard-public-route-01.md`.
+
 - **Routing: a configured path prefix is forwarded to the service that owns it.**
   This is the packet `guard`'s README has been promising since v0: a route table
   (`ROUTE_TABLE`) of prefix → `{baseUrl, token?}`, validated at startup, mounted

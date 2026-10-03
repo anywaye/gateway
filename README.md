@@ -21,7 +21,7 @@ and [Not built yet](#not-built-yet) before relying on anything here.
 | GET    | `/healthz`       | no             | **never**    | always `200 {"status":"ok"}` — liveness, touches nothing     |
 | GET    | `/readyz`        | no             | **never**    | `200 {"deps":{…}}`, or `503` if a registered probe is down   |
 | GET    | `/v1/me`         | bearer or key  | yes (`guard-api`) | `200` echoing the verified `{sub, scope, claims}`      |
-| `*`    | `/v1/<prefix>/…` | bearer or key  | yes (`guard-api`) | forwarded to the service the table names, prefix removed — see [Routing](#routing) |
+| `*`    | `/v1/<prefix>/…` | bearer or key, **or nothing** on an entry the table marks `public` | yes (`guard-api`) | forwarded to the service the table names, prefix removed — see [Routing](#routing) |
 | POST   | `/auth/register` | same-origin    | yes (`guard-auth-register`) | `201 {id, email}`. No session: a registration is not a login |
 | POST   | `/auth/login`    | same-origin    | yes (`guard-auth-login`) | `200 {expires_at}` + the `__Host-bff-session` cookie |
 | POST   | `/auth/logout`   | same-origin    | yes (`guard-auth-logout`) | `204`, cookie cleared, identity asked to revoke    |
@@ -112,6 +112,55 @@ would *populate*: `RouteTable` is a plain object, so filling it from discovery
 means writing a different `runtimeOptions` and changing nothing in `createApp`,
 the middleware or the matching rule.
 
+### A route can declare itself public
+
+`ROUTE_TABLE` entries may carry `"public": true`, and that prefix is mounted with
+**no caller credential required**:
+
+```sh
+ROUTE_TABLE='{"/v1/catalog":{"baseUrl":"http://pantry:8080","public":true},
+              "/v1/catalog/imports":{"baseUrl":"http://pantry:8080"}}'
+```
+
+`GET /v1/catalog/items` is forwarded to `http://pantry:8080/items` with no
+`Authorization` header of any kind. `GET /v1/catalog/imports/run` is a `401`,
+because openness is decided by the **longest matching prefix** — the same rule the
+destination and the limiter use — so a public read surface cannot hand its write
+surface to the internet by sharing a name with it.
+
+**This is per entry, default `false`, and there is no wildcard.** Every route in a
+table without the field behaves exactly as it did before, which is the property
+that makes the field safe to add to a deployed gateway.
+
+Four things it does **not** do, because each one is a different packet:
+
+- It does not make `/v1/*` anonymous, and it is not how `/v1/me` gets answered
+  anonymously. One entry, by name.
+- It does not remove the rate limit. A public route spends the `guard-api` budget
+  like every other `/v1/` path — see below.
+- It does not give the upstream anything. A `public` entry **cannot** carry a
+  `token`: the two are different credentials and an entry with both refuses to
+  boot.
+- It does not forward the caller's credential. A caller who sends one to a public
+  prefix has it dropped, exactly as on a private one.
+
+**What it costs, stated plainly.** The rate-limit bucket is keyed on the account,
+the key, or the client address — in that order. An anonymous request has none of
+the first two, so **every anonymous visitor to a public prefix shares one
+budget**, which with `TRUSTED_PROXIES=0` is the socket peer and behind no proxy
+is one bucket for everyone. That is the cost of a public catalog read and it is
+why a per-prefix allowance is [Not built yet](#not-built-yet) rather than
+shipped: a public route wants a *generous* allowance and nobody has measured what
+that number is. One related limit, also pre-existing: a proxied `2xx` carries no
+`RateLimit-*` headers at all, because the relay builds a fresh `Response` — so an
+anonymous client that is being throttled learns its budget only from the `429`.
+
+**A public route is not an edge-cacheable route.** The relay sets
+`cache-control: no-store` on every proxied response, because the reasoning it was
+written for is "proxied traffic is authenticated" — which is no longer true of a
+`public` entry. Relaxing that per entry is a real decision with a real
+consequence and it is [Not built yet](#not-built-yet).
+
 ### What is validated, and why each refusal is at startup
 
 `ROUTE_TABLE` is read by `runtimeOptions` and checked by
@@ -127,6 +176,8 @@ value is a refusal to boot, for the reason `REDIS_URL=redis//redis` is:
 | `/v1/me`                                                     | it is guard's own route, registered before the pass-through; an entry that can never fire is a claim, not a configuration |
 | a base URL with a path, a query, a fragment or credentials   | the caller's path is appended to it, so a base with a path puts the request somewhere nobody serves it — and a base with a password is a password in a log line |
 | a token containing whitespace or a control character         | it is written into an `Authorization` header verbatim, so a newline in it is header injection configured on purpose |
+| a `public` that is not `true` or `false`                     | `{"public":"true"}` is what an operator writes when they mean public and have not checked that JSON has no booleans-as-strings. Coerced, it is a route serving anyone |
+| an entry that is `public` **and** carries a `token`           | two credentials answering two different questions, and nobody reading the table can say which was meant — so the message names both ways out |
 | `{}`                                                         | `ROUTE_TABLE={}` forwards nothing, and an operator would find out from 404s |
 
 ### The credential rule, which is the part that matters
@@ -191,10 +242,18 @@ Everything a route does, in the order the app registers it: the API-key gate, th
 `/v1/*` bearer gate, the limiter, then `/v1/me` for the one path guard owns, then
 the pass-through. So a routed request is **authenticated and rate limited**
 without either of those knowing that routing exists — and an anonymous request to
-a configured prefix is a `401` with no service contacted. Routed paths spend the
-`guard-api` allowance, the same budget as the rest of `/v1/`; a per-prefix
-allowance is not configurable yet because the limit table is code and the
-prefixes are configuration, and that pairing is [Not built
+a configured prefix that is not marked `public` is a `401` with no service
+contacted.
+
+**A prefix marked `public` skips the bearer gate and nothing else.** The API-key
+gate is still above it, so a caller who presents a key is judged on the key
+whether or not the route is open; and the limiter is still below it, so anonymous
+traffic is still counted. See [A route can declare itself
+public](#a-route-can-declare-itself-public).
+
+Routed paths spend the `guard-api` allowance, the same budget as the rest of
+`/v1/`; a per-prefix allowance is not configurable yet because the limit table is
+code and the prefixes are configuration, and that pairing is [Not built
 yet](#not-built-yet).
 
 The upstream path is **rebuilt**, never forwarded as received: each segment is
@@ -607,7 +666,7 @@ environment, so a test can build two differently configured apps in one process.
 | `TRUSTED_PROXIES`        | `0`                         | How many proxies append to `X-Forwarded-For`, and therefore how much of it is believed. `0` believes none of it and keys on the socket peer. |
 | `REDIS_URL`              | unset                       | `redis://` or `rediss://` — host and port, no path. Set it and the counters are shared by every replica and survive a restart. Unset and they are this process's memory. |
 | `REDIS_PREFIX`           | `guard:rl`                  | Sub-namespace inside guard's own, so two guards or two environments sharing one Redis do not read each other's buckets. |
-| `ROUTE_TABLE`            | unset                       | One JSON object of path prefix → `{baseUrl, token?}`: where each prefix goes. Unset and guard forwards nothing. Every prefix must be under `/v1/`, and every value in it is validated at startup — see [Routing](#routing). |
+| `ROUTE_TABLE`            | unset                       | One JSON object of path prefix → `{baseUrl, token?, public?}`: where each prefix goes, and whether it is caller-anonymous. Unset and guard forwards nothing. Every prefix must be under `/v1/`, and every value in it is validated at startup — see [Routing](#routing). |
 
 `IDENTITY_URL` is a second variable for one service on purpose. The issuer is an
 https origin in every environment, including the compose stack; the address guard
@@ -811,7 +870,17 @@ the source with the packet that replaces them.
   budget as the rest of `/v1/`. A prefix-specific number is not expressible today
   because the limit table is code and the prefixes are configuration, and a table
   that is half configuration and half code is one where lowering a number is
-  mistaken for having lowered it. The pairing is a packet.
+  mistaken for having lowered it. The pairing is a packet, and an entry marked
+  `public` is what makes it urgent: an anonymous read surface wants a generous
+  allowance, and every anonymous visitor currently shares one budget with
+  everything else under `/v1/`.
+- **A public route cannot be edge-cached.** `proxy.ts` sets
+  `cache-control: no-store` on every proxied response, for the reason that
+  proxied traffic is authenticated. A `public` entry is not authenticated, so the
+  reason no longer applies to it and the header is still there — which is the safe
+  direction and still wrong for a catalog read that is meant to be cacheable at
+  the edge. Making it per entry is the packet, and it needs a decision about
+  what guard will vouch for in a shared cache.
 - **The live Redis tier does not run inside the image.** `docker build --target
   test` has no `redis-server` and no way to reach one. Measured on Docker 29.4.0,
   because the reason is not the obvious one: `--network=host` is *accepted*, and a
