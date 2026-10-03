@@ -10,7 +10,7 @@
 // a malformed value is a `RangeError` at construction, never a default that
 // forwards somewhere, and the message names the field and the value.
 import { describe, expect, test } from "bun:test";
-import { resolveRoute, ROUTE_MOUNT, routeTable, type RouteTable } from "./table";
+import { isPublicRoute, resolveRoute, ROUTE_MOUNT, routeTable, type RouteTable } from "./table";
 
 /** A table with one service, which is the shape most of these cases mutate. */
 const one: RouteTable = { "/v1/pantry": { baseUrl: "http://pantry.test:8080" } };
@@ -154,6 +154,58 @@ describe("what refuses to boot", () => {
     // because the alternative is a route that silently forwards nowhere.
     expect(() => routeTable({ "/v1/pantry": undefined as never })).toThrow(RangeError);
   });
+
+  test("a `public` that is not a boolean, which is the one that matters", () => {
+    // `{"public":"true"}` is what an operator writes when they mean public and
+    // have not checked that JSON has no booleans-as-strings. Coerced it is a
+    // route serving anyone, so this is a refusal and not a truthiness check —
+    // including for `"false"`, which would open the route as surely as `"true"`.
+    for (const value of ["true", "false", 1, 0, "yes", null, [], {}]) {
+      expect(() => routeTable({ "/v1/catalog": { baseUrl: "http://p.test", public: value as never } }), JSON.stringify(value))
+        .toThrow(RangeError);
+      expect(() => routeTable({ "/v1/catalog": { baseUrl: "http://p.test", public: value as never } }), JSON.stringify(value))
+        .toThrow(/public must be true or false/);
+    }
+  });
+
+  test("`public: true` with a token, which is two credentials and one undecided operator", () => {
+    // `public` is about the CALLER and `token` is about the SERVICE. An entry
+    // carrying both is a configuration where nobody reading it can say which of
+    // the two was meant, so it refuses to boot rather than picking: picking
+    // `public` hands an anonymous caller a credential-protected upstream, and
+    // picking `token` answers 401 to a route the table calls open.
+    expect(() =>
+      routeTable({ "/v1/catalog": { baseUrl: "http://p.test", token: "svc", public: true } }),
+    ).toThrow(RangeError);
+
+    const [message] = (() => {
+      try {
+        routeTable({ "/v1/catalog": { baseUrl: "http://p.test", token: "svc", public: true } });
+      } catch (error) {
+        return [(error as Error).message];
+      }
+      return [""];
+    })();
+
+    // Both resolutions named, because an operator holding this error has to be
+    // able to choose one without reading the source.
+    expect(message).toContain("CALLER");
+    expect(message).toContain("SERVICE");
+    expect(message).toContain('Drop "token"');
+    expect(message).toContain('drop "public"');
+  });
+
+  test("`public: false` with a token is ordinary, and `true` without one is ordinary", () => {
+    // The refusal above is about the contradiction and not about the company a
+    // field keeps. The two shapes that make sense must both boot, or the rule is
+    // refusing configurations for tidiness.
+    expect(routeTable({ "/v1/private": { baseUrl: "http://p.test", token: "svc", public: false } })).toEqual({
+      "/v1/private": { baseUrl: "http://p.test", token: "svc", public: false },
+    });
+    expect(routeTable({ "/v1/catalog": { baseUrl: "http://p.test", public: true } })).toEqual({
+      "/v1/catalog": { baseUrl: "http://p.test", token: undefined, public: true },
+    });
+  });
 });
 
 describe("resolution", () => {
@@ -207,6 +259,56 @@ describe("resolution", () => {
 
     expect(resolveRoute(table, "/v1/pantry/items")?.token).toBe("svc-pantry");
     expect(resolveRoute(table, "/v1/other/items")?.token).toBeUndefined();
+  });
+});
+
+describe("whether a path is caller-anonymous", () => {
+  const TABLE: RouteTable = {
+    "/v1/catalog": { baseUrl: "http://catalog.test", public: true },
+    "/v1/catalog/imports": { baseUrl: "http://imports.test" },
+    "/v1/secret": { baseUrl: "http://secret.test" },
+  };
+
+  test("a public entry answers true and every other entry answers false", () => {
+    const table = routeTable(TABLE);
+
+    expect(isPublicRoute(table, "/v1/catalog")).toBe(true);
+    expect(isPublicRoute(table, "/v1/catalog/items")).toBe(true);
+    expect(isPublicRoute(table, "/v1/secret")).toBe(false);
+    // Absent and `false` are the same answer, and nothing outside `/v1/` is ever
+    // public whatever the table says.
+    expect(isPublicRoute(table, "/v1/catalog?limit=1")).toBe(true);
+    expect(isPublicRoute(table, "/auth/login")).toBe(false);
+    expect(isPublicRoute(table, "/v1")).toBe(false);
+  });
+
+  test("openness is decided by the LONGEST match, exactly like the destination", () => {
+    // The case that makes the rule worth stating: a public read surface with a
+    // private write surface under it. If openness were decided by "any prefix
+    // above me is public", `/v1/catalog/imports` would be open too — and the
+    // write path of a public read service is precisely the route that must not be.
+    const table = routeTable(TABLE);
+
+    expect(resolveRoute(table, "/v1/catalog/imports/run")?.baseUrl).toBe("http://imports.test");
+    expect(isPublicRoute(table, "/v1/catalog/imports/run")).toBe(false);
+    expect(isPublicRoute(table, "/v1/catalog/imports")).toBe(false);
+    // And the sibling-prefix boundary still holds, so `/v1/catalogx` is neither
+    // claimed by the public entry nor reachable through it.
+    expect(isPublicRoute(table, "/v1/catalogx/items")).toBe(false);
+  });
+
+  test("the flag rides along on the resolved entry, so the two answers cannot differ", () => {
+    // One resolver, one winner, two properties. A `public` looked up by a second
+    // scan is a second opinion about which prefix claimed the path, and the one
+    // packet that must not exist is the pair of them disagreeing.
+    const table = routeTable(TABLE);
+
+    expect(resolveRoute(table, "/v1/catalog/items")).toEqual({
+      prefix: "/v1/catalog",
+      baseUrl: "http://catalog.test",
+      public: true,
+    });
+    expect(resolveRoute(table, "/v1/secret/items")?.public).toBeUndefined();
   });
 });
 

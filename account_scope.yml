@@ -48,7 +48,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 115
+      line: 121
 
   - id: readyz
     kind: http
@@ -58,7 +58,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 117
+      line: 123
 
   # --- THE ONE ENTRY POINT THIS DECLARATION CANNOT CONTAIN -------------------
   # `GET /v1/me` (src/index.ts:187) resolves an account and returns it, and BOTH
@@ -124,7 +124,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 216
+      line: 240
 
   - id: bff-login
     kind: http
@@ -134,7 +134,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 217
+      line: 241
 
   - id: bff-logout
     kind: http
@@ -144,7 +144,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 218
+      line: 242
 
   - id: bff-me
     kind: http
@@ -154,4 +154,4 @@ entryPoints:
     reason: none
     registeredAt:
       file: src/index.ts
-      line: 219
+      line: 243
