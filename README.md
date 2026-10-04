@@ -977,59 +977,133 @@ equivalence check stands them up side by side on every run.
 | `GET /readyz` | ✅, with `identity` and `redis` probes | ✅, with **no** probes registered |
 | `HEAD` on the two probes | ✅ (Hono routes it to the `GET` handler) | ✅ (registered explicitly — chi does not) |
 | the v0 `404` / `500` envelope | ✅ | ✅ |
-| core's `problem+json` envelope | ✅ | ✅ **ported, not yet reachable** |
+| core's `problem+json` envelope | ✅ | ✅ |
 | `GET /v1/me` | ✅ | declines with the reference's `404` |
-| the four `/auth` routes | ✅ | decline with the reference's `404` |
+| the four `/auth` routes | ✅ | ✅ **ported** — behind `Options.BFF`, which is nil by default |
 | bearer-token verification, JWKS cache, scopes | ✅ | **not ported** — Wave 3 |
 | API keys | ✅ | **not ported** — Wave 3 |
 | rate limiting, `RateLimit-*` headers | ✅ | **not ported** — Wave 3 |
 | the pass-through, the route table, the principal assertion | ✅ | **not ported** — Wave 3 |
-| the BFF and the session store | ✅ | **not ported** — Wave 3 |
+| the BFF's session store | ✅ | **deliberately not ported** — see below |
 
 "Declines with the reference's `404`" is a decision and not a gap that was left
-open by accident. `createApp({})` does not register `/v1/me` without a verifier
-and does not register `/auth/*` without an identity to ask, so the reference
-answers `404` on all five with nothing configured — and so does the Go service. A
-`501` would have been more truthful about the code and less true about the
-contract, and where the two disagree the TypeScript answer is the correct one.
+open by accident. `createApp({})` does not register `/v1/me` without a verifier,
+so the reference answers `404` there with nothing configured — and so does the Go
+service. A `501` would have been more truthful about the code and less true about
+the contract, and where the two disagree the TypeScript answer is the correct one.
 
-A started Go gateway reads exactly one environment variable, `PORT`, and serves
-`{"deps":{}}` on `/readyz`. The other six the TypeScript `runtimeOptions` reads
-belong to subsystems that are not ported; a variable an operator sets that changes
-nothing is worse than one they cannot set, because `IDENTITY_ISSUER` in a compose
-file looks configured and configures a `404`.
+### The browser surface is ported, and the session store is not
+
+`Options.BFF` is nil by default, so `cmd/gateway` serves probes only and the four
+`/auth` routes decline with the reference's `404` — the same answer
+`createApp({})` gives. Set it, and the four routes are served: the origin gate, the
+`__Host-bff-session` cookie, the fixed `401` sentence, the `423` with its
+`Retry-After`, and the rule that the browser never receives identity's token.
+
+**There is no session store in this repository's Go code, and that is the decision
+rather than the gap.** `src/bff/session.ts` has one — a `Map`, per process, marked
+`TODO(guard-06)`/`TODO(guard-07)` — and it was not ported, because
+`identity/internal/sessions/store.go` is the better design and cannot be used here.
+Not "cannot be reached", cannot be *used*: it is keyed by `token_digest` and
+resolves a *token* to a session, and what the gateway needs is the opposite
+direction — hand it the browser's opaque id, get back the token. Nothing in identity
+performs that direction and nothing can, because the digest is one-way by
+construction, which is precisely why `NewSession` takes a digest at all. Go's
+`internal/` rule forbids the import across modules, and identity exposes no endpoint
+that does the inverse lookup either.
+
+So the interface is declared in `internal/session`, nothing implements it in the
+binary, and `NewBff` **refuses to construct** a browser surface with a nil store —
+four routes that cannot tell a signed-in user from a stranger are not a gateway. The
+tests stand in with `internal/sessiontest`, and
+`TestNoProductionFileImportsTheSessionDouble` runs `go list -deps ./cmd/...` to
+prove the fixture is not linked into the binary. The deferral is therefore something
+a reader can run rather than a promise in a comment.
+
+A partial migration would have been worse than none: two services that each believe
+they own the session. `internal/session`'s package comment has the measurement, and
+`REPORT-gateway-go-bff-01.md` has the rest of it.
+
+A started Go gateway still reads exactly one environment variable, `PORT`, and
+serves `{"deps":{}}` on `/readyz`. The other six the TypeScript `runtimeOptions`
+reads belong to subsystems that are not ported; a variable an operator sets that
+changes nothing is worse than one they cannot set, because `IDENTITY_ISSUER` in a
+compose file looks configured and configures a `404`. `IDENTITY_URL` is the one this
+surface needs, and it belongs to the packet that teaches `RuntimeOptions` to build a
+`BFF` — which is also the packet that can register the `identity` readiness probe,
+because `createApp({bff})` on its own answers `{"deps":{}}` and a BFF that
+auto-registered one would differ from the reference at byte 9.
 
 ### The equivalence check, and what it does not cover
 
 `internal/equivalence` stands the TypeScript reference up as a subprocess, drives
 the same requests at both, and fails where the answers differ. It compares status,
 `Content-Type`, the presence of the contract-declared headers, and the body **byte
-for byte**, across 24 cases × 3 configurations.
+for byte**, across **24 base cases × 9 configurations = 306 comparisons**, plus a
+fourth set of browser cases that only exist where the browser surface is mounted.
 
-The 24 cases are derived: every operation `openapi/v1.yaml` declares is read out
-of the generated registrations, which `bin/prime-go` holds in step with the
-document by regenerating and diffing, so an operation added to the contract is
-compared the day it lands. The remaining cases are hand-written and are the edge:
-wrong method, trailing slash, doubled slash, the root, wrong case, query string,
-traversal, `HEAD`.
+The base 24 are derived: every operation `openapi/v1.yaml` declares is read out of
+the generated registrations, which `bin/prime-go` holds in step with the document by
+regenerating and diffing, so an operation added to the contract is compared the day
+it lands. The remainder are hand-written and are the edge: wrong method, trailing
+slash, doubled slash, the root, wrong case, query string, traversal, `HEAD`.
 
-**What it does not cover: every error status except `404`.** There is no bearer
-token, no API key, no limiter, no `X-Trace-Id`, no `Set-Cookie` and no upstream,
-so no `401`, no `429` and no problem document is compared — because the Go service
-cannot produce one. `TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe`
+The **browser cases** are in two halves with the same justification. Four are
+derived from the generated `/auth` registrations — asked as same-origin requests
+with a body, so each reaches its handler instead of stopping at the origin gate.
+The rest are this surface's own list, because they are what a *request* looks like
+rather than what the contract declares: a correct login, a wrong password, an
+unknown account, a correct session, an expired session, a cross-origin POST, a
+same-origin POST, a duplicated `Sec-Fetch-Site`, an `Origin` naming this host and
+one naming another, no origin signal at all, a cookie the store has forgotten, a body
+that is not an object, and a body past the cap. The signed-in cases are only asked
+where a sign-in actually succeeds, and that is **derived from the scenario's own
+identity overrides** rather than from a list of scenario names — two lists of one
+fact is how a scenario that stopped refusing a login kept being asked them.
+
+Two things the check normalises, and both are stated because a byte-for-byte
+comparison with an unstated exception is a comparison you cannot trust:
+
+- **`trace_id`.** 32 hex characters of `crypto/rand`, generated per response on
+  *both* sides, so it can never agree and comparing it would fail every problem
+  document forever. What is **not** normalised is its presence or its shape:
+  `TestBothSidesCarryAWellFormedTraceId` asserts, for every problem document both
+  sides produced in a run, that there is exactly one, that it is 32 hex characters,
+  and that it equals the `X-Trace-Id` header.
+- **Header values, for the contract-declared names other than `Content-Type`.**
+  `Date`, `Content-Length` and `Connection` are written by the two transports rather
+  than by either service, so those are excluded; everything else is compared for
+  presence. `Set-Cookie`'s *value* is consequently not compared — and it cannot be,
+  because the session id is minted by the implementation under test and the two
+  sides necessarily hold different ones.
+
+**What it still does not cover: a revoked key and a valid key.** Those belong to the
+API-key gate, which is another packet, and nothing in this repository can serve them
+yet — so there is nothing to compare, and a case would compare two `404`s and call it
+agreement about API keys. `TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe`
 reads the status enum out of the generated file and fails on any status that is
-neither producible nor named with a reason, so that gap is asserted rather than
-left for a reader to discover.
+neither producible nor named with a reason, so that gap is asserted rather than left
+for a reader to discover. Rate limiting and the upstream pass-through are Wave 3 and
+are absent for the same reason.
 
-**What it found:** `json.Encoder.Encode` appends a newline to every value it
-writes and Hono's `c.json()` does not, so 63 of 72 comparisons failed on one byte
-that no client would ever notice and every port would have shipped. It is
-recorded here because the next packet's equivalence run will not find it again,
-and because it is the reason the comparison is byte equality rather than "both
-sides parsed as JSON".
+**What it found, twice.** First: `json.Encoder.Encode` appends a newline to every
+value it writes and Hono's `c.json()` does not, so 63 of 72 comparisons failed on
+one byte no client would ever notice. Then, when the browser surface became
+reachable: **the problem envelope's field order.** `api.Problem` declares its fields
+alphabetically — `oapi-codegen` emits a struct in the order it finds them in the
+document's `properties` map — so every problem document differed from the reference
+at byte 2, plus three more findings in the new surface itself (`writeRawJSON`
+overwriting the problem content type, a BFF auto-registering a probe the reference
+does not, and a doubled `Sec-Fetch-Site` being refused where the reference serves
+it). All five are in `REPORT-gateway-go-bff-01.md`.
 
-**What it is not:** a claim that the rewrite is done. Two operations of seven are
-Go.
+The generalisable shape is the one the second finding teaches: **an envelope nothing
+reaches is an envelope nothing has compared.** The substrate packet ported
+`problem+json` for five operations that all declined, so the ordering was never
+exercised until this packet made a rejection reachable.
+
+**What it is not:** a claim that the rewrite is done. Three operations of seven are
+Go, and the four that are Go cannot be reached from the environment yet.
 
 ### Running the Go service
 
@@ -1052,13 +1126,26 @@ It is renamed to `Dockerfile` in the commit that deletes `src/`, not before.
 Each line is a packet, not a plan. The stubs that stand in for them are marked in
 the source with the packet that replaces them.
 
-- **The Go rewrite has two operations.** `GET /healthz` and `GET /readyz`, the
-  error envelope, and nothing else — see [The Go rewrite](#the-go-rewrite) for the
-  table, for why the other five decline rather than 501, and for what the
-  equivalence check does and does not compare. This line is the honest one and it
-  sits at the top of the list because it is the thing a reader is most likely to
-  get wrong: `src/` is **not** legacy here, it is the reference the Go service is
-  measured against, and the packet that deletes it is a later one.
+- **The Go rewrite has three operations and no session store.** `GET /healthz`,
+  `GET /readyz`, the error envelope, and now the four `/auth` routes behind
+  `Options.BFF` — see [The Go rewrite](#the-go-rewrite) for the table, for why the
+  session store is a deferral rather than a port, and for what the equivalence check
+  does and does not compare. This line is the honest one and it sits at the top of
+  the list because it is the thing a reader is most likely to get wrong: `src/` is
+  **not** legacy here, it is the reference the Go service is measured against, and
+  the packet that deletes it is a later one.
+- **A Go gateway has nowhere to put a browser session.** The BFF is ported and there
+  is no store behind it, by decision and with the measurement in
+  `internal/session`. `identity`'s store is keyed by `token_digest` and resolves a
+  *token* to a session; the gateway needs the opposite direction and nothing performs
+  it. So this is not "wire up a map" — it is a design question about where a browser
+  session id maps back to an identity token, and the answer has to not be
+  `identity` holding a second copy of every cookie in the fleet.
+- **A Go gateway cannot be pointed at an identity from the environment.** It reads
+  `PORT` and nothing else, so `/auth/*` is unreachable in a started process even
+  though it is served in-process. `IDENTITY_URL` belongs to the packet that also
+  registers the `identity` readiness probe, because `createApp({bff})` on its own
+  answers `{"deps":{}}` and the two must not come apart.
 
 - **The service registry.** Routing exists and is a **static configured table**:
   `ROUTE_TABLE` says which prefix goes where, it is validated at startup, and it
