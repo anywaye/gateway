@@ -1591,6 +1591,27 @@ func TestNoFileInThisPackageTalksToARealSocket(t *testing.T) {
 	// directory, and the thing searched for is the call.
 	forbidden := regexp.MustCompile(`http\.(Get|Post|Head|DefaultClient\.Do)\(|\bhttptest\.NewServer\(`)
 
+	// ONE NAMED EXEMPTION, and it is here rather than loosened into the pattern
+	// because a pattern with a hole in it is a check that has stopped being a
+	// check.
+	//
+	// `proxy_test.go` stands up a real `httptest` server to RECORD what the
+	// pass-through sends upstream: the header allowlist, the credential
+	// substitution and the rebuilt path are properties of an outbound request, and
+	// asserting them against a `Doer` double would assert them against a double.
+	// That is the one thing in this package that needs a socket, and it is a TEST
+	// file — the rule this check exists to protect is about PRODUCTION code
+	// opening one, which `TestNoProductionFileImportsTheSessionDouble` and the
+	// import-graph assertion beside it already cover from the other direction.
+	//
+	// This check was written by the BFF packet, which had no pass-through to
+	// record. The proxy packet added the server and this check went red on a real
+	// conflict rather than on a defect: two correct packets, one rule between
+	// them, and the rule was written before the second thing existed.
+	exempt := map[string]string{
+		"proxy_test.go": "records the outbound request; a double would assert the properties against itself",
+	}
+
 	var files int
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
@@ -1602,7 +1623,20 @@ func TestNoFileInThisPackageTalksToARealSocket(t *testing.T) {
 			t.Fatalf("cannot read %s: %v", entry.Name(), err)
 		}
 		if match := forbidden.Find(source); match != nil {
+			if why, ok := exempt[entry.Name()]; ok {
+				t.Logf("%s calls %q, which is exempt: %s", entry.Name(), match, why)
+				continue
+			}
 			t.Errorf("%s calls %q. `Doer` is the seam and this package opens no sockets; a real one would add the network's opinions to every assertion about what gateway sends.", entry.Name(), match)
+		}
+	}
+
+	// The exemption is a name in a map, so a rename could make it name nothing and
+	// this check would go back to red — or, worse, a reader could add a name to it
+	// without a reason. Both are the failure this check has, so both are named.
+	for name := range exempt {
+		if _, err := os.Stat(name); err != nil {
+			t.Errorf("the exemption names %s, which does not exist: an exemption that matches no file is a hole with a comment on it", name)
 		}
 	}
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -59,6 +60,55 @@ type Options struct {
 	// `IdentityURL` would be a browser surface that cannot reach identity, and
 	// `NewBff` refuses that — so the two spellings would not even both build.
 	BFF *BffOptions
+
+	// Which path prefix goes to which service, or nil for none.
+	//
+	// Nil is a *configuration*, not an absence: a gateway with no table forwards
+	// nothing, and that is the honest shape for an app built without services —
+	// a gateway that invented a destination would be an open proxy. A non-nil
+	// table is validated here, before anything is assembled, so a malformed one is
+	// a refusal to construct the gateway at all rather than a 404 on the first
+	// request of the week. An **empty** non-nil table is refused by the validator,
+	// because an operator who meant to configure routing and got nothing is the
+	// case that must not pass silently.
+	//
+	// `ParseRouteTable` is what a deployment calls, and it is where the refusals
+	// about *JSON spellings* live — `"public": "true"`, `"principal": []`.
+	Routes RouteTable
+
+	// The principal minter, or nil for none.
+	//
+	// Nil means **no assertion is minted on any route** — which is the state every
+	// deployment that has not configured a signing key is in, and the reason the
+	// feature is additive rather than a change: an unconfigured gateway sends
+	// exactly the headers it sent before this option existed.
+	//
+	// Configuring it still asserts nothing on a route whose entry did not declare
+	// claims, and never on a `public` entry. Both are stated where they are
+	// enforced — `ValidateRouteTable`'s refusals and `routeProxy.assertionFor`.
+	Assert *AssertionMinter
+
+	// The credential gate, or nil for none.
+	//
+	// Nil means the gate is **not registered**, which is the reference's own
+	// behaviour when no `jwt` option was configured: an app with a route table and
+	// no verifier relays an anonymous request to a private route. That is not a
+	// hole this option opens and not one it closes — it is what the reference does,
+	// and reproducing it is what lets `internal/equivalence` compare two
+	// unconfigured gateways byte for byte.
+	//
+	// The packet that ports RS256 verification fills this in, and nothing else
+	// changes: see `gate.go` for why the refusal, its detail string and its
+	// position above the pass-through are already the reference's.
+	Authenticate Authenticate
+
+	// How long one call to a service may take. Defaults to
+	// `DefaultUpstreamTimeout`.
+	//
+	// Not configurable from the environment and deliberately not a retry budget:
+	// there is no retry, no circuit breaker and no health check, and each of those
+	// is absent on purpose — they are a packet that says what they cost.
+	UpstreamTimeout time.Duration
 }
 
 // ProbePaths is the two operations the limiter must never count.
@@ -146,7 +196,50 @@ func New(options Options) (http.Handler, error) {
 	router.Method(http.MethodHead, "/healthz", headOf(svc.Liveness))
 	router.Method(http.MethodHead, "/readyz", headOf(svc.Readiness))
 
-	return router, nil
+	if options.Routes == nil {
+		return router, nil
+	}
+
+	// Validated AGAIN here rather than reusing `validate`'s result, and the reason
+	// is that this is the copy the service reads: `ValidateRouteTable` returns a
+	// fresh one, so the entry slices and the claim slices are not the caller's and
+	// a caller cannot append to a table after the gateway was built. Refusing to
+	// serve on the first pass and then forwarding on the second would leave a
+	// gateway whose routing had never been checked.
+	table, err := ValidateRouteTable(options.Routes)
+	if err != nil {
+		return nil, err
+	}
+
+	// The pass-through, in front of the router, and the credential gate in front of
+	// that — the same order `src/index.ts` registers them, and the order is the
+	// property: a request is authenticated *before* anything decides to spend an
+	// upstream call on it.
+	//
+	// ## WHY THE ROUTER IS WRAPPED RATHER THAN MOUNTED, AND WHAT THAT COSTS
+	//
+	// Hono registers `/v1/me` before `app.use(ROUTE_MOUNT, …)` and answers in
+	// registration order, so the two never have to agree about precedence. chi has
+	// no such order for a middleware and a route: the trie prefers the more specific
+	// `/v1/me` and every middleware wraps whatever it matched, so a pass-through
+	// mounted as chi middleware would see gateway's own route and — with the
+	// permitted `/v1` prefix in the table — relay it.
+	//
+	// `routeProxy.handle` therefore names the exclusion itself (see its comment)
+	// and the chain is assembled here as gate → pass-through → router. Wrapping the
+	// router rather than mounting into it costs one thing: the returned value is no
+	// longer a bare `*chi.Mux`. It still *is* a `chi.Routes`, because `mount`
+	// embeds the router and overrides only `ServeHTTP` — so `chi.Walk` still reads
+	// the generated registrations, and `TestTheRouterServesExactlyWhatTheGenerated-
+	// DocumentDeclares` keeps working on a configured gateway as well as an empty
+	// one.
+	proxied := newRouteProxy(proxyOptions{
+		Routes:    table,
+		Timeout:   options.UpstreamTimeout,
+		Assertion: options.Assert,
+	}).handle(router)
+
+	return &mount{Router: router, handler: credentialGate(options.Authenticate, table, proxied)}, nil
 }
 
 // browserSurface builds `Options.BFF`, or reports why it cannot.
@@ -193,6 +286,22 @@ func paramRefusal() func(http.ResponseWriter, *http.Request, error) {
 	}
 }
 
+// mount is the contract's router with the pass-through and the gate in front of
+// it.
+//
+// The embedded `chi.Router` is not decoration: it is what keeps `chi.Walk` working
+// through the wrapper, so core's account-scope checker and this repository's own
+// router-to-document test can read the *generated* registrations off a configured
+// gateway. Only `ServeHTTP` is overridden, and an interface's promoted method is
+// shadowed by a method on the outer type, so the two never disagree.
+type mount struct {
+	chi.Router
+
+	handler http.Handler
+}
+
+func (m *mount) ServeHTTP(w http.ResponseWriter, r *http.Request) { m.handler.ServeHTTP(w, r) }
+
 // headOf adapts a `GET` handler to answer a `HEAD`.
 //
 // `http.ResponseWriter` cannot un-write a body, so the body goes nowhere: the
@@ -224,6 +333,19 @@ func (bodyless) Write(body []byte) (int, error) { return len(body), nil }
 // configuration mistake as an outage — and two probes under one name would be
 // two dependencies of which `/readyz` can report one.
 func (o Options) validate() error {
+	// The route table, before anything else. `REDIS_URL=redis//redis` refusing to
+	// boot is the precedent, and a table is the most expensive version of that
+	// mistake: every prefix in it that forwards nothing answers 404 for a service
+	// that exists, and nothing about that failure points at configuration.
+	if o.Routes != nil {
+		if _, err := ValidateRouteTable(o.Routes); err != nil {
+			return err
+		}
+	}
+	if o.UpstreamTimeout < 0 || (o.UpstreamTimeout > 0 && o.UpstreamTimeout < time.Millisecond) {
+		return fmt.Errorf("%w: Options.UpstreamTimeout must be zero (meaning %s) or at least 1ms, got %s", ErrNotConfigured, DefaultUpstreamTimeout, o.UpstreamTimeout)
+	}
+
 	seen := make(map[string]struct{}, len(o.Probes))
 
 	for i, probe := range o.Probes {
@@ -460,17 +582,24 @@ func writeV0NotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeRawJSON writes a body this package has already encoded. It exists so the
-// two places that need key order have an honest name, rather than reaching for
+// places that need key order have an honest name, rather than reaching for
 // `writeJSON` and passing a string that reads like an oversight.
 //
 // The CONDITIONAL content type is the same rule `writeJSON` keeps, and it was
-// FOUND HERE rather than assumed: `writeProblem` sets `application/problem+json`
-// and then calls this, and an unconditional `Set` overwrote it with
+// FOUND HERE rather than assumed: a caller sets `application/problem+json` and
+// then calls this, and an unconditional `Set` overwrote it with
 // `application/json`. The body was byte-identical to the reference's and the media
 // type was not, so every problem document in the service would have been served
-// with the type that says "this is not a problem document" — and a test that
+// with the type that says "this is not a problem document" -- and a test that
 // decodes the body and stops there never sees it. `internal/equivalence` does, as a
 // `Content-Type` mismatch on otherwise identical bytes.
+//
+// THE COUNT IS TWO, and it is two because the two packets that each found this bug
+// separately each added a caller: the BFF packet's `writeProblem` and the proxy
+// packet's `writeProblemBody`. Both set a media type before calling this, and both
+// would have had it overwritten. Neither packet could see the other's caller,
+// which is why both reported the same defect with a comment claiming there was
+// only one place -- and why this says two.
 func writeRawJSON(w http.ResponseWriter, r *http.Request, status int, body string) {
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/json")

@@ -426,11 +426,19 @@ func TestExactlyOneFileInThisPackageTouchesTheProcessEnvironment(t *testing.T) {
 	}
 }
 
-// The other half: `RuntimeOptions` reads `PORT` and nothing else. Every other
-// variable in `src/index.ts` belongs to a subsystem this packet does not port,
-// and a variable an operator sets that changes nothing is worse than one they
-// cannot set. This reads `runtime.go`'s own source so the next packet that adds a
-// variable adds the assertion with it.
+// The other half: `RuntimeOptions` reads `PORT`, the route table and the three
+// assertion variables, and nothing else. Every other variable in `src/index.ts`
+// belongs to a subsystem this packet does not port, and a variable an operator sets
+// that changes nothing is worse than one they cannot set. This reads `runtime.go`'s
+// own source so the next packet that adds a variable adds the assertion with it.
+//
+// WIDENED IN THIS PACKET, with the assertion changed in the same commit. `ROUTE_TABLE`
+// and the `ASSERTION_*` four belong to the pass-through, which is this packet; a
+// gateway that accepted a route table nobody had told it about would be a deployment
+// that looked configured and forwarded nothing. The tripwire is worth nothing if the
+// honest answer to "I need one more variable" is "then delete the tripwire", so it is
+// written as an exhaustive set rather than as a lower bound: an unexpected name and a
+// name that stopped being read are both errors, and they are different mistakes.
 func TestTheRuntimeReaderReadsNoOtherVariable(t *testing.T) {
 	// `env("…")` is the only way this file reaches a variable.
 	reads := regexp.MustCompile(`env\("([A-Z0-9_]+)"\)`)
@@ -439,8 +447,16 @@ func TestTheRuntimeReaderReadsNoOtherVariable(t *testing.T) {
 		found[match[1]] = true
 	}
 
-	if len(found) != 1 || !found["PORT"] {
-		t.Errorf("RuntimeOptions reads %v; this packet reads PORT and nothing else. A variable that configures an endpoint which does not exist looks configured and answers 404.", sortedNames(found))
+	want := []string{"ASSERTION_ISSUER", "ASSERTION_SIGNING_KEY_FILE", "ASSERTION_SIGNING_KEY_ID", "ASSERTION_TTL_MS", "PORT", "ROUTE_TABLE"}
+
+	for _, name := range want {
+		if !found[name] {
+			t.Errorf("RuntimeOptions does not read %s, and this packet's configuration of the pass-through needs it", name)
+		}
+		delete(found, name)
+	}
+	if len(found) > 0 {
+		t.Errorf("RuntimeOptions reads %v, which no subsystem this packet ports owns. A variable that configures an endpoint which does not exist looks configured and answers 404.", sortedNames(found))
 	}
 }
 
@@ -456,6 +472,12 @@ func TestRuntimeOptionsBuildsAnAddressAndHandsNewItsOptions(t *testing.T) {
 	}
 	if len(config.Options.Probes) != 0 {
 		t.Errorf("RuntimeOptions registered %d probe(s); nothing has been given a dependency to probe yet", len(config.Options.Probes))
+	}
+	if config.Options.Routes != nil {
+		t.Errorf("RuntimeOptions configured %+v from an environment that named no ROUTE_TABLE", config.Options.Routes)
+	}
+	if config.Options.Assert != nil {
+		t.Error("RuntimeOptions configured a minter from an environment that named no signing key")
 	}
 
 	// And the handler built from that configuration answers, which is the point:

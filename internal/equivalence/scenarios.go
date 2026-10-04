@@ -13,23 +13,11 @@
 //
 // # WHAT A SCENARIO CAN AND CANNOT DO
 //
-// A probe set AND a browser surface, and nothing else. The limiter, the JWT
-// verifier and the pass-through are other packets, so a scenario cannot drive
-// them; what it CAN drive is every operation whose answer this repository can now
-// produce, which is all seven of them.
-//
-// # THE FIXTURES ARE THE SAME FIXTURES, IN TWO LANGUAGES
-//
-// Every id, token and expiry below is a literal, and it is the SAME literal as in
-// `reference.ts`. That is deliberate and it is the reason the comparison can be
-// byte equality: a login body carries `expires_at`, so a relative expiry would
-// render differently on each side and fail for a reason that is not a port
-// defect. Nothing here is random and nothing is relative to now.
-//
-// `TestTheTwoSidesAgreeOnEverySharedFixture` reads BOTH files and compares the
-// literals, because a fixture that drifted is a difference that reads as a port
-// defect and is not one — and that check is what stops the next person who edits
-// one file from spending an afternoon on the other.
+// A probe set and a route table — which is enough to exercise `/readyz`'s body,
+// the pass-through's relayed answers, its two 503s, the refusals a path nobody
+// claims, and (with a gate configured) the 401. It is not enough to exercise
+// anything else Wave 3 owns, and that limit is stated in the report rather than
+// discovered by a reader who assumed more.
 package equivalence
 
 import (
@@ -38,7 +26,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cafaye/gateway/internal/httpapi"
@@ -46,7 +36,7 @@ import (
 	"github.com/cafaye/gateway/internal/sessiontest"
 )
 
-// Scenario names. Both sides' lists are the same nine, and
+// Scenario names. Both sides' lists are the same, and
 // `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas` holds them equal by
 // reading the reference's.
 const (
@@ -62,13 +52,32 @@ const (
 	// credential so the comparison can prove none of them reach a response body.
 	ScenarioProbesDegraded = "probesDegraded"
 
+	// ScenarioRoutedUpstream is a route table in front of a recording upstream and
+	// **no credential gate** — which is the reference's own state when no `jwt`
+	// option was configured. That absence is the point: it is the configuration in
+	// which an anonymous request is *relayed*, so comparing it is comparing the
+	// pass-through's own answers with nothing above them to soften a difference.
+	ScenarioRoutedUpstream = "routedUpstream"
+
+	// ScenarioGatedUpstream is the same table with a credential gate in front of
+	// it, which is where the standing 401 comes from: an anonymous caller to a
+	// private route, a public route that still answers, and a probe that still
+	// answers.
+	//
+	// The Go side's gate refuses rather than verifies — verification is the auth
+	// packet's — and that is enough, because what this scenario compares is the
+	// **refusal and its position**, not the token check behind it. `jwt` is given
+	// real values on the reference side and no request carries a credential, so the
+	// reference answers 401 from its own gate without fetching a key set.
+	ScenarioGatedUpstream = "gatedUpstream"
+
 	// The browser surface, healthy. The scenario that compares the four
 	// `/auth` routes end to end.
 	ScenarioBff = "bff"
 
-	// The four ways identity can refuse or withdraw, each its own scenario
-	// because the point of comparing them is that they must NOT look alike in the
-	// wrong places and MUST look alike in the right one.
+	// The ways identity can refuse or withdraw, each its own scenario because the
+	// point of comparing them is that they must NOT look alike in the wrong places
+	// and MUST look alike in the right one.
 	ScenarioBffBadCredentials = "bffBadCredentials"
 	ScenarioBffUnknownAccount = "bffUnknownAccount"
 	ScenarioBffAccountLocked  = "bffAccountLocked"
@@ -77,10 +86,20 @@ const (
 )
 
 // scenarios is the inventory, in the order the runner drives them.
+//
+// ELEVEN, and that is this merge's doing rather than either packet's: the proxy
+// packet added `routedUpstream` and `gatedUpstream`, the BFF packet added the five
+// `bff*` scenarios, and both edited this list from the same three probe scenarios
+// without either seeing the other's. The union is written out in full here
+// because `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas` reads the
+// REFERENCE's list and holds the two equal — a scenario named in one and not the
+// other is that test going red, which is the mechanism that caught the gap.
 var scenarios = []string{
 	ScenarioBare,
 	ScenarioOneProbeOk,
 	ScenarioProbesDegraded,
+	ScenarioRoutedUpstream,
+	ScenarioGatedUpstream,
 	ScenarioBff,
 	ScenarioBffBadCredentials,
 	ScenarioBffUnknownAccount,
@@ -94,33 +113,50 @@ var scenarios = []string{
 //
 // DERIVED from the inventory rather than typed, because a scenario that mounts the
 // browser surface but is not in this set is a scenario whose four `/auth` answers
-// are compared as `404`s on both sides — a green that proves nothing about the
-// surface it was written for. `TestEveryScenarioThatMountsTheSurfaceIsCompared` is
-// the other direction.
+// nothing here compares.
 func hasBrowserSurface(scenario string) bool {
-	return strings.HasPrefix(scenario, "bff")
+	for _, name := range scenarios {
+		if name == scenario {
+			return scenario == ScenarioBff ||
+				scenario == ScenarioBffBadCredentials ||
+				scenario == ScenarioBffUnknownAccount ||
+				scenario == ScenarioBffAccountLocked ||
+				scenario == ScenarioBffIdentityBroken ||
+				scenario == ScenarioBffWithdrawn
+		}
+	}
+	return false
 }
+
+// The scenarios that need a recording upstream in front of them.
+var routedScenarios = map[string]bool{ScenarioRoutedUpstream: true, ScenarioGatedUpstream: true}
 
 // The dependency names the degraded scenario registers, in the order both sides
 // declare them.
 //
 // NOT ALPHABETICAL, and that is the whole point of the list. `/readyz` renders
 // `deps` in registration order because `Options.Probes` is a slice rather than a
-// map — and a `map[string]ProbeStatus` would render in the order `encoding/json`
-// sorts keys. So the two orders are only distinguishable if the names are declared
-// in an order that is not already sorted, and the first draft of this file used
-// `aperture, identity, redis`, which IS sorted: a planted mutation swapping the
-// hand-written ordering for `json.Marshal(api.Readiness)` then passed, and the
-// property was untested. Found by planting the mutation and finding it did not
-// fail, which is the only way to find this one.
+// map — and a `map[string]ProbeStatus` would render in the order
+// `encoding/json` sorts keys. So the two orders are only distinguishable if the
+// names are declared in an order that is not already sorted, and the first draft
+// of this file used `aperture, identity, redis`, which IS sorted: a planted
+// mutation swapping the hand-written ordering for `json.Marshal(api.Readiness)`
+// then passed, and the property was untested. Found by planting the mutation and
+// finding it did not fail, which is the only way to find this one.
 const (
 	degradedHealthy  = "redis"
 	degradedRefusing = "identity"
 	degradedThrowing = "aperture"
 )
 
-// FIXTURE. Same literals as `reference.ts`; see this file's header and
-// `TestTheTwoSidesAgreeOnEverySharedFixture`.
+// The identity fixtures the browser scenarios script, with the expiry the BFF
+// packet pinned and the day it runs out.
+//
+// `fixtureExpiry` HAS A SHELF LIFE and this is the second reader who needs to be
+// told: the day 2027-01-15 passes, these scenarios begin failing on a DATE rather
+// than on a defect, and the failure will look like a session bug. The literal is
+// the fixture's to change and the comment is what stops the next reader treating
+// a red run as a finding.
 const (
 	fixtureToken    = "identity-token-abcdef0123456789"
 	fixtureUserID   = "11111111-2222-3333-4444-555555555555"
@@ -129,46 +165,58 @@ const (
 	fixtureIdentity = "http://identity.test"
 )
 
-// WHY `fixtureExpiry` IS WHERE IT IS, AND WHY THAT IS A FINDING
+// The cookie ceiling `hono/cookie` imposes, in days. See the BFF packet's report:
+// the contract declares no maximum session lifetime, so this is a
+// deployment-visible ceiling nothing in `openapi/v1.yaml` mentions.
+const fixtureExpiryWindowDays = 400
+
+// clock is the one time source in this package, so a scenario that signs in and
+// then reads the session is not racing the wall clock between the two.
+var clock = func() time.Time { return time.Now() }
+
+// The route table both routed scenarios declare, in the same shape the reference
+// builds from `GATEWAY_EQUIVALENCE_UPSTREAM`.
 //
-// It has to be in a window, and the window is measured rather than chosen:
+// Three entries and three different shapes, because a table with one entry per
+// test proves one thing:
 //
-//   - LATER THAN THE WALL CLOCK, or the reference's own `memorySessionStore`
-//     treats the record as already expired (`expiresAt <= now()`), answers `401`
-//     where the Go store — which reads an injected clock — answers `200`, and the
-//     comparison reports a difference that is about the date.
-//   - WITHIN 400 DAYS OF THE WALL CLOCK, because `hono/cookie` REFUSES to
-//     serialise a cookie whose expiry is more than 400 days out: it throws, and
-//     the reference's `onError` turns that into a `500 {"error":"internal_error"}`.
-//     The Go port serves the same login `200`, because `net/http` has no such cap.
+//   - `/v1/pantry` — no credential. An entry whose absence of a token is
+//     meaningful: the upstream must see **no** `Authorization` at all.
+//   - `/v1/pantry/imports` — a service credential. A nested prefix, so the longest
+//     match wins, and the only entry whose `authorization` must be gateway's.
+//   - `/v1/catalog` — `public: true`. No token and no claims, which is the shape
+//     MD18 ruled and the only way to answer without a caller credential.
 //
-// So this is a REAL divergence between the two implementations, and it is not a
-// porting mistake on either side: the reference cannot issue a session longer than
-// about a year, and the Go service can. Whether the Go service SHOULD is a
-// decision about session lifetimes, not a porting detail, and the packet's report
-// is where it goes rather than a line changed here to make a check green.
-//
-// 2027-01-15 is roughly three months after this was written and comfortably inside
-// the 400-day cap. When it passes, both sides will agree that the session is
-// expired — except the Go store's clock is injected and fixed, so this fixture
-// WILL start failing on 2027-01-15 and needs a new literal. That is stated here
-// rather than discovered, and `TestTheFixtureExpiryIsInsideTheReferenceCookieWindow`
-// is what says so out loud.
+// No entry declares `principal` claims: the reference needs `ASSERTION_SIGNING_KEY_FILE`
+// to mint assertions, and configuring one means a generated key on both sides and a
+// `jti` that differs per mint — which cannot be compared byte for byte and would
+// make the check compare noise. The assertion's four properties are covered by
+// `internal/httpapi`'s own suite, where the claim set can be read; that limit is
+// named in the report under what the comparison does not cover.
 const (
-	// fixtureExpiryWindow is the cap `hono/cookie` enforces, in days. 400.
-	fixtureExpiryWindowDays = 400
+	routePlain   = "/v1/pantry"
+	routeTokened = "/v1/pantry/imports"
+	routePublic  = "/v1/catalog"
+
+	// serviceToken is the per-upstream credential both sides are configured with.
+	// It is a literal rather than a random value so the recorded request can be
+	// compared for equality — and it is deliberately different from the caller's
+	// token the cases carry, because "the caller's credential never crosses" is the
+	// property the comparison is here for.
+	serviceToken = "equivalence-service-token"
+
+	// callerToken is what the cases put in their own `Authorization`. It must never
+	// appear at the upstream.
+	callerToken = "equivalence-caller-token"
 )
 
-// now is the clock every browser-surface scenario is built with.
-//
-// REAL, not fixed, and the reason is the window above: the reference's session
-// store reads `Date.now()`, so the two sides only agree about a session's
-// liveness if the Go side reads the same clock the reference does. A fixed Go
-// clock makes every fixture expiry a bet on what year it is.
-// `clock` is a function rather than a value so a test can replace it without
-// reaching into the package's variables — and there is one such test, because the
-// fixture window below is a real constraint with a real failure date.
-var clock = func() time.Time { return time.Now() }
+func routesFor(upstreamOrigin string) httpapi.RouteTable {
+	return httpapi.RouteTable{
+		routePlain:   {BaseURL: upstreamOrigin},
+		routeTokened: {BaseURL: upstreamOrigin, Token: serviceToken},
+		routePublic:  {BaseURL: upstreamOrigin, Public: true},
+	}
+}
 
 // optionsFor builds the gateway configuration for one scenario, or an error
 // naming the scenario it does not know.
@@ -179,7 +227,12 @@ var clock = func() time.Time { return time.Now() }
 // checks the names against the inventory before calling this, and this checks
 // again — two checks on one thing is cheap, and the second is the one that fails
 // when the runner's list and this list are edited in different commits.
-func optionsFor(scenario string) (httpapi.Options, error) {
+//
+// `upstreamOrigin` is the recording upstream's base URL, and it is an argument
+// rather than something read from the environment: the reference is a subprocess
+// configured through its own environment, and a Go side that reached into its own
+// would be a side configured differently from the other one.
+func optionsFor(scenario, upstreamOrigin string) (httpapi.Options, error) {
 	switch scenario {
 	case ScenarioBare:
 		// The zero value is the configuration, not a stand-in for one: with
@@ -205,6 +258,23 @@ func optionsFor(scenario string) (httpapi.Options, error) {
 			}},
 		}}, nil
 
+	case ScenarioRoutedUpstream, ScenarioGatedUpstream:
+		if upstreamOrigin == "" {
+			return httpapi.Options{}, fmt.Errorf("equivalence: scenario %q needs a recording upstream and none was started, so every case below would compare a gateway that forwards nothing against one that forwards to nothing", scenario)
+		}
+
+		options := httpapi.Options{Probes: []httpapi.NamedProbe{{Name: degradedHealthy, Probe: alwaysOK}}, Routes: routesFor(upstreamOrigin)}
+		if scenario == ScenarioGatedUpstream {
+			// The refusal, not the verification. `internal/httpapi`'s own suite is
+			// where the 401 is asserted in detail; here it is enough that a gate is
+			// configured and that it refuses, because the reference's gate refuses
+			// for the same reason and with the same envelope.
+			options.Authenticate = func(*http.Request) (*httpapi.Principal, error) {
+				return nil, errNoCredential
+			}
+		}
+		return options, nil
+
 	case ScenarioBff, ScenarioBffBadCredentials, ScenarioBffUnknownAccount,
 		ScenarioBffAccountLocked, ScenarioBffIdentityBroken, ScenarioBffWithdrawn:
 		return browserSurface(overridesFor(scenario))
@@ -212,6 +282,172 @@ func optionsFor(scenario string) (httpapi.Options, error) {
 	default:
 		return httpapi.Options{}, fmt.Errorf("equivalence: no Go scenario named %q; known: %v", scenario, scenarios)
 	}
+}
+
+func alwaysOK(context.Context) error          { return nil }
+func alwaysUnavailable(context.Context) error { return errors.New("unavailable") }
+
+var errNoCredential = errors.New("no bearer token")
+
+// --------------------------------------------------------------------------
+// the recording upstream
+// --------------------------------------------------------------------------
+
+// upstreamAnswer is one recorded request, plus the response the upstream gave it.
+type upstreamAnswer struct {
+	Method string
+	// The path as the upstream SAW it — `EscapedPath`, because a segment that
+	// reached the service re-encoded is the whole point of the comparison and
+	// decoding it here would hide the difference between `a%2Fb` and `a/b`.
+	Path  string
+	Query string
+
+	// The headers this check compares. Not the whole block: `Accept-Encoding`,
+	// `User-Agent` and `Connection` are written by the two transports rather than
+	// by either gateway, and comparing them would compare `net/http` with undici.
+	Header http.Header
+
+	Body string
+
+	// Status, Content-Type and Set-Cookie as the upstream sent them, so a case can
+	// be chosen to produce a 3xx, a 5xx or a cookie and the comparison is the same
+	// comparison either way.
+	Status      int
+	ContentType string
+	SetCookie   []string
+}
+
+// upstream is the service both gateways are pointed at.
+//
+// It is a real socket and it is shared: both sides talk to the **same** process, so
+// "the same request reached the same upstream" is a comparison and not two
+// inferences. Answers are keyed off the path so a case can ask for a 500 or a
+// redirect without either gateway knowing the difference.
+type upstream struct {
+	server *httptest.Server
+
+	mu      sync.Mutex
+	last    upstreamAnswer
+	arrived int
+}
+
+func startUpstream(t interface {
+	Fatalf(string, ...any)
+	Cleanup(func())
+}) *upstream {
+	u := &upstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(u.serve))
+	t.Cleanup(u.server.Close)
+
+	return u
+}
+
+// Origin is the base URL to put in both sides' route table.
+func (u *upstream) Origin() string { return u.server.URL }
+
+// take returns what the upstream last received and forgets it, so one case's
+// record cannot be mistaken for the next one's.
+//
+// Forgetting rather than merely reading is deliberate: a check that compares two
+// records and finds them equal because both are the *same* first request has
+// compared nothing, and that failure looks exactly like a pass.
+func (u *upstream) take(t interface{ Fatalf(string, ...any) }) (upstreamAnswer, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	if u.arrived == 0 {
+		return upstreamAnswer{}, false
+	}
+	u.arrived = 0
+	return u.last, true
+}
+
+func (u *upstream) serve(w http.ResponseWriter, r *http.Request) {
+	body := make([]byte, 0)
+	if r.Body != nil {
+		buffered := make([]byte, 4096)
+		for {
+			read, err := r.Body.Read(buffered)
+			body = append(body, buffered[:read]...)
+			if err != nil {
+				break
+			}
+		}
+	}
+
+	recorded := upstreamAnswer{
+		Method: r.Method,
+		Path:   r.URL.EscapedPath(),
+		Query:  r.URL.RawQuery,
+		Header: r.Header.Clone(),
+		Body:   string(body),
+	}
+
+	// The answers, by the last segment. A path the table does not know about never
+	// arrives here, so the set is small and every one of it is a status the
+	// pass-through has an opinion about.
+	switch {
+	case strings.HasSuffix(r.URL.EscapedPath(), "/boom"):
+		// A 5xx carrying the platform's own topology and a credential, so the
+		// comparison can prove none of it reaches the caller or the problem body.
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusInternalServerError)
+		recorder(w, `<html>dial tcp 10.0.3.7:8080: token=cafaye_equivalence_secret</html>`)
+
+	case strings.HasSuffix(r.URL.EscapedPath(), "/redirect"):
+		w.Header().Set("Location", "/ok")
+		w.WriteHeader(http.StatusFound)
+		recorder(w, "moved")
+
+	case strings.HasSuffix(r.URL.EscapedPath(), "/unauthorized"):
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnauthorized)
+		recorder(w, `{"code":"unauthorized","detail":"the service refuses this caller"}`)
+
+	case strings.HasSuffix(r.URL.EscapedPath(), "/notfound"):
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		recorder(w, `{"code":"not_found","detail":"no such service"}`)
+
+	case strings.HasSuffix(r.URL.EscapedPath(), "/nocontenttype"):
+		// The one header this package cannot express through `Header().Set`: a key
+		// present with no values, which is how a response with no content type at
+		// all is written. Used to compare a relay that does not invent one.
+		w.Header()["Content-Type"] = []string{}
+		w.WriteHeader(http.StatusOK)
+		recorder(w, `untyped on purpose`)
+
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Set-Cookie", "__Host-bff-session=written-from-behind-the-edge; Path=/; Secure")
+		w.WriteHeader(http.StatusOK)
+		recorder(w, `{"ok":true}`)
+	}
+
+	recorded.Status = statusOf(w)
+	recorded.ContentType = w.Header().Get("Content-Type")
+	recorded.SetCookie = w.Header().Values("Set-Cookie")
+
+	u.mu.Lock()
+	u.last = recorded
+	u.arrived++
+	u.mu.Unlock()
+}
+
+// statusOf reads back the status the upstream answered, which `httptest`'s
+// recorder keeps for exactly this. There is no other way to say "the status this
+// case produced" without keeping a second answer path, and a case that chose its
+// status twice could choose two different ones.
+func statusOf(w http.ResponseWriter) int {
+	recorder, ok := w.(*httptest.ResponseRecorder)
+	if !ok {
+		return 0
+	}
+	return recorder.Code
+}
+
+func recorder(w http.ResponseWriter, body string) {
+	_, _ = w.Write([]byte(body))
 }
 
 // identityAnswer is one scripted identity response.
@@ -332,9 +568,6 @@ func (a identityAnswer) response() *http.Response {
 type doerFunc func(r *http.Request) (*http.Response, error)
 
 func (f doerFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
-
-func alwaysOK(context.Context) error          { return nil }
-func alwaysUnavailable(context.Context) error { return errors.New("unavailable") }
 
 // theCookie is the session cookie name, read out of the service rather than
 // written here, so a rename cannot make this package compare a cookie nobody sets.

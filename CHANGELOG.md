@@ -135,6 +135,58 @@ dependency versions follow npm's own rules.
   this packet does not port, and answer the **v0 `404`**. A `501` would have been
   more truthful about the code and less true about the contract: `createApp({})`
   does not register `/v1/me` without a verifier and does not register `/auth/*`
+
+  **And since this entry was written: the pass-through, the route table, and the
+  principal assertion.** Those are the security core, and they are in Go. Eight
+  properties, each a named test, each shown red by a mutation:
+
+  1. The caller's credential never reaches an internal service — the inbound
+     `Authorization` is never forwarded and neither is `Cookie`; gateway attaches
+     the per-service `token` from the route table, or sends no `Authorization` at
+     all when the entry has none.
+  2. The path is **reconstructed**, not filtered. `path.Clean` is called nowhere:
+     each segment is decoded, refused if it is `.`, `..`, empty or one containing a
+     separator, and re-encoded with only its unreserved characters.
+  3. Only `content-type` and `accept` cross outbound. The allowlist is asserted as
+     a literal of exactly two names, in the response direction exactly one.
+  4. `CheckRedirect` returns `ErrUseLastResponse` and every call carries a
+     per-request deadline, so a followed redirect is not a way out of the route
+     table and a hung upstream is a `503` rather than a hung gateway.
+  5. `set-cookie` is dropped on the way back — session fixation, not tidiness.
+  6. `cache-control: no-store` on every relayed response, overriding the service's
+     own rather than forwarding it.
+  7. `isRelayable(status)`: `status < 300 || (status >= 400 && status < 500)`.
+  8. The route table is validated **before the process listens**, and every
+     refusal names the rule that fired.
+
+  And MD19's four: an assertion is **never** minted on a public route (refused at
+  boot and again at the send site), is gateway's **own signature** and never the
+  caller's token, is **bound to the upstream's origin** with a lifetime ceiling
+  nobody may exceed, and carries **only the declared claims**.
+
+  **What this does not make the Go service:** it does not verify tokens. The
+  credential gate is a seam — `Options.Authenticate` is nil in every configuration
+  this packet can build, because verification is a separate packet — and a gateway
+  started from the environment therefore relays an anonymous request to a private
+  route, which is exactly what `createApp({routes})` does when no `jwt` option was
+  configured. The refusal, its status, its envelope and its position above the
+  pass-through are already in place, so the packet that ports RS256 fills in one
+  function and nothing else moves.
+
+  `test/proxyMutations.sh` is the evidence: 27 mutations, each of which removes
+  one property, runs that property's named test, and records that it went red —
+  then restores the tree by the inverse substitution and re-runs to prove the green
+  came back.
+
+  The five operations it does not serve are unchanged: `GET /v1/me`
+  and the four `/auth` routes answer the v0 `404`, for the reason below. What
+  the Go service serves today is **two operations of seven plus the
+  pass-through**: `GET /healthz`
+  and `GET /readyz`, plus both error envelopes. The other five — `GET /v1/me` and
+  the four `/auth` routes — are declared by the contract, need a subsystem this
+  packet does not port, and answer the **v0 `404`**. A `501` would have been more
+  truthful about the code and less true about the contract: `createApp({})` does
+  not register `/v1/me` without a verifier and does not register `/auth/*`
   without an identity to ask, so the reference answers `404` too, and where the
   two implementations differ the TypeScript answer is the correct one.
 
