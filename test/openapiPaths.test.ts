@@ -31,7 +31,7 @@ const DOCUMENT = [
   "openapi: 3.1.0",
   "",
   "info:",
-  "  title: cafaye guard",
+  "  title: cafaye gateway",
   "  version: 1.0.0",
   "",
   "paths:",
@@ -225,7 +225,7 @@ describe("path normalisation", () => {
 });
 
 describe("the router reader", () => {
-  /** A Hono app shaped like guard's, with one route and one middleware. */
+  /** A Hono app shaped like gateway's, with one route and one middleware. */
   const app = new Hono();
   app.get("/healthz", (c) => c.text("ok"));
   app.use("/v1/*", async (_c, next) => next());
@@ -279,6 +279,6 @@ describe("the router reader", () => {
 describe("surfaceOf", () => {
   test("an app with no routes at all is an error, not an empty set", () => {
     // Two readers that both find nothing agree. This is what stops that.
-    expect(() => surfaceOf(new Hono().routes, "guard")).toThrow(/serves no routes/);
+    expect(() => surfaceOf(new Hono().routes, "gateway")).toThrow(/serves no routes/);
   });
 });

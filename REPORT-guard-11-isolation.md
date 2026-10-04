@@ -1,11 +1,11 @@
 # guard-11 — making the tenant boundary load-bearing
 
-D18 measured guard at **zero** cross-tenant negative tests, alongside identity (7)
+D18 measured gateway at **zero** cross-tenant negative tests, alongside identity (7)
 and courier (19), with the other eight services also at zero. darkroom-09 landed
 first and set the shape: enumerate the account-scoped entry points, write a
 negative test for each, and make the answer **absence** rather than `403`.
 
-This packet does the same for guard, and the finding is better than a number. The
+This packet does the same for gateway, and the finding is better than a number. The
 implementation was mostly right — the bucket is keyed on the verified account, the
 principal's account comes from a signed claim, `/v1/me` echoes nothing but the
 caller's own — and the two places it was wrong were wrong in the way that matters
@@ -39,9 +39,9 @@ A reader who disagrees can add a row and see what breaks.
 
 ## The eleven, and what each one is
 
-guard holds no account's rows. There is no `assets` table and no query that could
+gateway holds no account's rows. There is no `assets` table and no query that could
 drop `and account_id = $2`, so darkroom's shape does not transfer literally. What
-guard holds is **state keyed by account** — a rate-limit bucket, a set of API-key
+gateway holds is **state keyed by account** — a rate-limit bucket, a set of API-key
 records — and the ways to *name* an account, which are the ways a boundary gets
 crossed.
 
@@ -65,14 +65,14 @@ factory is not given in the structural file; it is covered in the behavioural on
 which builds the browser surface deliberately.
 
 There is **no `write` kind**, and the reason is a real gap rather than an
-oversight: guard issues no key on any route. The README says so under "Not built
+oversight: gateway issues no key on any route. The README says so under "Not built
 yet" — "What is missing is the caller, not the capability" — so there is no request
 that *creates* account-scoped state for a caller to be refused.
 
 ## The two defects
 
 Both are in `memoryApiKeyStore`. **Neither was reachable from a route today** —
-guard has no endpoint that issues or revokes a key — and both are load-bearing
+gateway has no endpoint that issues or revokes a key — and both are load-bearing
 anyway, because the store is the seam `TODO(guard-07)` moves to Redis and the trait
 is what the future `/v1/api-keys` route will call. A store whose scoping is wrong
 is a store whose Redis implementation will be written from a signature that does
@@ -124,7 +124,7 @@ membership of an id set.
 ## Absence, not refusal
 
 **No `403` was found for a resource the caller cannot see, and none was added.**
-The only two `403`s guard writes are:
+The only two `403`s gateway writes are:
 
 - `requireScope` — the token authenticated and lacks a scope. A **capability**
   failure: a fact about the caller, which they already know, so reporting it leaks
@@ -136,7 +136,7 @@ Neither names a resource, so neither can confirm one exists. The distinction is
 load-bearing in both directions and both halves are asserted: a `403` for
 *tenancy* would be a finding to fix, and a `404` for *capability* would throw away
 a distinction the caller is entitled to. `requireScope`'s detail names the scope
-that is missing — guard's own configuration, safe to name — and never echoes the
+that is missing — gateway's own configuration, safe to name — and never echoes the
 scopes the caller *does* hold, which would tell a prober what else to try for.
 
 Absence is enforced below the wire too. In the store, `revoke` on a foreign key
@@ -241,11 +241,11 @@ copy. `bucket()` is private, so the test now observes the only honest point — 
 key `eval` was actually handed, captured off the transport.
 
 Both are recorded in the CHANGELOG and in `AGENTS.md`, because both are shapes the
-next guard in this repository will have.
+next gateway in this repository will have.
 
 ## Proven able to fire
 
-A guard nobody has watched fail is a guard nobody knows works. Five divergences were
+A gateway nobody has watched fail is a gateway nobody knows works. Five divergences were
 planted in production source and reverted. Every one was caught, and the output
 below is the real run, not a paraphrase.
 
@@ -284,31 +284,31 @@ been misused yet.
 Divergence 4 is the one worth stating carefully. Deleting the digest does not break
 isolation between accounts — each account still gets its own key, so every
 behavioural case stayed green. What it breaks is the *privacy* property the digest
-was for: `KEYS guard:rl:*` yields a list of the accounts hitting the edge. So the
+was for: `KEYS gateway:rl:*` yields a list of the accounts hitting the edge. So the
 test asserts a property that is not the one the defect removes, and the only way to
 hold it is to observe the real key rather than recompute one. That is the second
-guard's bug, and divergence 4 is what proved it.
+gateway's bug, and divergence 4 is what proved it.
 
 ### Redundancy worth noting
 
 Divergence 2 was caught by exactly one test, and it is the one I expected to be
 weakest: it needs a fixture whose ids collide, which is precisely what the first
 draft failed to build. It is now a single strong case rather than a broad net,
-because there is only one way for `list` to leak. That is a thinner guard than
+because there is only one way for `list` to leak. That is a thinner gateway than
 divergence 1's four cases and the report says so rather than counting them as
 equivalent.
 
 ## The live-Redis tier
 
-Gated on **`GUARD_REDIS_URL`**, with `GUARD_REDIS_REQUIRED=true` turning "no URL"
+Gated on **`GATEWAY_REDIS_URL`**, with `GATEWAY_REDIS_REQUIRED=true` turning "no URL"
 from a skip into a module-load throw. Reported separately, because a CI job that
 silently skips the hard part is worse than no CI.
 
 | run | result |
 |---|---|
-| `GUARD_REDIS_URL=redis://127.0.0.1:6399 GUARD_REDIS_REQUIRED=true` | **15 pass, 0 fail, 0 skip** — including `two accounts' buckets are separate keys against a real server` |
+| `GATEWAY_REDIS_URL=redis://127.0.0.1:6399 GATEWAY_REDIS_REQUIRED=true` | **15 pass, 0 fail, 0 skip** — including `two accounts' buckets are separate keys against a real server` |
 | unset (`bun test`) | **0 pass, 15 skip, 0 fail** — exit 0, which is why the mechanisms exist |
-| `GUARD_REDIS_REQUIRED=true`, URL unset | **0 pass, 1 fail, 1 error** at module load |
+| `GATEWAY_REDIS_REQUIRED=true`, URL unset | **0 pass, 1 fail, 1 error** at module load |
 
 I ran the tier against a local `redis-server` on port 6399 and it passed. The new
 case is the tenant boundary where it is actually load-bearing: everything else in
@@ -325,7 +325,7 @@ which is exactly why the live tier is the one that counts.
 - **No `403` was added and none was removed.** Both existing ones are capability
   and origin failures and are correct where they are.
 - **`/auth/*` has no account-scoped negative case.** The BFF surface is keyed by a
-  session id, not an account: `sessions.get(sessionId)` returns the token guard
+  session id, not an account: `sessions.get(sessionId)` returns the token gateway
   minted for that browser, and the session id is a `randomUUID` a caller cannot
   choose. Cross-tenant access there means stealing a session id, which is
   credential theft rather than a scoping defect, and the origin gate plus the
@@ -345,7 +345,7 @@ All green, and the counts below are from these runs:
 bin/prime                467 pass  15 skip  0 fail   (482 across 21 files)
 docker build --target .  467 pass  15 skip  0 fail   (the same 482 in the image)
 bun run typecheck        clean
-live Redis tier          15 pass  0 fail              (GUARD_REDIS_URL set)
+live Redis tier          15 pass  0 fail              (GATEWAY_REDIS_URL set)
 ```
 
 Baseline before this packet was 430 pass / 14 skip across 19 files; the 37 new

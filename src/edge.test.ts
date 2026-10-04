@@ -3,7 +3,7 @@
 // Everything in this file is a *negative* claim: the answer is that something
 // cannot happen, and the test is what stops it starting to happen without
 // anyone noticing. A gateway's tests otherwise assert that it does what it says,
-// which is the half that was never in doubt — guard had 417 green tests before
+// which is the half that was never in doubt — gateway had 417 green tests before
 // this file and two of them were sitting on real defects.
 //
 // Each claim here names the mechanism that makes it true, so "I reviewed it, it's
@@ -20,7 +20,7 @@ import { memorySessionStore } from "./bff/session";
 import { fakeIdentity, IDENTITY_PATHS, type FakeIdentity } from "../test/fakeIdentity";
 import { signToken, startJwksServer, testKey, type JwksServer, type TestKey } from "../test/jwksServer";
 
-const AUDIENCE = "guard-test";
+const AUDIENCE = "gateway-test";
 const ACCOUNT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
 let identity: JwksServer;
@@ -58,12 +58,12 @@ const token = () =>
  */
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
   [
-    `https://guard.test${path}`,
+    `https://gateway.test${path}`,
     {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        origin: "https://guard.test",
+        origin: "https://gateway.test",
         "sec-fetch-site": "same-origin",
         ...headers,
       },
@@ -99,7 +99,7 @@ describe("no client-controlled outbound fetch", () => {
 
   test("a body carrying absolute URLs reaches identity as data, never as a target", async () => {
     // The classic SSRF shape: a field whose value looks like a URL and is
-    // somewhere a fetch is built from. guard forwards the body byte for byte to
+    // somewhere a fetch is built from. gateway forwards the body byte for byte to
     // a path it chose, so the only way this becomes an SSRF is if some handler
     // started reading a URL out of the payload. Every one of these values is
     // aimed at something a gateway should never reach on a caller's behalf —
@@ -128,7 +128,7 @@ describe("no client-controlled outbound fetch", () => {
   test("no request header can move the identity target", async () => {
     // A header a caller chose is the other place a URL can hide. If any handler
     // built a fetch from one, this is where it would show: a request that tries
-    // to redirect guard's outbound call to the metadata service, through every
+    // to redirect gateway's outbound call to the metadata service, through every
     // header name that has ever been used for exactly that.
     await gateway().request(
       ...post("/auth/login", { email: "a@b.test", password: "hunter22" }, {
@@ -147,13 +147,13 @@ describe("no client-controlled outbound fetch", () => {
 
   test("a redirect from identity is not followed to a re-checked target", async () => {
     // The reason this is a *test* and not a comment: `fetch` follows a 3xx by
-    // default, so the question is whether guard has ever handed a
+    // default, so the question is whether gateway has ever handed a
     // caller-influenced URL to something that would follow one. The answer here
     // is that there is no caller-influenced URL to follow — but a `Location`
     // coming back from identity is still worth pinning, because a *future*
     // handler that fetched a caller-supplied URL would inherit this default.
     //
-    // What guard does today is not follow: the call's response is inspected for
+    // What gateway does today is not follow: the call's response is inspected for
     // a status it recognises and the body is parsed as JSON, and a 302 is not a
     // status any of the four routes accepts.
     upstream.route("POST", IDENTITY_PATHS.register, {
@@ -171,7 +171,7 @@ describe("no client-controlled outbound fetch", () => {
   });
 
   test("the JWKS URL is configuration, never a request header or query", async () => {
-    // The other outbound call guard makes. Its target is `${issuer}/.well-known/…`
+    // The other outbound call gateway makes. Its target is `${issuer}/.well-known/…`
     // from `IDENTITY_JWKS_URL` — an operator setting, validated at construction.
     const gateway = createApp({ jwt: { issuer: identity.issuer, audience: AUDIENCE } });
 
@@ -248,7 +248,7 @@ describe("path handling: a route is chosen by matching, not by string surgery", 
     ]) {
       const res = await app.request(path, {
         method: "POST",
-        headers: { origin: "https://guard.test", "content-type": "application/json" },
+        headers: { origin: "https://gateway.test", "content-type": "application/json" },
         body: JSON.stringify({ email: "a@b.test", password: "hunter22" }),
       });
 
@@ -259,7 +259,7 @@ describe("path handling: a route is chosen by matching, not by string surgery", 
       // have been throttled and authenticated.
       expect(`${path} -> ${res.status}`).toMatch(/-> (401|404)$/);
       expect(res.headers.get("set-cookie")).toBeNull();
-      expect(await res.text()).not.toContain("guard listening");
+      expect(await res.text()).not.toContain("gateway listening");
     }
   });
 
@@ -268,7 +268,7 @@ describe("path handling: a route is chosen by matching, not by string surgery", 
     // matched by prefix would exempt `/healthz-anything`, and this is where a
     // future route under either prefix would silently become unthrottled.
     const app = createApp({
-      rateLimit: { limits: { default: { limit: 1, windowMs: 60_000, policy: "guard-api" }, routes: {} } },
+      rateLimit: { limits: { default: { limit: 1, windowMs: 60_000, policy: "gateway-api" }, routes: {} } },
     });
 
     expect((await app.request("/healthz")).status).toBe(200);
@@ -327,24 +327,24 @@ describe("nothing a caller sends reaches a header or a log line", () => {
     expect(body).not.toContain("\n");
   });
 
-  test("a CRLF in a rate-limit-affecting header never reaches guard at all", async () => {
+  test("a CRLF in a rate-limit-affecting header never reaches gateway at all", async () => {
     // The header path a gateway is most likely to get wrong: a value read from
     // the request and written into a response header. The result here is
     // stronger than a filter — the runtime refuses to *construct* a request
     // whose header value carries a line break, so the bytes never arrive and
-    // there is nothing for guard to sanitise. Asserting the refusal is what
+    // there is nothing for gateway to sanitise. Asserting the refusal is what
     // stops this test quietly becoming a claim about a filter that does not
     // exist.
     //
-    // The second half is guard's own: `X-Forwarded-For` is the one caller-chosen
-    // header guard reads, and it never reaches a response header at all — it
+    // The second half is gateway's own: `X-Forwarded-For` is the one caller-chosen
+    // header gateway reads, and it never reaches a response header at all — it
     // becomes a SHA-256 digest inside a bucket name.
     expect(() =>
-      new Request("https://guard.test/", { headers: { "x-forwarded-for": "203.0.113.4\r\nX-Injected: yes" } }),
+      new Request("https://gateway.test/", { headers: { "x-forwarded-for": "203.0.113.4\r\nX-Injected: yes" } }),
     ).toThrow();
 
     const app = createApp({
-      rateLimit: { limits: { default: { limit: 5, windowMs: 60_000, policy: "guard-api" }, routes: {} } },
+      rateLimit: { limits: { default: { limit: 5, windowMs: 60_000, policy: "gateway-api" }, routes: {} } },
     });
     const res = await app.request("/", { headers: { "x-forwarded-for": "203.0.113.4" } });
 
@@ -356,7 +356,7 @@ describe("nothing a caller sends reaches a header or a log line", () => {
 
   test("the rate-limit policy names in the headers come from configuration alone", async () => {
     // `RateLimit-Policy` is a structured field, and the policy name is the one
-    // thing guard writes into it from a table. A name carrying a second field
+    // thing gateway writes into it from a table. A name carrying a second field
     // item is refused at *construction* rather than escaped — so this is a
     // refusal to boot, not a 500 on the first request, which is the stronger of
     // the two answers and is asserted as such.
@@ -370,14 +370,14 @@ describe("nothing a caller sends reaches a header or a log line", () => {
 
     // And the configured names that DO ship are the only thing in the header.
     const app = createApp({
-      rateLimit: { limits: { default: { limit: 7, windowMs: 60_000, policy: "guard-api" }, routes: {} } },
+      rateLimit: { limits: { default: { limit: 7, windowMs: 60_000, policy: "gateway-api" }, routes: {} } },
     });
     const res = await app.request("/");
 
-    expect(res.headers.get("ratelimit-policy")).toBe('"guard-api";q=7;w=60');
+    expect(res.headers.get("ratelimit-policy")).toBe('"gateway-api";q=7;w=60');
     // `t` is the effective window to replenishment, not the policy window — the
     // countdown the draft means by it — so it is the store's number, not 60.
-    expect(res.headers.get("ratelimit")).toMatch(/^"guard-api";r=6;t=\d+$/);
+    expect(res.headers.get("ratelimit")).toMatch(/^"gateway-api";r=6;t=\d+$/);
   });
 
   test("an error from identity is logged with its detail and returned without it", async () => {
@@ -414,7 +414,7 @@ describe("nothing a caller sends reaches a header or a log line", () => {
     // "identity answered with rubbish". Neither is true of an upstream 5xx: the
     // transport did not throw, so `call()`'s catch never runs, and the handler
     // falls through to `unusable()` without a word. The browser says 503 and
-    // guard's log says nothing at all.
+    // gateway's log says nothing at all.
     //
     // That is a silent outage. Every login in a deployment is failing with one
     // status, nothing is recorded, and the operator has no signal to act on
@@ -470,7 +470,7 @@ describe("nothing a caller sends reaches a header or a log line", () => {
     const cookie = login.headers.get("set-cookie")?.split(";")[0];
     expect(cookie).toBeTruthy();
 
-    const res = await app.request("https://guard.test/auth/me", { headers: { cookie: cookie! } });
+    const res = await app.request("https://gateway.test/auth/me", { headers: { cookie: cookie! } });
 
     expect(res.status).toBe(503);
     const line = JSON.stringify(logged);
@@ -504,7 +504,7 @@ describe("nothing a caller sends reaches a header or a log line", () => {
     const login = await app.request(...post("/auth/login", { email: "a@b.test", password: "hunter22" }));
     const cookie = login.headers.get("set-cookie")?.split(";")[0]!;
 
-    const res = await app.request("https://guard.test/auth/me", { headers: { cookie } });
+    const res = await app.request("https://gateway.test/auth/me", { headers: { cookie } });
 
     expect(res.status).toBe(503);
     const line = JSON.stringify(logged);

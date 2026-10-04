@@ -19,7 +19,7 @@ const ACCOUNT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
  */
 function gated(store: ApiKeyStore) {
   const auth = createApiKeyAuth({ keys: store });
-  const jwt = createJwtVerifier({ issuer: "https://identity.example", audience: "guard-test" });
+  const jwt = createJwtVerifier({ issuer: "https://identity.example", audience: "gateway-test" });
   const a = new Hono<AuthEnv>();
   a.use("*", async (c, next) => {
     if (auth.hasKeyScheme(c)) return auth.authenticate(c, next);

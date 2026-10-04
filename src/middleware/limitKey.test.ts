@@ -9,7 +9,7 @@ import {
 } from "./limitKey";
 
 /**
- * A Hono app whose context is exactly what guard puts on it by the time the
+ * A Hono app whose context is exactly what gateway puts on it by the time the
  * limiter reads it: a verified principal, an API key id, and the raw request.
  * Nothing here is fabricated by the limiter — that is the whole point of the
  * module and the reason its tests build the context rather than a fake it.

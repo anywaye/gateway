@@ -119,7 +119,7 @@ describe("the bun pin", () => {
 describe("the gate obeys the pin rather than only needing a bun", () => {
   /** A `bun` that answers `--version` and is otherwise a no-op. */
   const fakeBun = (version: string): string => {
-    const dir = mkdtempSync(join(tmpdir(), "guard-fake-bun-"));
+    const dir = mkdtempSync(join(tmpdir(), "gateway-fake-bun-"));
     const path = join(dir, "bun");
     writeFileSync(path, `#!/bin/sh\n[ "$1" = "--version" ] && echo ${version}\nexit 0\n`, { mode: 0o755 });
     return dir;
@@ -191,8 +191,8 @@ describe("the lockfile", () => {
     const lock = read("bun.lock");
     const manifest = JSON.parse(read("package.json")) as { name?: string };
 
-    expect(manifest.name).toBe("guard");
-    expect(lock).toMatch(/"name":\s*"guard"/);
+    expect(manifest.name).toBe("gateway");
+    expect(lock).toMatch(/"name":\s*"gateway"/);
     // The worktree pattern is the general form, so this keeps holding when the
     // next packet runs from a worktree and forgets again.
     expect(lock).not.toMatch(/"name":\s*"[a-z-]+-worker-[a-z]+-\d+"/);

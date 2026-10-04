@@ -41,8 +41,8 @@ describe("a valid table", () => {
 
   test("the whole API surface is a legal prefix", () => {
     // `/v1` claims every path under the mount, which is the shape a deployment
-    // gets when one service owns the API surface — including guard's own
-    // `/v1/me`, which stays guard's because it is registered first.
+    // gets when one service owns the API surface — including gateway's own
+    // `/v1/me`, which stays gateway's because it is registered first.
     expect(() => routeTable({ "/v1": { baseUrl: "http://identity.test" } })).not.toThrow();
   });
 
@@ -74,7 +74,7 @@ describe("what refuses to boot", () => {
 
   test("a prefix outside the mount, which could never match", () => {
     // The mount is `/v1/*`, so `/auth/` and `/pantry/` are unreachable by
-    // construction. Accepting one would be a table describing traffic guard
+    // construction. Accepting one would be a table describing traffic gateway
     // does not forward — and the routes an operator would most want to add are
     // exactly the ones that must not be reachable without more thought.
     for (const prefix of ["/pantry", "/auth/", "/", "/v1alpha", "/V1/pantry"]) {
@@ -97,10 +97,10 @@ describe("what refuses to boot", () => {
     }
   });
 
-  test("`/v1/me`, which guard serves before the pass-through can see it", () => {
+  test("`/v1/me`, which gateway serves before the pass-through can see it", () => {
     // A table claiming it describes a route that can never run. That is a
     // configuration error with no symptom at all — every request would be served
-    // by guard and the operator would believe their base URL had been used.
+    // by gateway and the operator would believe their base URL had been used.
     expect(() => routeTable({ "/v1/me": { baseUrl: "http://identity.test" } })).toThrow(/guard's own route/);
   });
 
@@ -139,7 +139,7 @@ describe("what refuses to boot", () => {
   test("a token that is empty or would inject a header", () => {
     // This value is written into an Authorization header verbatim, so a newline
     // in it is header injection arriving from the one place an operator trusts.
-    // Refused rather than escaped: a token is guard's own configuration and a
+    // Refused rather than escaped: a token is gateway's own configuration and a
     // wrong one is a mistake to surface.
     for (const token of ["", "  ", "abc def", "abc\r\nX-Injected: yes", "abc\ndef"]) {
       expect(() => routeTable({ "/v1/pantry": { baseUrl: "http://p.test", token } }), JSON.stringify(token)).toThrow(
@@ -250,7 +250,7 @@ describe("resolution", () => {
 
   test("the resolved entry carries the credential, because the credential is per upstream", () => {
     // Which is the whole of the credential rule's configuration half: a service
-    // has the credential guard presents to it, and resolving a path cannot
+    // has the credential gateway presents to it, and resolving a path cannot
     // substitute a caller's own.
     const table = routeTable({
       "/v1/pantry": { baseUrl: "http://pantry.test", token: "svc-pantry" },

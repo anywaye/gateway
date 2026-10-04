@@ -89,7 +89,7 @@ describe("problem", () => {
     expect(refused.errors).toBeUndefined();
   });
 
-  test("every code guard can produce has a title of its own", async () => {
+  test("every code gateway can produce has a title of its own", async () => {
     // A missing entry would render `title: undefined` in a response a client is
     // meant to display, and the type would not have caught it.
     const cases = [

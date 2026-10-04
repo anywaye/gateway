@@ -13,12 +13,12 @@
 // is the script and the socket, a CI run is the only place either can be forced,
 // and a run that quietly skips them has verified nothing.
 //
-// Gated on `GUARD_REDIS_URL`:
+// Gated on `GATEWAY_REDIS_URL`:
 //
 //   bun test src/middleware/rateLimitRedisLive.test.ts            # skips
-//   GUARD_REDIS_URL=redis://127.0.0.1:6379 bun test ...           # runs
+//   GATEWAY_REDIS_URL=redis://127.0.0.1:6379 bun test ...           # runs
 //
-// `GUARD_REDIS_REQUIRED=true` turns "no URL" from a skip into a failure, and it
+// `GATEWAY_REDIS_REQUIRED=true` turns "no URL" from a skip into a failure, and it
 // is what the CI job sets. A skip nobody is forced to notice is the exact shape
 // this file exists to prevent, so the gate that says *this tier must run* is
 // asserted by the tier itself rather than left to a reader of the log.
@@ -38,17 +38,17 @@ import {
 import { memoryRateLimitStore } from "./rateLimitStore";
 import type { RateLimitStore, Verdict } from "./rateLimitTypes";
 
-const REDIS_URL = process.env.GUARD_REDIS_URL?.trim();
-const REQUIRED = process.env.GUARD_REDIS_REQUIRED === "true";
+const REDIS_URL = process.env.GATEWAY_REDIS_URL?.trim();
+const REQUIRED = process.env.GATEWAY_REDIS_REQUIRED === "true";
 
 if (REQUIRED && REDIS_URL === undefined) {
   // Thrown at module load, before a test is registered, so a run that was supposed
   // to execute the script and could not says so in its first line of output
   // rather than in a summary of zero passes.
   throw new Error(
-    "GUARD_REDIS_REQUIRED=true and GUARD_REDIS_URL is unset. The live Redis tier cannot run, " +
-      "and a run that cannot run it proves nothing about GCRA_LUA. Point GUARD_REDIS_URL at a " +
-      "redis-server, or unset GUARD_REDIS_REQUIRED to skip this tier on purpose.",
+    "GATEWAY_REDIS_REQUIRED=true and GATEWAY_REDIS_URL is unset. The live Redis tier cannot run, " +
+      "and a run that cannot run it proves nothing about GCRA_LUA. Point GATEWAY_REDIS_URL at a " +
+      "redis-server, or unset GATEWAY_REDIS_REQUIRED to skip this tier on purpose.",
   );
 }
 
@@ -374,7 +374,7 @@ describe.skipIf(REDIS_URL === undefined)("live redis: GCRA_LUA, executed by redi
     expect((await store.hit(bucketB, request)).allowed).toBe(false);
 
     // Two keys, and neither names an account in the clear — the digest in
-    // `bucket()` means a `KEYS guard:rl:*` scan yields no list of the accounts
+    // `bucket()` means a `KEYS gateway:rl:*` scan yields no list of the accounts
     // hitting the edge. `written` holds both because `live()` records them.
     expect(written.has(store.keyFor(bucketA))).toBe(true);
     expect(written.has(store.keyFor(bucketB))).toBe(true);

@@ -34,7 +34,7 @@ export type RateLimitOptions = {
   /** Where buckets are counted. See `./rateLimitStore` for the two of them. */
   store: RateLimitStore;
   /**
-   * How many proxies stand in front of guard, which is how much of
+   * How many proxies stand in front of gateway, which is how much of
    * `X-Forwarded-For` may be believed. Zero — the default — believes none of
    * it. See `./limitKey`.
    */
@@ -158,7 +158,7 @@ export function rateLimit(options: RateLimitOptions): MiddlewareHandler<AuthEnv>
  * throws, the middleware fails open, and the limiter is silently off in exactly
  * the deployment that needs it. Hashing makes that impossible by construction
  * rather than by a charset nobody remembers, and it has the side benefit the
- * rate-limit draft's privacy section asks for: a `KEYS guard:rl:*` scan no longer
+ * rate-limit draft's privacy section asks for: a `KEYS gateway:rl:*` scan no longer
  * yields a list of the accounts hitting the edge.
  *
  * 32 hex characters of SHA-256 is 128 bits against a keyspace of accounts, and
@@ -209,7 +209,7 @@ export const RATE_LIMIT_HEADERS = [
  *
  *   * §3 `RateLimit-Policy` — the quota policy, as a List of Items: the policy
  *     name as a String, `q` for the quota, `w` for the window in seconds.
- *       RateLimit-Policy: "guard-api";q=600;w=60
+ *       RateLimit-Policy: "gateway-api";q=600;w=60
  *   * §4 `RateLimit` — the quota currently available under that policy: `r` for
  *     the available quota and, per §4.1.2, `t` for the *effective window*, "the
  *     number of seconds within which the client can use no more than the
@@ -218,12 +218,12 @@ export const RATE_LIMIT_HEADERS = [
  *     seconds into a hundred-a-minute policy; B.2.1 sends `r=99;t=50` under
  *     `q=100;w=60`). Sending the window here would tell a client its remaining
  *     quota lasts twice as long as it does.
- *       RateLimit: "guard-api";r=12;t=44
+ *       RateLimit: "gateway-api";r=12;t=44
  *   * The un-prefixed `RateLimit-Limit`, `RateLimit-Remaining` and
  *     `RateLimit-Reset` trio, which the same draft dropped in -08 and which
  *     deployed clients and proxies still parse. `RateLimit-Reset` counts down in
  *     seconds, like `t`, so the two agree by construction.
- *   * This repository's own `X-RateLimit-*`, which is what guard sent before the
+ *   * This repository's own `X-RateLimit-*`, which is what gateway sent before the
  *     draft existed: same numbers, and `X-RateLimit-Reset` as an absolute epoch
  *     instant, because a client that wants a wall-clock deadline should not have
  *     to reconstruct one from a delta.
@@ -260,7 +260,7 @@ function announce(
  * A counter store that is not there.
  *
  * FAILS OPEN, and the cost is named rather than hidden: for as long as Redis is
- * unreachable, guard applies no limit at all. The alternative — failing closed —
+ * unreachable, gateway applies no limit at all. The alternative — failing closed —
  * hands an outage in the counter store to every caller as a 429, which is the
  * same class of mistake as restarting the process on a dependency blip, and much
  * harder to notice. A store that cannot answer has told us nothing about whether
@@ -274,7 +274,7 @@ function announce(
 async function failedOpen(error: unknown, next: () => Promise<void>): Promise<Response | void> {
   // The message can name a host, a port and a bucket; the caller gets a request
   // with no rate-limit headers on it and no idea why.
-  console.error("guard: the rate-limit store is unavailable; this request is not counted", error);
+  console.error("gateway: the rate-limit store is unavailable; this request is not counted", error);
 
   await next();
 }

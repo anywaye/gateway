@@ -1,6 +1,6 @@
-# openapi/v1.yaml — the HTTP contract for guard, the cafaye public gateway.
+# openapi/v1.yaml — the HTTP contract for gateway, the cafaye public gateway.
 #
-# guard is the only door into a cafaye deployment. This document is what a
+# gateway is the only door into a cafaye deployment. This document is what a
 # generated client is built from, and it is written to
 # `cafaye/core: docs/openapi-conventions.md`. Where core and this file disagree,
 # core is right and this file is the bug — and every such place is listed under
@@ -25,7 +25,7 @@
 # method `ALL`. There are exactly two mounts, and neither is an operation:
 #
 #   * `ALL /v1/*` — the prefix the bearer-token gate is mounted on, and the
-#     prefix the pass-through to the services behind guard is mounted on when a
+#     prefix the pass-through to the services behind gateway is mounted on when a
 #     route table is configured. It has no method, no response and no body of its
 #     own, so OpenAPI has nothing to describe it as. **Excluded as that exact
 #     method+path pair** — not as a `/v1/` prefix, which would cover every route
@@ -70,7 +70,7 @@
 # is L4S/ECN and has nothing to do with rate limiting. The un-prefixed trio
 # (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`) is what that
 # draft dropped in -08 and what deployed clients and proxies still parse, so
-# guard sends both shapes rather than making a client guess.
+# gateway sends both shapes rather than making a client guess.
 #
 # ## A counter store that cannot answer means no limit at all
 #
@@ -85,7 +85,7 @@
 # Each is a manager decision rather than a local choice, and each is recorded
 # here so a reviewer finds it rather than a consumer. The two already open in
 # `cafaye.yml` — RS256 only, the `scope` claim, the default issuer, and the three
-# extra error codes — are not repeated; this document describes what guard *does*,
+# extra error codes — are not repeated; this document describes what gateway *does*,
 # and `cafaye.yml` says where each departure from core still needs a ruling.
 #
 #  1. `exposes` is still absent from `cafaye.yml`.
@@ -108,7 +108,7 @@
 #     *different* surface, not an API exception", or the infrastructure probes,
 #     whose paths are conventional rather than ours to choose. `GET /v1/me` is the
 #     only API-surface operation here, and the pass-through is mounted rather than
-#     served: its paths belong to the services behind guard and are decided by
+#     served: its paths belong to the services behind gateway and are decided by
 #     configuration, so there is no operation to describe. Requested: either
 #     core's `/v1` rule gets an explicit carve-out for a BFF, for probes and for
 #     a configured pass-through, or the browser surface is renamed under `/v1` and
@@ -116,7 +116,7 @@
 #
 #  3. The API key is not a bearer JWT.
 #
-#     core's auth section says "Bearer JWTs only". guard also accepts
+#     core's auth section says "Bearer JWTs only". gateway also accepts
 #     `Authorization: ApiKey caf_…` for a machine credential: 32 CSPRNG bytes
 #     stored as a SHA-256 digest, revocable on the next request. A self-contained
 #     JWT cannot be revoked before its `exp`, and a long-lived API key that is
@@ -131,26 +131,26 @@
 #  4. The browser surface has no CSRF token.
 #
 #     core's auth section pairs the `Secure`/`HttpOnly`/`SameSite=Lax` cookie with
-#     "and a CSRF token". guard sends the cookie with all three attributes and
+#     "and a CSRF token". gateway sends the cookie with all three attributes and
 #     gates every mutating `/auth` route on `Sec-Fetch-Site: same-origin`, falling
 #     back to comparing the `Origin` header's host. A request carrying neither is
 #     refused. That is a real defence and it is not a double-submit token: a token
 #     would be a second thing to get right for the same protection, and the OIDC
 #     packet replaces this login with an authorization-code flow where the state
 #     parameter *is* the token. Recorded as a gap rather than a settled question,
-#     because the two are not the same thing and a reader deciding which one guard
+#     because the two are not the same thing and a reader deciding which one gateway
 #     has is a reader who is wrong about one of them.
 #
 #  5. `404` and `500` are not problem documents.
 #
 #     They answer `{ "error": "not_found", "message": … }` and
 #     `{ "error": "internal_error", "message": … }` with `application/json`, and
-#     guard therefore produces **no** `not_found` or `internal` problem code at
+#     gateway therefore produces **no** `not_found` or `internal` problem code at
 #     all. core says every non-2xx is `application/problem+json` and reserves both
 #     slugs. The reason it is still so: the envelope's `trace_id` must equal an
 #     `X-Trace-Id` on *every* response, which is a trace-propagation middleware
 #     that does not exist yet, and the `README` carries this as an open packet.
-#     Nothing here describes the route guard ought to have. Requested: a packet
+#     Nothing here describes the route gateway ought to have. Requested: a packet
 #     that adds trace-id propagation and moves `404`/`500` onto the envelope in
 #     one go.
 #
@@ -181,10 +181,10 @@
 openapi: 3.1.0
 
 info:
-  title: cafaye guard
+  title: cafaye gateway
   # This is a new document, so it starts at 1.0.0 and there is no compatibility
   # promise to keep. It is the document's own semantic version and it follows
-  # guard's release line, not the `/v1` prefix: the two answer different
+  # gateway's release line, not the `/v1` prefix: the two answer different
   # questions, and core's sync rule asks for both.
   #
   # Non-breaking additions bump this and nothing else. A breaking change bumps the
@@ -192,7 +192,7 @@ info:
   version: 1.0.0
   summary: The cafaye public gateway — authentication, rate limits, routing, and the browser sign-in surface.
   description: |
-    `guard` is the only door into a cafaye deployment. It authenticates callers,
+    `gateway` is the only door into a cafaye deployment. It authenticates callers,
     limits what they can ask for, and forwards requests under a configured path
     prefix to the service that owns the work. It holds no business data and
     publishes no events.
@@ -206,7 +206,7 @@ info:
     remembered to extend.
 
     **`/auth/*` is the browser surface.** A session id in a `__Host-bff-session`
-    cookie that guard minted, swapped for the identity token server-side when a
+    cookie that gateway minted, swapped for the identity token server-side when a
     request needs one. A browser never sees that token, and never sees identity's
     endpoints at all. The mutating routes additionally require the request to be
     provably same-origin.
@@ -214,7 +214,7 @@ info:
     ## Refusing is the job, so the refusals are documented
 
     A `401` says "this token is not acceptable". A `503` says "we cannot tell",
-    and guard never collapses the two: if `identity`'s key set cannot be fetched,
+    and gateway never collapses the two: if `identity`'s key set cannot be fetched,
     the caller's credential was not the problem, and a `401` would send them to
     fix something that is fine.
 
@@ -236,7 +236,7 @@ info:
     answered `401` and is counted against nothing. That is affordable only because
     a rejected token costs no key fetch: the algorithm is read off the protected
     header before anything is fetched, so an `alg: none` or HS256 token never
-    reaches a verifier and never makes guard call `identity`.
+    reaches a verifier and never makes gateway call `identity`.
 
     Counters are per process unless `REDIS_URL` names a shared store, so N
     replicas of the in-memory store is an N-times limit. See the header on
@@ -256,9 +256,9 @@ info:
     paths, not subtrees, so the routed surface is stated in the README's Routing
     section and mounted (not served) on the `ALL /v1/*` pair above.
   contact:
-    name: guard
+    name: gateway
     url: https://github.com/cafaye/guard
-    email: guard@cafaye.com
+    email: gateway@cafaye.com
   license:
     name: MIT
     url: https://opensource.org/license/mit
@@ -279,7 +279,7 @@ tags:
       The API surface. A bearer JWT or an API key, never a cookie.
   - name: browser
     description: |
-      The BFF surface. A `__Host-` session cookie guard minted, and — on the
+      The BFF surface. A `__Host-` session cookie gateway minted, and — on the
       mutating routes — a request that is provably same-origin.
 
 paths:
@@ -363,7 +363,7 @@ paths:
       operationId: getCurrentPrincipal
       summary: The verified principal
       description: |
-        Resolves the presented credential and returns what guard proved about the
+        Resolves the presented credential and returns what gateway proved about the
         caller: the `sub`, the scopes, the account, and the claims themselves.
 
         This is the operation that exists to prove the auth chain is wired end to
@@ -376,7 +376,7 @@ paths:
         a caller learns by trying.
 
         **A `503`, never a `401`, when `identity` is unreachable.** The signing
-        keys could not be fetched, so guard cannot tell whether the token is good;
+        keys could not be fetched, so gateway cannot tell whether the token is good;
         a `401` would send a caller to rotate a credential that was fine.
       security:
         - bearerToken: []
@@ -411,7 +411,7 @@ paths:
                 accountId: cd000000-0000-0000-0000-000000000000
                 claims:
                   iss: https://identity.localhost
-                  aud: guard
+                  aud: gateway
                   sub: ab000000-0000-0000-0000-000000000000
                   account_id: cd000000-0000-0000-0000-000000000000
                   scope: invoices:write
@@ -435,7 +435,7 @@ paths:
         browser needs. **No session is created**: a registration is not a login,
         and the caller signs in separately with `POST /auth/login`.
 
-        The body is forwarded to `identity` **verbatim**. guard decides only
+        The body is forwarded to `identity` **verbatim**. gateway decides only
         whether it is a JSON object and whether it is under 4 KiB; whether the
         address is deliverable and the password strong enough is `identity`'s
         call, under the same rules every other client of `identity` gets. A second
@@ -754,7 +754,7 @@ components:
         conventions also allow ES256; widening is a one-line change and belongs
         with the moment `identity` publishes ES256 keys.
 
-        Required claims: `iss` (the configured issuer), `aud` (guard's own client
+        Required claims: `iss` (the configured issuer), `aud` (gateway's own client
         id), `sub`, and `exp`. The capability claim is a space-separated `scope`
         string — not core's `scopes` — and an absent `scope` is an empty set,
         never everything. Both are open in `cafaye.yml`.
@@ -778,7 +778,7 @@ components:
         the key sets the same principal: everything downstream treats the two
         credentials as the same caller.
 
-        Nothing in guard hands a key out yet — see "Not built yet" in the
+        Nothing in gateway hands a key out yet — see "Not built yet" in the
         repository README. A client holding one today is talking to a deployment
         that issued it out of band.
     sessionCookie:
@@ -818,7 +818,7 @@ components:
       description: |
         The fallback for a user agent that sends no fetch metadata. Compared by
         **host, not by origin**, so a TLS-terminating proxy rewriting the scheme
-        guard sees does not lock out every real browser. `Origin: null` is refused.
+        gateway sees does not lock out every real browser. `Origin: null` is refused.
       schema:
         type: string
 
@@ -829,7 +829,7 @@ components:
         problem document and always equal to the `trace_id` in its body, so
         support starts from that id.
 
-        **Absent on a `2xx` and on the v0 `404`/`500`.** guard does not yet
+        **Absent on a `2xx` and on the v0 `404`/`500`.** gateway does not yet
         propagate a trace id across every response, which is one half of why those
         two statuses are not problem documents — see open decision 5.
       schema:
@@ -843,10 +843,10 @@ components:
         quota, `w` for the window in seconds.
 
         The name is half the counter key, so two policies never share a bucket:
-        exhausting `guard-auth-login` cannot spend the `guard-api` allowance.
+        exhausting `gateway-auth-login` cannot spend the `gateway-api` allowance.
       schema:
         type: string
-      example: '"guard-api";q=600;w=60'
+      example: '"gateway-api";q=600;w=60'
     RateLimit:
       description: |
         §4: the quota currently available under that policy — `r` for the
@@ -859,7 +859,7 @@ components:
         one will believe there is burst room the limiter then refuses.
       schema:
         type: string
-      example: '"guard-api";r=598;t=44'
+      example: '"gateway-api";r=598;t=44'
     RateLimitLimit:
       description: The un-prefixed trio the -11 draft dropped in -08, kept because deployed clients and proxies still parse it.
       schema:
@@ -967,7 +967,7 @@ components:
             - account_locked
             - payload_too_large
             - rate_limited
-            # core's reserved list also carries `not_found` and `internal`. guard
+            # core's reserved list also carries `not_found` and `internal`. gateway
             # does not produce either: the `404` and the `500` are still the v0
             # `V0Error` envelope, so listing them here would be a code no response
             # can carry. See open decision 5 in the header.
@@ -997,7 +997,7 @@ components:
     V0Error:
       type: object
       description: |
-        The v0 error shape, and the only non-problem body guard still writes.
+        The v0 error shape, and the only non-problem body gateway still writes.
         It is what the `404` and the `500` answer, with `application/json`.
 
         Recorded as a conflict with core's conventions rather than quietly fixed:
@@ -1027,10 +1027,10 @@ components:
       type: object
       description: |
         One entry per **registered** dependency, by name. `identity` is registered
-        in every deployment guard has an identity for; `redis` is registered when
+        in every deployment gateway has an identity for; `redis` is registered when
         `REDIS_URL` is set. An app built with no probes at all answers `{}`.
 
-        The keys are guard's configuration rather than a client's: a deployment
+        The keys are gateway's configuration rather than a client's: a deployment
         with a new dependency grows this object, which is a non-breaking change.
         Read it as "the names I know about", and treat an unknown name as a
         dependency whose state is unknown rather than as a healthy one.
@@ -1049,7 +1049,7 @@ components:
     Principal:
       type: object
       description: |
-        What guard proved about the caller, and the whole of what a handler is
+        What gateway proved about the caller, and the whole of what a handler is
         allowed to read. There is no endpoint anywhere in this repository that
         returns a token, a digest or a session id.
       additionalProperties: false
@@ -1103,12 +1103,12 @@ components:
     RegisterRequest:
       type: object
       description: |
-        Forwarded to `identity` **verbatim**. guard checks only that the body is a
+        Forwarded to `identity` **verbatim**. gateway checks only that the body is a
         JSON object and that it is under 4 KiB; the fields below are the ones
         `identity` reads, and it is the only thing in the platform that decides
         whether they are acceptable.
 
-        `additionalProperties` is open on purpose. guard does not validate and
+        `additionalProperties` is open on purpose. gateway does not validate and
         does not filter, so a client sending a field `identity` understands is
         working; a client sending a field nobody understands gets `identity`'s
         answer.
@@ -1123,7 +1123,7 @@ components:
           minLength: 1
           description: |
             A password `identity` will accept, hashed with argon2id. The bounds
-            here are the transport's, not a policy: guard does not have a password
+            here are the transport's, not a policy: gateway does not have a password
             policy and will not grow one, because a second set of rules in the
             gateway is a second answer to "what is a valid password".
 
@@ -1150,7 +1150,7 @@ components:
         When the session runs out, and nothing else.
 
         **There is no token field here, and adding one would be the bug this
-        document exists to prevent.** The identity token lives in guard's session
+        document exists to prevent.** The identity token lives in gateway's session
         store and is never echoed to a page, because a token in a page is a token
         a cross-site script can read.
       additionalProperties: false
@@ -1161,7 +1161,7 @@ components:
           format: date-time
           description: |
             RFC 3339 UTC, taken from the expiry `identity` minted rather than from
-            a guard-side TTL. `identity` decides how long a session is good for,
+            a gateway-side TTL. `identity` decides how long a session is good for,
             and a second clock here would be a second answer.
 
   responses:
@@ -1260,7 +1260,7 @@ components:
     Unavailable:
       description: |
         **"We cannot tell", never "your credential is wrong."** A dependency
-        guard needs did not answer: `identity`'s signing keys, `identity`'s auth
+        gateway needs did not answer: `identity`'s signing keys, `identity`'s auth
         routes, or the API-key store.
 
         Collapsing this into a `401` is the specific mistake this status exists to
@@ -1376,7 +1376,7 @@ components:
     AccountLocked:
       description: |
         Too many consecutive failed sign-in attempts. `identity` owns the
-        lockout; guard carries the remaining window through rather than collapsing
+        lockout; gateway carries the remaining window through rather than collapsing
         it into the `401` above, because that would tell somebody with the right
         password to try again and be refused again for a quarter of an hour.
       headers:
@@ -1409,7 +1409,7 @@ components:
         in the response.
 
         **The one response in this document that is not a problem document.**
-        guard's `onError` still answers the v0 `V0Error` shape with
+        gateway's `onError` still answers the v0 `V0Error` shape with
         `application/json`, because the envelope's `trace_id` would have to match
         an `X-Trace-Id` on every response and that propagation does not exist yet.
         See open decision 5 in the header.

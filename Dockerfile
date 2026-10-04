@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# guard — the cafaye public gateway. oven/bun slim, multi-stage.
+# gateway — the cafaye public gateway. oven/bun slim, multi-stage.
 #
-#   docker build -t cafaye/guard:dev .
+#   docker build -t cafaye/gateway:dev .
 #
 # STRICTNESS NOTES (read before loosening anything)
 #   - oven/bun:…-slim, never the full image: slim drops the browser and document

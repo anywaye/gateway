@@ -1,72 +1,72 @@
 ---
-# cafaye.yml — the cafaye project manifest for guard.
+# cafaye.yml — the cafaye project manifest for gateway.
 #
 # Conforms to core's frozen schema
 # (cafaye/core: schemas/cafaye.manifest.schema.json). Specs are manager-owned:
 # a worker records the shape it is being built against and marks what it cannot
 # decide. See AGENTS.md.
 #
-# > DECISION NEEDED (guard): `exposes` is absent, and conventions rule 3 says a
-# > service that serves traffic must declare it. guard does serve traffic, so
+# > DECISION NEEDED (gateway): `exposes` is absent, and conventions rule 3 says a
+# > service that serves traffic must declare it. gateway does serve traffic, so
 # > the omission is a known gap, not a judgement that the rule does not apply.
-# > Filling it in needs an OpenAPI 3.1 document for guard's HTTP surface, and
+# > Filling it in needs an OpenAPI 3.1 document for gateway's HTTP surface, and
 # > specs are manager-owned — a worker drafting one would be publishing a
 # > contract the manager has not agreed to. Requested: the two probe endpoints
 # > for v0 (/healthz, /readyz), with the routed surface added as the JWKS and
 # > proxy packets land. Until that exists, `caf dev` and `pantry` have nothing
-# > to read for guard, which is the cost of leaving it out.
-name: guard
+# > to read for gateway, which is the cost of leaving it out.
+name: gateway
 description: The cafaye public gateway — the only door in, terminating auth and rate limits in front of every service.
 language: typescript
 core: ^0.2.0
 
-# guard subscribes to no events. It answers requests; it does not react to a
+# gateway subscribes to no events. It answers requests; it does not react to a
 # bus. Delivery being at-least-once is someone else's idempotency problem.
 consumes: []
 
-# guard builds on identity's signing keys: the JWKS it verifies bearer tokens
+# gateway builds on identity's signing keys: the JWKS it verifies bearer tokens
 # against belongs to identity. Nothing else is a service-level dependency —
 # hono, jose, bun and the rest are packages and live in package.json (rule 4).
 #
-# > DECISION NEEDED (guard, guard-02): the auth contract guard is built to
+# > DECISION NEEDED (gateway, guard-02): the auth contract gateway is built to
 # > differs from `core/docs/openapi-conventions.md` in three places, because
 # > packet guard-02's contract is manager-decided and fixed and this worker
 # > followed it rather than second-guessing it. The gaps are recorded here
 # > because a future packet that widens any of them has to know they exist:
 # >
-# >  1. Algorithms. core accepts RS256 **and** ES256. guard accepts RS256 only,
+# >  1. Algorithms. core accepts RS256 **and** ES256. gateway accepts RS256 only,
 # >     pinned in one constant in `src/middleware/jwt.ts`. Widening is a
 # >     one-line change, and it should happen when identity publishes ES256
 # >     keys, not before — accepting an algorithm no key set uses buys nothing
 # >     and widens what a token can ask for.
 # >  2. The scope claim. core's conventions name a `scopes` claim; the guard-02
-# >     contract says a space-separated `scope` string, optional. guard reads
+# >     contract says a space-separated `scope` string, optional. gateway reads
 # >     `scope`. One constant (`SCOPE_CLAIM`) is the whole difference, but until
 # >     it is settled no service can be sure which name to mint.
 # >  3. The default issuer. core documents
 # >     `https://identity.cafaye.com/.well-known/jwks.json`; the packet fixes
 # >     `https://identity.localhost/.well-known/jwks.json` for the compose
 # >     stack. `IDENTITY_ISSUER` overrides it, and the JWKS path is appended to
-# >     the issuer by guard, not written into the variable.
+# >     the issuer by gateway, not written into the variable.
 # >
 # > Requested: a ruling on 1 and 2 from the manager, ideally in the same place
 # > core's conventions are amended, so the contract lives in one file.
 #
-# > DECISION NEEDED (guard, guard-03): the browser surface adds two error codes
+# > DECISION NEEDED (gateway, guard-03): the browser surface adds two error codes
 # > core does not reserve, and gives one service a second variable.
 # >
 # >  4. `invalid_json` (400), `payload_too_large` (413) and `account_locked`
 # >     (423). core's reserved list is unauthorized, forbidden, not_found,
 # >     conflict, validation_failed, rate_limited, idempotency_key_reused,
 # >     internal, unavailable. identity already answers with all three slugs
-# >     (identity/internal/httpapi/problem.go), and guard is the second caller of
+# >     (identity/internal/httpapi/problem.go), and gateway is the second caller of
 # >     identity's answers, so it reuses them rather than inventing a
-# >     guard-private synonym for the same three failures. The alternative makes
+# >     gateway-private synonym for the same three failures. The alternative makes
 # >     a client need a translation table to read a platform.
 # >  5. Two variables for one service. `IDENTITY_ISSUER` is where tokens are
 # >     *verified* — an https origin, in every environment. `IDENTITY_URL` is where a
 # >     session is *requested* — a service address, different per environment, and
-# >     `localhost` inside a container is guard itself. One variable cannot be
+# >     `localhost` inside a container is gateway itself. One variable cannot be
 # >     both, and core's conventions name neither, so nothing is being
 # >     contradicted — but an amendment should say what a gateway is expected to
 # >     call its identity service.
@@ -74,7 +74,7 @@ consumes: []
 # > Requested: a ruling on 4 and 5 alongside 1 and 2, and an entry in core's
 # > conventions for the three code slugs so the list is not kept twice.
 #
-# > DECISION NEEDED (guard, guard-04): the rate limiter's counters are per process
+# > DECISION NEEDED (gateway, guard-04): the rate limiter's counters are per process
 # > unless `REDIS_URL` names a shared store, and this manifest cannot say where
 # > that store is supposed to come from.
 # >
@@ -89,7 +89,7 @@ consumes: []
 # >       service, an operator's own, or something compose brings up? If it is a
 # >       platform service it probably belongs in `dependencies` and in compose.
 # >    b. Should `REDIS_URL` be **required** rather than optional, so a
-# >       multi-replica guard cannot boot without it? guard would rather fail to
+# >       multi-replica gateway cannot boot without it? gateway would rather fail to
 # >       start than serve an N× limit, but it does not know the replica count and
 # >       will not refuse to boot on a single-instance deployment either.
 # >    c. Are the shipped per-route numbers (`README.md`, "Per-route allowances")
@@ -121,5 +121,5 @@ repository:
   visibility: public
 
 owner:
-  team: guard
-  contact: guard@cafaye.com
+  team: gateway
+  contact: gateway@cafaye.com

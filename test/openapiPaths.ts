@@ -1,9 +1,9 @@
-// Reads guard's OpenAPI document and the routes `createApp` actually registers,
+// Reads gateway's OpenAPI document and the routes `createApp` actually registers,
 // and says where they disagree. The check built on this is
 // `openapiDocument.test.ts`; this module is the part of it that has to be right
 // for that check to mean anything.
 //
-// It lives in guard's own `test/` rather than in a shared helper, so the next
+// It lives in gateway's own `test/` rather than in a shared helper, so the next
 // service that publishes a document copies one file and reads it.
 //
 // ## Both sets are read, neither is written down
@@ -25,7 +25,7 @@
 //
 // ## Why this is not a YAML parser
 //
-// guard's dependencies are `hono`, `jose` and the runtime (`AGENTS.md`: no
+// gateway's dependencies are `hono`, `jose` and the runtime (`AGENTS.md`: no
 // dependency without a cause stated in review), and a YAML parser added only so
 // a test can read a file is a dependency with no cause. So this reads the part
 // of the document that describes routes — the `paths:` block and the keys under
@@ -65,7 +65,7 @@ export type Operation = {
 /**
  * One `app.use(…)` mount. It is not an operation and OpenAPI has nothing to
  * describe it as one: it has no method, it has no response of its own, and in
- * guard's case (`/v1/*`) it is a pass-through in front of a surface no single
+ * gateway's case (`/v1/*`) it is a pass-through in front of a surface no single
  * service owns. `app.routes` records it with the method `"ALL"`, and that is
  * the whole distinction.
  */
@@ -420,7 +420,7 @@ export function describeDrift(found: Drift): string {
       "the document does not describe",
       "A route nobody documented is a route the next generated client will not have, so the surface grows and the contract does not.",
       [
-        "The route is part of guard's public surface — document it in `openapi/v1.yaml`.",
+        "The route is part of gateway's public surface — document it in `openapi/v1.yaml`.",
         "The route is not meant to be public — say so in the document's header, and name it in this test's exclusion list, rather than leaving it to be found.",
       ],
     ),

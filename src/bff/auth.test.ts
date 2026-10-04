@@ -295,7 +295,7 @@ describe("POST /auth/register", () => {
     expect(h.identity.calls).toHaveLength(0);
   });
 
-  test("a body larger than guard will forward is 413, and is not read into memory", async () => {
+  test("a body larger than gateway will forward is 413, and is not read into memory", async () => {
     // An anonymous caller chooses how many bytes this process buffers. identity
     // caps a body at 4 KiB, so anything larger is refused by a reader that is
     // already reading — and an edge that buffered it first would be the one
@@ -333,10 +333,10 @@ describe("POST /auth/register", () => {
     expect(h.identity.callsTo("POST", IDENTITY_PATHS.register)[0]?.body).toBe(body);
   });
 
-  test("a 200 from a create is 503, not a body guard made up", async () => {
+  test("a 200 from a create is 503, not a body gateway made up", async () => {
     // identity's contract for this route is 201 and nothing else. An identity
     // answering 200 is a different service, and echoing its body would be
-    // guard reporting a registration that may never have happened.
+    // gateway reporting a registration that may never have happened.
     const h = harness();
     h.identity.route("POST", IDENTITY_PATHS.register, { status: 200, json: USER });
 
@@ -392,7 +392,7 @@ describe("POST /auth/login", () => {
     const cookie = parseSetCookie(res);
     expect(cookie.value).toMatch(UUID);
     // The whole point of the BFF: the browser's credential is a session id
-    // guard minted. Identity's token lives in guard's store and nowhere else.
+    // gateway minted. Identity's token lives in gateway's store and nowhere else.
     expect(cookie.value).not.toBe(TOKEN);
     expect(res.headers.get("set-cookie")).not.toContain(TOKEN);
     expect(await res.text()).not.toContain(TOKEN);
@@ -966,7 +966,7 @@ describe("the same-origin gate on mutating /auth routes", () => {
     const h = harness();
     loginSucceeds(h.identity);
 
-    // guard sees http:// after the proxy terminates TLS while the browser's
+    // gateway sees http:// after the proxy terminates TLS while the browser's
     // Origin is https://. Comparing schemes would 403 every real browser.
     // Comparing hosts is safe: the host is the one the browser addressed the
     // request to, and a cross-site requester cannot choose it.

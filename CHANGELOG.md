@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `guard` are recorded here. The format follows
+All notable changes to `gateway` are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `core`'s
 mini-semver grammar (`^`, `~`, `>=`, exact) is what `cafaye.yml` uses; npm
@@ -11,7 +11,7 @@ dependency versions follow npm's own rules.
 ### Added
 
 - **A private upstream now learns who the caller is.** A `ROUTE_TABLE` entry that
-  declares `principal` causes guard to send that upstream a short-lived signed
+  declares `principal` causes gateway to send that upstream a short-lived signed
   assertion of the verified caller, in a header of its own
   (`X-Cafaye-Principal`):
 
@@ -23,14 +23,14 @@ dependency versions follow npm's own rules.
   Before this, `proxy.ts` sent the per-upstream `token` and nothing else, and its
   own header said the cost out loud: *"an upstream cannot tell which caller sent a
   request."* That rule is unchanged and load-bearing — forwarding the caller's
-  `Authorization` would make guard a confused deputy — and it is precisely why a
+  `Authorization` would make gateway a confused deputy — and it is precisely why a
   publisher write could not work: `pantry.current_publisher_id()` had nothing to
   compare. The caller was never missing. `src/index.ts` resolved it to a principal
   before the proxy ran; it was discarded at the boundary.
 
-  **guard's own signature, never the caller's token.** The caller's JWT was minted
+  **gateway's own signature, never the caller's token.** The caller's JWT was minted
   for a different audience and carries whatever the caller was given; forwarding
-  it would make guard a credential relay. So guard signs its **own** statement with
+  it would make gateway a credential relay. So gateway signs its **own** statement with
   **its own** RS256 key — configured as `ASSERTION_SIGNING_KEY_FILE`, a path to a
   PKCS#8 PEM, and refused at startup if it is missing or malformed. It is a file
   path and not the PEM in a variable because an environment value appears in
@@ -54,19 +54,19 @@ dependency versions follow npm's own rules.
      lifetime nobody may exceed is the property and a default is only a default.
   4. **Minimal claims, declared per upstream** — exactly the names in `principal`,
      copied from the caller's token as identity signed them (`scope` stays a string;
-     `github_id` crosses without guard being taught its name). No wildcard. A name
+     `github_id` crosses without gateway being taught its name). No wildcard. A name
      the token does not carry is **omitted**, so a publisher with no `github_id`
-     reaches pantry as *no publisher record*. A name guard owns — `iss`, `aud`,
+     reaches pantry as *no publisher record*. A name gateway owns — `iss`, `aud`,
      `exp`, `nbf`, `iat`, `jti` — is a refusal to boot.
 
   **An upstream that declared nothing gets no assertion at all.** Not an assertion
   with no claims: a token whose entire content is which gateway minted it. That is
-  also what keeps the feature additive — with no signing key configured, guard
+  also what keeps the feature additive — with no signing key configured, gateway
   forwards exactly the headers it forwarded before, which is asserted rather than
   assumed.
 
   `kid` defaults to the RFC 7638 thumbprint of the public key, because two
-  deployments both calling their key `guard-1` is a key set in which an upstream
+  deployments both calling their key `gateway-1` is a key set in which an upstream
   silently verifies against the wrong one.
 
   **A defect found and fixed inside this packet, now a tripwire.** The first draft
@@ -79,7 +79,7 @@ dependency versions follow npm's own rules.
   adding a fourth private parameter.
 
   **Still not built, and named rather than discovered:** no service reads the
-  header yet, so an assertion configured today is minted and dropped; guard does
+  header yet, so an assertion configured today is minted and dropped; gateway does
   not publish its assertion key over HTTP, on purpose (it would be a new route on
   the public edge, a new operation in `openapi/v1.yaml`, six `account_scope.yml`
   anchors and a `surface.minimum` change with no standing to be made); and a
@@ -97,10 +97,10 @@ dependency versions follow npm's own rules.
 
   `GET /v1/catalog/items` now reaches `http://pantry:8080/items` with no
   `Authorization` header of any kind. Before it, **no** credential could reach
-  any routed prefix: site's client claims guard gates `/v1/*` on a `guard-api`
+  any routed prefix: site's client claims gateway gates `/v1/*` on a `gateway-api`
   scope, `requireScope` is never called outside tests, `runtimeOptions` never sets
-  `apiKeys`, guard's key gate matches `/^apikey(?:\s|$)/i` while the SDK sends
-  `Authorization: Bearer cafaye_…`, and `guard-api` is not a scope identity has.
+  `apiKeys`, gateway's key gate matches `/^apikey(?:\s|$)/i` while the SDK sends
+  `Authorization: Bearer cafaye_…`, and `gateway-api` is not a scope identity has.
   Closing that the way the comment imagines is four repositories in sequence;
   this is one field, in a table a human already reads.
 
@@ -112,7 +112,7 @@ dependency versions follow npm's own rules.
   `/v1/me` and every unrouted `/v1/` path still answer an anonymous caller with
   `401`.
 
-  **Rate limiting does not move.** A public route spends the `guard-api` bucket
+  **Rate limiting does not move.** A public route spends the `gateway-api` bucket
   like everything else under `/v1/`, so anonymous traffic stays bounded. The
   documented cost is that the bucket is keyed on the account, the key, or the
   client address, in that order — and an anonymous request has none of the first
@@ -121,7 +121,7 @@ dependency versions follow npm's own rules.
   is what makes it urgent rather than tidy.
 
   **A `public` entry cannot carry a `token`, and that combination refuses to
-  boot.** `public` is about the *caller* and `token` is guard's own credential to
+  boot.** `public` is about the *caller* and `token` is gateway's own credential to
   the *service* — two questions, two answers — so an entry holding both is an
   operator who has not decided which they meant. Guessing would either hand an
   anonymous caller a credential-protected upstream or quietly answer `401` to a
@@ -135,20 +135,20 @@ dependency versions follow npm's own rules.
   mutation evidence in `REPORT-mvp-guard-public-route-01.md`.
 
 - **Routing: a configured path prefix is forwarded to the service that owns it.**
-  This is the packet `guard`'s README has been promising since v0: a route table
+  This is the packet `gateway`'s README has been promising since v0: a route table
   (`ROUTE_TABLE`) of prefix → `{baseUrl, token?}`, validated at startup, mounted
   as a pass-through on `/v1/*`. `GET /v1/pantry/items` reaches
   `http://pantry:8080/items`.
 
-  **The credential rule is the content of it.** guard attaches the credential; a
+  **The credential rule is the content of it.** gateway attaches the credential; a
   caller's `Authorization` is never forwarded to a service, and neither is their
-  `Cookie`. Forwarding it would make guard a confused deputy — the caller
+  `Cookie`. Forwarding it would make gateway a confused deputy — the caller
   authenticates to the edge and then chooses who they are behind it, and every
-  property "guard is the only door" rests on is gone. It is enforced by an
+  property "gateway is the only door" rests on is gone. It is enforced by an
   allowlist of what crosses (`content-type`, `accept`, and the table's own
   token), because a deny list has to have thought of `Authorization`, `Cookie`,
   `X-Forwarded-For` and every header a future proxy invents. A table entry with
-  no token is sent no `Authorization` at all, which is different from one guard
+  no token is sent no `Authorization` at all, which is different from one gateway
   invented. `GET /auth/me` holds the same line for identity by taking the stored
   token.
 
@@ -164,7 +164,7 @@ dependency versions follow npm's own rules.
   `REDIS_URL=redis//redis` is: a prefix outside `/v1/`, a glob, a `.`/`..`
   segment, a base URL carrying a path or credentials, a token carrying a newline,
   and `{}` all refuse to boot. `/v1/me` is refused as a prefix because it is
-  guard's own route and an entry that can never fire is a claim rather than a
+  gateway's own route and an entry that can never fire is a claim rather than a
   configuration.
 
   The upstream path is **rebuilt** rather than forwarded — each segment decoded,
@@ -178,15 +178,15 @@ dependency versions follow npm's own rules.
   plain object, so the service registry that does not exist yet would *populate*
   it — a different `runtimeOptions`, nothing else changed.
 
-- **`LICENSE`: guard is MIT.** The repository shipped no licence file at all,
+- **`LICENSE`: gateway is MIT.** The repository shipped no licence file at all,
   which is not "unlicensed, therefore free" — it is **all rights reserved**,
   the default copyright position when a public repository grants nothing, so a
   stranger could not legally run, modify or resell any of it. `package.json`
   already declared `"license": "MIT"` and is now backed by the grant itself.
 
-  MIT is the fleet decision and the reason is the service-registry model: guard
+  MIT is the fleet decision and the reason is the service-registry model: gateway
   is the public edge every request enters through, so a consumer's first contact
-  with the fleet's licensing is guard's. MIT keeps adding guard a decision about
+  with the fleet's licensing is gateway's. MIT keeps adding gateway a decision about
   dependencies rather than about obligations; copyleft would attach one to every
   downstream consumer.
 
@@ -197,7 +197,7 @@ dependency versions follow npm's own rules.
 ### Fixed
 
 - **Two cross-tenant holes in the API-key store: a key id was a tenant.** D18
-  measured guard at zero negative tests, and the two that existed when this
+  measured gateway at zero negative tests, and the two that existed when this
   packet started were both in `memoryApiKeyStore` — the seam `TODO(guard-07)`
   moves to Redis, and the trait the future `/v1/api-keys` route will call.
 
@@ -217,7 +217,7 @@ dependency versions follow npm's own rules.
      guarantee, it is a probability. It now filters on the record's own
      `accountId` rather than trusting membership of an id set.
 
-  Neither was reachable from a route today — guard has no endpoint that issues or
+  Neither was reachable from a route today — gateway has no endpoint that issues or
   revokes a key, which the README says under "Not built yet". Both are load-bearing
   anyway, because the signature is what the next author and the next store
   implementation read. Both now refuse by **absence**: `revoke` on a foreign key
@@ -234,7 +234,7 @@ dependency versions follow npm's own rules.
   because a service that scopes reads and forgets deletes is the common shape.
 
   **No `403` was found for a resource the caller cannot see, and none was
-  added.** The only two `403`s guard writes are a capability failure
+  added.** The only two `403`s gateway writes are a capability failure
   (`requireScope`: the token authenticated and lacks a scope) and an origin
   failure (`requireSameOrigin`) — both facts about the *caller*, which they
   already know, and neither naming a resource, so neither can confirm one exists.
@@ -242,7 +242,7 @@ dependency versions follow npm's own rules.
   finding to fix, and a `404` for a capability would throw away a distinction the
   caller is entitled to.
 
-  Two guard-authored defects, both found by *running* the guards and written up
+  Two gateway-authored defects, both found by *running* the guards and written up
   in `REPORT-guard-11-isolation.md`: a listing fixture built through
   `createApiKeyAuth.issue` was a silent no-op (it is idempotent on the hash, so
   the id collision the case needed never happened, and the test passed with the
@@ -262,10 +262,10 @@ dependency versions follow npm's own rules.
   signature is a cross-tenant write waiting for a route.
 
 - **`core: ^0.1.0` → `^0.2.0`. The declaration was the stale half, not the code.**
-  guard's content was already 0.2-shaped; the constraint was a number nobody
+  gateway's content was already 0.2-shaped; the constraint was a number nobody
   re-read. `core` publishes `VERSION` = `0.2.0` (tag `v0.2.0`), and its
   `core.constraint-unmet` rule resolves a service's declared `core:` against it —
-  so guard failed CI **on its own declaration**, and the failure named the right
+  so gateway failed CI **on its own declaration**, and the failure named the right
   file. Measured before and after, against core's contract checker:
 
   ```
@@ -274,8 +274,8 @@ dependency versions follow npm's own rules.
   ```
 
   This is the check `0.2.0`'s own changelog promised and could not perform. The
-  brief's second claim — that guard publishes no events under core's catalog
-  names — **did not reproduce and is not a defect**: guard has no event surface
+  brief's second claim — that gateway publishes no events under core's catalog
+  names — **did not reproduce and is not a defect**: gateway has no event surface
   at all. `consumes: []` is accurate, there is no `exposes.events`, and no bus,
   outbox or publisher anywhere in `src/`. The 0.2 grammar and catalog accept an
   empty event surface, which is what a gateway that answers requests and
@@ -360,7 +360,7 @@ dependency versions follow npm's own rules.
 - **`mise run prime` does not resolve in this repository, and `gate.yml` does
   not pretend otherwise.** `mise.toml` carries `[tools]` and `[env]` and no
   `[tasks]` table, and `mise tasks` prints nothing. Six of the thirteen services
-  declare `gate.miseTask: prime`; guard's declaration names no task at all,
+  declare `gate.miseTask: prime`; gateway's declaration names no task at all,
   because naming a task this repository does not have is `gate.task-missing` —
   a failure over a repository that is fine. `gate.command` names `bin/prime`,
   which is what AGENTS.md already tells a developer to run and what the `prime`
@@ -417,11 +417,11 @@ dependency versions follow npm's own rules.
 - **`test/noSkips.test.ts` — the suite cannot skip itself.** `bun test` exits 0
   on a run where every test was skipped, which is how an environment-gated tier
   gets added and then quietly never runs again. The Redis tier already carries
-  two mechanisms against that (`GUARD_REDIS_REQUIRED=true` and the `redis` job's
+  two mechanisms against that (`GATEWAY_REDIS_REQUIRED=true` and the `redis` job's
   `0 pass` check) and both protect **one file**. This reads the suite's own source
   and fails on any `skip`, `skipIf`, `todo` or `only` outside a one-entry
   allowlist, naming the file in the failure, and separately asserts that the
-  Redis tier still carries the `GUARD_REDIS_REQUIRED` guard. Its detector is
+  Redis tier still carries the `GATEWAY_REDIS_REQUIRED` guard. Its detector is
   assembled from arrays at runtime rather than written as a regex literal,
   because a literal matching `\.\s*(skip|skipIf)` matches its own source.
 
@@ -488,7 +488,7 @@ dependency versions follow npm's own rules.
 ### Added
 
 - **`openapi/v1.yaml`, and a test that holds it to the router in both
-  directions.** guard was the only service in the fleet with no OpenAPI document,
+  directions.** gateway was the only service in the fleet with no OpenAPI document,
   so it was the one surface a generated client could not describe. The document is
   3.1.0 at `info.version: 1.0.0` — a new document, so there is no compatibility
   promise to keep — and it covers all seven routes `createApp` registers: the two
@@ -517,7 +517,7 @@ dependency versions follow npm's own rules.
     still absent from `cafaye.yml` even though the document now exists; the
     browser surface and the probes are not under `/v1`; an API key is not a bearer
     JWT; the browser surface has a same-origin gate and no CSRF token; `404` and
-    `500` are still the v0 `{error, message}` shape and guard therefore produces
+    `500` are still the v0 `{error, message}` shape and gateway therefore produces
     no `not_found` or `internal` problem code; `/readyz`'s `503` is
     `application/json` (the conflict `identity` also records, so the ruling wants
     to be fleet-wide); and `Idempotency-Key` is not honoured on
@@ -546,7 +546,7 @@ dependency versions follow npm's own rules.
   `docker build --target test`, `docker compose build`).
 - **The GCRA Lua is executed, in CI.** `rateLimitRedisLive.test.ts` runs the real
   script against a real `redis-server`; `bin/prime` still needs no server. The
-  tier is gated on `GUARD_REDIS_URL`, and `GUARD_REDIS_REQUIRED=true` plus a
+  tier is gated on `GATEWAY_REDIS_URL`, and `GATEWAY_REDIS_REQUIRED=true` plus a
   summary check turn a skip into a failure — `bun test` exits 0 on a fully skipped
   file, so a green run is not by itself evidence the tier ran. It found the
   connection wedge above, and a difference the transcription had hidden: Redis
@@ -572,7 +572,7 @@ dependency versions follow npm's own rules.
   per-process and says so in its own source, in the README and in the compose
   notes — N replicas of it is an N× limit. `redisRateLimitStore` counts in
   Redis with one self-contained Lua script (a read-then-write pair is what admits
-  N× the limit under a burst), keeps its keys under `guard:rl:<prefix>:` and
+  N× the limit under a burst), keeps its keys under `gateway:rl:<prefix>:` and
   expires its own. `REDIS_URL` selects it; the URL is validated at startup and the
   connection opens on first use, so a typo refuses to boot and an outage does not.
   `rateLimitParity.test.ts` runs one behaviour table through both and requires
@@ -641,7 +641,7 @@ dependency versions follow npm's own rules.
 - `jose` as a dependency, and real JWT verification in place of the presence
   check. RS256 only, verified against identity's JWKS at
   `{IDENTITY_ISSUER}/.well-known/jwks.json`, with `iss`, `aud`, `exp`, `nbf` and
-  a non-empty `sub` checked. The algorithm is guard's decision, pinned in code and
+  a non-empty `sub` checked. The algorithm is gateway's decision, pinned in code and
   read from the header before any key is fetched, so `alg: none` and HS256 are
   refused without a network call.
 - `createJwtVerifier` — `requireJwt` mounts on a path and puts
@@ -663,20 +663,20 @@ dependency versions follow npm's own rules.
   absent entirely when no issuer is configured.
 - `runtimeOptions` — the only place the environment is read: `IDENTITY_ISSUER`
   (issuer-only base URL, default `https://identity.localhost`),
-  `IDENTITY_JWKS_URL`, `IDENTITY_JWKS_TTL_MS` and `GUARD_CLIENT_ID`. A malformed
+  `IDENTITY_JWKS_URL`, `IDENTITY_JWKS_TTL_MS` and `GATEWAY_CLIENT_ID`. A malformed
   value is a startup error; an empty one is unset.
 - `test/jwksServer.ts` — a stand-in identity serving a real JWKS from real RSA
   keys, so the suite tests verification rather than a mock of it. The Dockerfile
   copies it into the test stage only.
 - The browser surface: `POST /auth/register`, `POST /auth/login`,
-  `POST /auth/logout` and `GET /auth/me` in `src/bff/auth.ts`. guard proxies each
+  `POST /auth/logout` and `GET /auth/me` in `src/bff/auth.ts`. gateway proxies each
   to identity's `/v1/users`, `/v1/session` and `/v1/me` over an injectable
   `fetch`, and maps the answers onto core's `problem+json` envelope. No new
   dependency: the cookie attributes come from `hono/cookie`.
 - `__Host-bff-session`, `Secure` / `HttpOnly` / `SameSite=Lax` / `Path=/`, set on
   login and cleared on logout with every attribute repeated. A login answers
   `{expires_at}` and no token: the page gets a session id, and identity's token
-  stays in guard.
+  stays in gateway.
 - `SessionStore` — `get` / `put` / `delete`, with expiry as the store's business —
   and `memorySessionStore`, a `Map` for v0 that drops a record on the read that
   finds it expired and sweeps expired ones once the map passes its bound. A
@@ -707,7 +707,7 @@ dependency versions follow npm's own rules.
   `X-RateLimit-Reset` absolute-instant convention is kept, and `X-RateLimit-Limit`
   and `X-RateLimit-Remaining` are sent beside it.
 - A counter store that cannot answer now fails **open**, with the cost named in
-  the source and the README: for as long as it is unreachable guard applies no
+  the source and the README: for as long as it is unreachable gateway applies no
   limit. Failing closed would hand a Redis outage to every caller as a `429`. The
   `RateLimit-*` headers are left off rather than guessed at, and the store is a
   readiness probe.

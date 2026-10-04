@@ -8,8 +8,8 @@
 // environment-gated tier be added and then quietly never run again.
 //
 // This repository has that tier already: `rateLimitRedisLive.test.ts` needs a
-// real `redis-server` and skips without `GUARD_REDIS_URL`. It carries two
-// mechanisms — `GUARD_REDIS_REQUIRED=true` turns the skip into a module-load
+// real `redis-server` and skips without `GATEWAY_REDIS_URL`. It carries two
+// mechanisms — `GATEWAY_REDIS_REQUIRED=true` turns the skip into a module-load
 // throw, and the `redis` CI job fails on `0 pass` — precisely because the skip
 // is otherwise invisible.
 //
@@ -55,7 +55,7 @@ const DECLARED_SKIPS: Array<{ file: string; why: string }> = [
   {
     file: "src/middleware/rateLimitRedisLive.test.ts",
     why:
-      "needs a real redis-server; forced to run by GUARD_REDIS_REQUIRED=true in the " +
+      "needs a real redis-server; forced to run by GATEWAY_REDIS_REQUIRED=true in the " +
       "`redis` CI job, and by any gate run that sets both variables",
   },
 ];
@@ -130,14 +130,14 @@ describe("the suite cannot skip itself", () => {
   test("the Redis tier still carries the guard that makes its skip a failure", () => {
     // The strongest of the two mechanisms, asserted in the suite rather than
     // trusted to the CI job. If this test file is ever the thing to break, this
-    // is the one that matters: without it, `GUARD_REDIS_REQUIRED=true` with no
+    // is the one that matters: without it, `GATEWAY_REDIS_REQUIRED=true` with no
     // URL would be a skip again and the `redis` job would be the only thing
     // standing between a green run and a tier that verified nothing.
     const live = sources.find((candidate) => candidate.file === "src/middleware/rateLimitRedisLive.test.ts");
     expect(live).toBeDefined();
 
     const body = code(live!.text);
-    expect(body).toContain("GUARD_REDIS_REQUIRED");
+    expect(body).toContain("GATEWAY_REDIS_REQUIRED");
     expect(body).toMatch(/REQUIRED\s*&&\s*REDIS_URL\s*===\s*undefined/);
     // Thrown at module load, before a test is registered: a run that could not
     // do the work says so in its first line rather than in a summary of zeroes.

@@ -2,7 +2,7 @@
 // same gateway, and this is the test that holds them to it.
 //
 // PLAN.md §4b owes a doc-vs-router drift check before any SDK is generated from
-// these documents, and this is it for guard. A path in `openapi/v1.yaml` becomes
+// these documents, and this is it for gateway. A path in `openapi/v1.yaml` becomes
 // a method on a generated client, and a route the document does not mention is a
 // method it does not have. Both directions are failures here.
 //
@@ -30,7 +30,7 @@
 //
 // `app.use(…)` mounts, and nothing else. `/v1/*` is the prefix the bearer-token
 // gate and — when a route table is configured — the pass-through to the services
-// behind guard are mounted on; it has no method, no response and no body of its
+// behind gateway are mounted on; it has no method, no response and no body of its
 // own, so OpenAPI has nothing to describe it as. Hono records every middleware
 // mount with the method `"ALL"`, which is what separates a mount from a route
 // without a list of paths: `ALL /v1/*` and `GET /v1/me` are different *kinds* of
@@ -68,7 +68,7 @@ const EXCLUSIONS = new Map<string, string>([
   [
     normaliseOperation(MOUNT_METHOD, "/v1/*"),
     "the `/v1/*` prefix itself: the bearer-token gate is mounted on it, and the pass-through to the " +
-      "services behind guard is mounted on it whenever a route table is configured. Neither is an " +
+      "services behind gateway is mounted on it whenever a route table is configured. Neither is an " +
       "operation — each has no method and no response of its own, so there is nothing to document — and " +
       "a routed subtree is not describable as operations anyway: the paths under it belong to the service, " +
       "and which ones exist is decided by configuration rather than by this file. Excluded as this exact " +
@@ -97,7 +97,7 @@ const EXCLUSIONS = new Map<string, string>([
  * would be invisible to this check.
  */
 const app = createApp({
-  jwt: { issuer: "https://identity.localhost", audience: "guard" },
+  jwt: { issuer: "https://identity.localhost", audience: "gateway" },
   bff: { identityUrl: "http://identity.invalid:8080" },
   apiKeys: { keys: memoryApiKeyStore() },
   rateLimit: {},
@@ -147,7 +147,7 @@ describe("the document is a document core's conventions accept", () => {
     expect(infoVersion(document, DOCUMENT_PATH)).toBe("1.0.0");
   });
 
-  test("the media types it names are the two guard actually emits", async () => {
+  test("the media types it names are the two gateway actually emits", async () => {
     // `application/problem+json` is the error envelope and `application/json` is
     // everything else — including the two responses (`404` and `500`) that are
     // still the v0 `{ error, message }` shape and are recorded as a conflict in
@@ -171,7 +171,7 @@ describe("the error responses, which are the interesting part", () => {
 
   test("the problem envelope is one component, referenced rather than restated", () => {
     // A document that only describes the happy path is the usual way an OpenAPI
-    // file becomes a lie, and guard's whole job is refusing requests. So the shape
+    // file becomes a lie, and gateway's whole job is refusing requests. So the shape
     // is declared once and every error response points at it.
     expect(document).toContain("application/problem+json");
     expect(document).toMatch(/^ {4}Problem:$/m);

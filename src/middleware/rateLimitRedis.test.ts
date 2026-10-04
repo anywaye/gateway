@@ -79,7 +79,7 @@ describe("redisRateLimitStore", () => {
     expect((await store.hit("acct:1", { limit: 4, windowMs: WINDOW_MS, now: 0 })).allowed).toBe(false);
   });
 
-  test("namespaces its keys so one guard cannot read another's buckets", async () => {
+  test("namespaces its keys so one gateway cannot read another's buckets", async () => {
     const commands = fakeRedis();
     await redisRateLimitStore({ commands, prefix: "edge-a" }).hit("acct:1", {
       limit: 1,
@@ -87,14 +87,14 @@ describe("redisRateLimitStore", () => {
       now: 0,
     });
 
-    expect(commands.calls[0]?.key).toBe("guard:rl:edge-a:acct:1");
+    expect(commands.calls[0]?.key).toBe("gateway:rl:edge-a:acct:1");
   });
 
-  test("defaults the namespace to guard's own", async () => {
+  test("defaults the namespace to gateway's own", async () => {
     const commands = fakeRedis();
     await redisRateLimitStore({ commands }).hit("acct:1", { limit: 1, windowMs: WINDOW_MS, now: 0 });
 
-    expect(commands.calls[0]?.key).toBe("guard:rl:acct:1");
+    expect(commands.calls[0]?.key).toBe("gateway:rl:acct:1");
   });
 
   test("passes limit, window and now as whole-millisecond integers", async () => {
@@ -143,9 +143,9 @@ describe("redisRateLimitStore", () => {
 
 describe("RESP encoding", () => {
   test("writes a command as an array of bulk strings", () => {
-    const written = decoder.decode(encodeCommand(["GET", "guard:rl:k"]));
+    const written = decoder.decode(encodeCommand(["GET", "gateway:rl:k"]));
 
-    expect(written).toBe("*2\r\n$3\r\nGET\r\n$10\r\nguard:rl:k\r\n");
+    expect(written).toBe("*2\r\n$3\r\nGET\r\n$10\r\ngateway:rl:k\r\n");
   });
 
   test("counts bytes, not characters, for a multi-byte argument", () => {

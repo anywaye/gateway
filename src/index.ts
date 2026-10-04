@@ -27,7 +27,7 @@ export type { Probe, ProbeStatus } from "./probe";
 export type AppOptions = {
   /**
    * Readiness probes by dependency name. Nothing registers one by hand: the
-   * first packet that gives guard a dependency registers it here and nowhere
+   * first packet that gives gateway a dependency registers it here and nowhere
    * else, which `runtimeOptions` does for identity.
    */
   probes?: Record<string, Probe>;
@@ -67,7 +67,7 @@ export type AppOptions = {
    */
   apiKeys?: { keys: ApiKeyStore };
   /**
-   * Which path prefix goes to which service. Omit and guard forwards nothing,
+   * Which path prefix goes to which service. Omit and gateway forwards nothing,
    * for the same reason the other options are optional: an app built with no
    * services has nothing to forward to, and a gateway that invented a
    * destination would be an open proxy.
@@ -87,7 +87,7 @@ export type AppOptions = {
    */
   routes?: RouteTable;
   /**
-   * Guard's own signing key, and how long an assertion it mints is good for.
+   * Gateway's own signing key, and how long an assertion it mints is good for.
    *
    * Omit and **no assertion is minted on any route** — which is the state every
    * deployment that has not configured a key is in, and the reason the feature is
@@ -109,7 +109,7 @@ export type AppOptions = {
   /**
    * How the pass-through reaches a service. Both halves are for tests and for
    * nothing else, and both are arguments for the reason `AppOptions` is one: a
-   * suite that has to be near a listening upstream to assert what guard sends is
+   * suite that has to be near a listening upstream to assert what gateway sends is
    * a suite that also asserts the network's opinions.
    */
   proxy?: {
@@ -129,8 +129,8 @@ export type AppOptions = {
  */
 export const PROBE_PATHS = new Set(["/healthz", "/readyz"]);
 
-/** The audience guard accepts when nothing says otherwise: guard itself. */
-const DEFAULT_CLIENT_ID = "guard";
+/** The audience gateway accepts when nothing says otherwise: gateway itself. */
+const DEFAULT_CLIENT_ID = "gateway";
 
 /**
  * Builds the app. Exported, and the only entrypoint the tests use — importing
@@ -209,7 +209,7 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
   // Nothing else moves. The API-key gate is still above this line, so a caller
   // who presents a key is judged on the key whether or not the route is public.
   // The limiter is still below it, so an anonymous request still spends the
-  // `guard-api` bucket — keyed on the client address, which with no trusted proxy
+  // `gateway-api` bucket — keyed on the client address, which with no trusted proxy
   // chain is one shared budget for every anonymous visitor. That cost is real and
   // it is the price of a public catalog read; it is documented in the README
   // rather than designed around, because the alternative is a credential every
@@ -249,7 +249,7 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
 
   // The pass-through. Mounted on the `/v1/*` prefix and registered *after*
   // `/v1/me`, which is load-bearing rather than tidy: Hono answers in
-  // registration order, so guard's own route is served before the mount can see
+  // registration order, so gateway's own route is served before the mount can see
   // it. The other ordering is a gateway whose `/v1/me` proxies to whichever
   // service a table names, and nobody notices until it does.
   //
@@ -288,7 +288,7 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
   app.onError((error, c) => {
     // The message can carry a dependency host, a query, or a token; the caller
     // gets a flat 500 and the detail goes to the log.
-    console.error("guard: unhandled error", error);
+    console.error("gateway: unhandled error", error);
     return c.json({ error: "internal_error", message: "unexpected server error" }, 500);
   });
 
@@ -364,7 +364,7 @@ export function runtimeOptions(env: Record<string, string | undefined> = Bun.env
     probes: { identity: identityProbe(bff), ...(redis ? { redis: redis.probe } : {}) },
     jwt: {
       issuer: env.IDENTITY_ISSUER?.trim() || DEFAULT_IDENTITY_ISSUER,
-      audience: env.GUARD_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID,
+      audience: env.GATEWAY_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID,
       jwksUrl: env.IDENTITY_JWKS_URL?.trim() || undefined,
       jwksCacheTtlMs: ttl ? parseTtl(ttl) : undefined,
     },
@@ -406,8 +406,8 @@ export function runtimeOptions(env: Record<string, string | undefined> = Bun.env
  *   ASSERTION_SIGNING_KEY_ID    the `kid` upstreams select the key by. Defaults to
  *                               the RFC 7638 thumbprint of the public key, which
  *                               cannot collide between two deployments the way an
- *                               invented `guard-1` can.
- *   ASSERTION_ISSUER            who minted it. Defaults to `https://guard.localhost`,
+ *                               invented `gateway-1` can.
+ *   ASSERTION_ISSUER            who minted it. Defaults to `https://gateway.localhost`,
  *                               matching `DEFAULT_IDENTITY_ISSUER`'s shape.
  *   ASSERTION_TTL_MS            how long it is good for. Defaults to 120_000 and is
  *                               **refused above `MAX_ASSERTION_TTL_MS`** — see
@@ -436,8 +436,8 @@ function assertionFromEnv(env: Record<string, string | undefined>): { assertion?
     pem = readFileSync(path, "utf8");
   } catch {
     throw new RangeError(
-      `guard: ASSERTION_SIGNING_KEY_FILE names ${JSON.stringify(path)}, and that file could not be read. It is a ` +
-        `path to a PKCS#8 PEM private key, and guard reads it once at startup so a missing key is a refusal to ` +
+      `gateway: ASSERTION_SIGNING_KEY_FILE names ${JSON.stringify(path)}, and that file could not be read. It is a ` +
+        `path to a PKCS#8 PEM private key, and gateway reads it once at startup so a missing key is a refusal to ` +
         `boot rather than a 503 on every proxied request. Unset the variable to mint no principal assertions at all.`,
     );
   }
@@ -478,7 +478,7 @@ function assertionFromEnv(env: Record<string, string | undefined>): { assertion?
  * is `checkPublic`'s rule and not this file's.
  *
  * `principal` is a list of the claim names this upstream is declared to need, and
- * it is the only thing that makes guard sign an assertion about the caller for
+ * it is the only thing that makes gateway sign an assertion about the caller for
  * this route. Absent means no assertion; an entry that is `public` and declares
  * it refuses to boot, because a public route has no verified caller to assert
  * one about.
@@ -492,7 +492,7 @@ function assertionFromEnv(env: Record<string, string | undefined>): { assertion?
  * The parse error is replaced rather than propagated because `JSON.parse`'s own
  * message names a character position in a string the operator never wrote — and
  * a startup error that does not name the variable is one an operator reads as a
- * bug in guard.
+ * bug in gateway.
  */
 function routesFromEnv(env: Record<string, string | undefined>): { routes?: RouteTable } {
   const raw = env.ROUTE_TABLE?.trim();
@@ -503,13 +503,13 @@ function routesFromEnv(env: Record<string, string | undefined>): { routes?: Rout
     parsed = JSON.parse(raw);
   } catch {
     throw new RangeError(
-      `guard: ROUTE_TABLE must be a JSON object mapping a path prefix to {"baseUrl": …, "token"?: …, ` +
+      `gateway: ROUTE_TABLE must be a JSON object mapping a path prefix to {"baseUrl": …, "token"?: …, ` +
         `"public"?: true|false, "principal"?: ["…"]}, and it is not JSON. It names ${JSON.stringify(raw)}.`,
     );
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new RangeError(`guard: ROUTE_TABLE must be a JSON object, got ${JSON.stringify(raw)}`);
+    throw new RangeError(`gateway: ROUTE_TABLE must be a JSON object, got ${JSON.stringify(raw)}`);
   }
 
   // Validated here as well as in `createApp`, so a bad value is refused by the
@@ -557,7 +557,7 @@ function wholeNumber(raw: string | undefined, fallback: number, field: string, l
 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < lowest) {
-    throw new RangeError(`guard: ${field} must be an integer >= ${lowest}, got ${JSON.stringify(value)}`);
+    throw new RangeError(`gateway: ${field} must be an integer >= ${lowest}, got ${JSON.stringify(value)}`);
   }
 
   return parsed;
@@ -572,7 +572,7 @@ function wholeNumber(raw: string | undefined, fallback: number, field: string, l
 function parseTtl(value: string): number {
   const ttl = Number(value);
   if (!Number.isInteger(ttl) || ttl < 1) {
-    throw new RangeError(`guard: IDENTITY_JWKS_TTL_MS must be an integer >= 1, got ${JSON.stringify(value)}`);
+    throw new RangeError(`gateway: IDENTITY_JWKS_TTL_MS must be an integer >= 1, got ${JSON.stringify(value)}`);
   }
   return ttl;
 }
@@ -593,5 +593,5 @@ async function runProbe(probe: Probe): Promise<ProbeStatus> {
 if (import.meta.main) {
   const port = Number(Bun.env.PORT ?? 8080);
   Bun.serve({ port, fetch: createApp(runtimeOptions()).fetch });
-  console.log(`guard listening on :${port}`);
+  console.log(`gateway listening on :${port}`);
 }

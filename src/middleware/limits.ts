@@ -9,7 +9,7 @@
 // The `policy` name is not decoration. It is half of the counter key, so two
 // entries that share a name share an allowance — which is why `/auth/login` and
 // `/auth/register` are separate policies rather than two numbers under
-// `guard-auth`: a caller who burns the registration budget must not be able to
+// `gateway-auth`: a caller who burns the registration budget must not be able to
 // lock out every legitimate sign-up from that address by brute-forcing logins
 // under one shared bucket. `limits.test.ts` asserts one rule per shipped entry.
 import { assertPositiveInteger, assertStructuredKey } from "./assert";
@@ -44,7 +44,7 @@ export type LimitTable = {
 const MINUTE_MS = 60_000;
 
 /**
- * What guard ships with.
+ * What gateway ships with.
  *
  * The numbers are a starting point, not a measurement: nothing in this
  * repository has watched a real caller. They are chosen so the ordering is
@@ -53,18 +53,18 @@ const MINUTE_MS = 60_000;
  * traffic shape replaces this table with their own through `RATE_LIMIT_TABLE`.
  */
 export const DEFAULT_LIMIT_TABLE: LimitTable = {
-  default: { limit: 600, windowMs: MINUTE_MS, policy: "guard-api" },
+  default: { limit: 600, windowMs: MINUTE_MS, policy: "gateway-api" },
   routes: {
     // Auth-adjacent, and stricter than the API default: a login is guessable
     // work, and the per-minute allowance is what makes guessing slow.
-    "/auth/": { limit: 60, windowMs: MINUTE_MS, policy: "guard-auth" },
-    "/auth/login": { limit: 10, windowMs: MINUTE_MS, policy: "guard-auth-login" },
-    "/auth/register": { limit: 5, windowMs: MINUTE_MS, policy: "guard-auth-register" },
-    "/auth/logout": { limit: 30, windowMs: MINUTE_MS, policy: "guard-auth-logout" },
-    "/v1/": { limit: 600, windowMs: MINUTE_MS, policy: "guard-api" },
+    "/auth/": { limit: 60, windowMs: MINUTE_MS, policy: "gateway-auth" },
+    "/auth/login": { limit: 10, windowMs: MINUTE_MS, policy: "gateway-auth-login" },
+    "/auth/register": { limit: 5, windowMs: MINUTE_MS, policy: "gateway-auth-register" },
+    "/auth/logout": { limit: 30, windowMs: MINUTE_MS, policy: "gateway-auth-logout" },
+    "/v1/": { limit: 600, windowMs: MINUTE_MS, policy: "gateway-api" },
     // Minting and revoking credentials is a write on the security surface, so
     // it gets its own budget rather than the general API's.
-    "/v1/api-keys": { limit: 60, windowMs: MINUTE_MS, policy: "guard-api-keys" },
+    "/v1/api-keys": { limit: 60, windowMs: MINUTE_MS, policy: "gateway-api-keys" },
   },
 };
 

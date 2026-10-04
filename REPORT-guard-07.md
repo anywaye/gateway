@@ -3,11 +3,11 @@
 > **DECISION NEEDED (D1): kit owns all seven Dockerfiles, and none of them has a
 > test stage at all.** Every template is `build` → `runtime`; `docker build
 > --target test` does not exist to be wrong about. So the bug this packet fixed in
-> guard is the *smaller* version of a fleet-wide gap: the other six services have
+> gateway is the *smaller* version of a fleet-wide gap: the other six services have
 > no in-image suite whatsoever, and the brief's own framing — "a CI run that
 > verifies less than it appears to is worse than no CI" — applies to all of them
-> with nothing to fix, rather than to guard with seven tests to recover. A test
-> stage per template is a kit packet, not a guard one. The two files written here
+> with nothing to fix, rather than to gateway with seven tests to recover. A test
+> stage per template is a kit packet, not a gateway one. The two files written here
 > (`test/dockerStage.ts`, `test/dockerStage.test.ts`) are the reusable half: they
 > parse stages, `COPY` chains and `.`, and know nothing about Bun. They drop into
 > another service's `test/` unchanged — but a porter has to *decide* two things
@@ -161,7 +161,7 @@ that reason, so the comparison is over the thing that is actually the claim.
 ## The local gate, with the Redis tier forced
 
 ```
-GUARD_REDIS_URL=redis://127.0.0.1:6399 GUARD_REDIS_REQUIRED=true ./bin/prime
+GATEWAY_REDIS_URL=redis://127.0.0.1:6399 GATEWAY_REDIS_REQUIRED=true ./bin/prime
 == bun install --frozen-lockfile
 == bun run typecheck
 == bun test
@@ -199,8 +199,8 @@ runs the 399 master had. In-image is the same 417 tests across the same 17 files
 ## What should go into kit
 
 1. **A test stage in all seven templates.** Today `docker build --target test`
-   does not exist outside guard, so this is the whole gap (D1). The pattern to
-   copy is guard's: explicit `COPY` list, `bun test` (or the language's runner)
+   does not exist outside gateway, so this is the whole gap (D1). The pattern to
+   copy is gateway's: explicit `COPY` list, `bun test` (or the language's runner)
    over the tree, never a path list.
 2. **`test/dockerStage.ts` + `test/dockerStage.test.ts`, ported.** They are
    language-agnostic — stages, `COPY` chains, `.` — and drop into any service's

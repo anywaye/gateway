@@ -2,7 +2,7 @@
 //
 // ## What this file is for
 //
-// guard is the only door into a cafaye deployment, so a tenant boundary here is
+// gateway is the only door into a cafaye deployment, so a tenant boundary here is
 // a boundary in front of everything behind it. This file writes the negative
 // case for every account-scoped entry point: account A asks for something that
 // belongs to account B, and the answer must be **absence** — `null`, `[]`,
@@ -17,7 +17,7 @@
 // is `null`, `[]`, `false` or `401`, and a `403` where one of those belongs is a
 // **finding**, not a near miss.
 //
-// The two `403`s guard does write are capability failures — a token without
+// The two `403`s gateway does write are capability failures — a token without
 // `invoices.write`, and a request that is not same-origin — and both are
 // correct: there is no resource being named in either case, so there is no
 // existence to leak, and the caller already knows the fact being reported about
@@ -26,7 +26,7 @@
 // ## The two defects this file found
 //
 // Both are in `memoryApiKeyStore`, both are at the store rather than the wire,
-// and neither is reachable through a route today — guard has no endpoint that
+// and neither is reachable through a route today — gateway has no endpoint that
 // issues or revokes a key. They are load-bearing anyway, because the store is
 // the seam `TODO(guard-07)` moves to Redis and the trait is what the future
 // `/v1/api-keys` route will call. A store whose scoping is wrong is a store
@@ -121,7 +121,7 @@ const B = "bbbbbbbb-0000-4000-8000-000000000002";
 /** An account that has issued nothing and holds nothing. */
 const NOBODY = "cccccccc-0000-4000-8000-000000000003";
 
-const CLIENT_ID = "guard-test";
+const CLIENT_ID = "gateway-test";
 const WINDOW_MS = 60_000;
 
 let identity: JwksServer;
@@ -151,7 +151,7 @@ const asBearer = (token: string): RequestInit => ({ headers: { Authorization: `B
 function gateway(keys?: ApiKeyStore) {
   return createApp({
     jwt: { issuer: identity.issuer, audience: CLIENT_ID },
-    rateLimit: { limits: { default: { limit: 600, windowMs: WINDOW_MS, policy: "guard-api" }, routes: {} } },
+    rateLimit: { limits: { default: { limit: 600, windowMs: WINDOW_MS, policy: "gateway-api" }, routes: {} } },
     ...(keys === undefined ? {} : { apiKeys: { keys } }),
   });
 }
@@ -174,8 +174,8 @@ describe("read — GET /v1/me answers with the caller's own account and no other
     // are both checked because the route returns the whole principal.
     const attempts: Record<string, string> = {
       "x-account-id": B,
-      "x-guard-account": B,
-      "x-guard-account-id": B,
+      "x-gateway-account": B,
+      "x-gateway-account-id": B,
       "x-forwarded-account": B,
       account: B,
       "x-tenant": B,
@@ -443,7 +443,7 @@ describe("the API-key gate authenticates as the record's account, never a named 
         authorization: `ApiKey ${theirs.key}`,
         "x-account-id": A,
         "account": A,
-        "x-guard-account": A,
+        "x-gateway-account": A,
       },
     });
 
@@ -462,7 +462,7 @@ describe("the API-key gate authenticates as the record's account, never a named 
     const app = createApp({
       jwt: { issuer: identity.issuer, audience: CLIENT_ID },
       apiKeys: { keys: store },
-      rateLimit: { limits: { default: { limit: 1, windowMs: WINDOW_MS, policy: "guard-api" }, routes: {} } },
+      rateLimit: { limits: { default: { limit: 1, windowMs: WINDOW_MS, policy: "gateway-api" }, routes: {} } },
     });
     const asA = () => app.request("/v1/me", { headers: { authorization: `ApiKey ${mine.key}` } });
     const asB = () => app.request("/v1/me", { headers: { authorization: `ApiKey ${theirs.key}` } });
@@ -515,7 +515,7 @@ describe("rate-limit state keyed by account", () => {
       store,
       trustedProxies: 0,
       now: () => 0,
-      policy: () => "guard-api",
+      policy: () => "gateway-api",
     });
     app.use("*", async (c, next) => {
       const principal: Principal = {
@@ -580,7 +580,7 @@ describe("rate-limit state keyed by account", () => {
   });
 
   test("the Redis key a request writes names no account, including its own", async () => {
-    // The digest in `bucket()` is what stops a `KEYS guard:rl:*` scan from
+    // The digest in `bucket()` is what stops a `KEYS gateway:rl:*` scan from
     // yielding a list of the accounts hitting the edge — and, read the other way,
     // it means one account's key is not a place to find another's.
     //
@@ -613,7 +613,7 @@ describe("rate-limit state keyed by account", () => {
       expect(key).not.toContain(B);
       // The identity does reach Redis, digested — so the assertion is about the
       // key's *text*, not about the account being unknown to the store.
-      expect(key.startsWith("guard:rl:guard-api:")).toBe(true);
+      expect(key.startsWith("gateway:rl:gateway-api:")).toBe(true);
     }
   });
 
@@ -630,7 +630,7 @@ describe("rate-limit state keyed by account", () => {
       store,
       trustedProxies: 0,
       now: () => 0,
-      policy: () => "guard-api",
+      policy: () => "gateway-api",
     });
     app.use("*", async (c, next) => {
       seen.push(rateLimitKey(keySourceOf(c, 0)));
@@ -644,7 +644,7 @@ describe("rate-limit state keyed by account", () => {
     });
     app.get("/", (c) => c.json({ ok: true }));
 
-    for (const header of ["x-account-id", "account", "x-guard-account", "x-forwarded-account"]) {
+    for (const header of ["x-account-id", "account", "x-gateway-account", "x-forwarded-account"]) {
       await app.request("/", { headers: { [header]: B, authorization: "Bearer forged" } });
     }
 
@@ -686,7 +686,7 @@ describe("a 403 is only ever a capability or an origin", () => {
     expect(statuses.filter((line) => line.endsWith(" 403"))).toEqual([]);
   });
 
-  test("the 403 guard does write is a capability failure, and names only what is missing", async () => {
+  test("the 403 gateway does write is a capability failure, and names only what is missing", async () => {
     const jwt = createJwtVerifier({ issuer: identity.issuer, audience: CLIENT_ID });
     const app = new Hono<AuthEnv>();
     app.use("*", jwt.requireJwt);
@@ -695,7 +695,7 @@ describe("a 403 is only ever a capability or an origin", () => {
     const res = await app.request("/", asBearer(await tokenFor(A, "invoices.read")));
 
     expect(res.status).toBe(403);
-    // The scope that is missing is guard's own configuration and safe to name.
+    // The scope that is missing is gateway's own configuration and safe to name.
     // The scopes the caller *does* hold are a fact they already know, and
     // echoing them tells a prober what else to ask for.
     const body = await res.text();

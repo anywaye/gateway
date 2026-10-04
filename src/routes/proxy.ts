@@ -1,4 +1,4 @@
-// The pass-through: a path prefix, an upstream, and guard's own credential.
+// The pass-through: a path prefix, an upstream, and gateway's own credential.
 //
 // This is the half of routing that touches the network, and it is deliberately
 // thin. `fetch` is the tool — a proxy library would be a dependency with no
@@ -32,15 +32,15 @@
 //
 // ## THE CREDENTIAL RULE, WHICH IS THE SECURITY CONTENT HERE
 //
-// guard attaches the credential for the upstream it is calling. The caller's
+// gateway attaches the credential for the upstream it is calling. The caller's
 // inbound `Authorization` is **never** copied to an internal service, and
 // neither is their `Cookie`.
 //
-// The reason is what forwarding it would turn guard into. If a caller can set
-// an arbitrary `Authorization` and have it reach pantry, then guard is a
-// confused deputy: the caller authenticates *to guard* and then chooses who
-// they are *downstream*. Every property "guard is the only door" rests on —
-// that the credential a service sees is one guard issued or verified — is gone,
+// The reason is what forwarding it would turn gateway into. If a caller can set
+// an arbitrary `Authorization` and have it reach pantry, then gateway is a
+// confused deputy: the caller authenticates *to gateway* and then chooses who
+// they are *downstream*. Every property "gateway is the only door" rests on —
+// that the credential a service sees is one gateway issued or verified — is gone,
 // and an attacker does not need a token for the service at all, only a valid
 // one for the edge and a target of their choosing. `GET /auth/me` already holds
 // this line for identity: it takes the **stored** token from the session, never
@@ -63,7 +63,7 @@
 // the verified principal** — see `assertion.ts` for why it is a JWT and not the
 // caller's token, why the audience is the upstream's origin, and why the claims
 // are the ones the table named. It is still not the caller's `Authorization`:
-// guard signs its own statement, so this remains an allowlist of what crosses and
+// gateway signs its own statement, so this remains an allowlist of what crosses and
 // the caller still chooses nothing about what a service sees.
 //
 // Two things it deliberately is NOT, both because MD19 ruled them:
@@ -86,7 +86,7 @@ const DEFAULT_UPSTREAM_TIMEOUT_MS = 5_000;
 
 /**
  * `fetch`, injectable so the suite never opens a socket — the same reason
- * `bff/auth.ts` has one. The assertions here are about what guard sends and
+ * `bff/auth.ts` has one. The assertions here are about what gateway sends and
  * what it does with the answer; a listening upstream would add the network's
  * opinions to both.
  */
@@ -129,7 +129,7 @@ const FORWARDED_RESPONSE_HEADERS = ["content-type"] as const;
  * The pass-through, mounted on `/v1/*`.
  *
  * A path nothing claims calls `next()` rather than refusing, which is what lets
- * guard's own `/v1/me` — registered before this mount, so it answers first —
+ * gateway's own `/v1/me` — registered before this mount, so it answers first —
  * and every unrouted path keep behaving exactly as they did before routing
  * existed. A path that cannot be rebuilt into a service path also calls
  * `next()`, and lands on the same 404 an unrouted path does: it is not a route
@@ -174,13 +174,13 @@ export function createRouteProxy(options: ProxyOptions): MiddlewareHandler<AuthE
    * fetch ignores it — the difference between a request that fails and a
    * process that stops answering. No retry: a retry multiplies load on a service
    * that is already failing, and the limiter counts one attempt, so a retry
-   * would make the accounting describe traffic guard never refused.
+   * would make the accounting describe traffic gateway never refused.
    *
    * The assertion is minted **before** the fetch rather than after, so a signing
-   * failure is reported as guard's own 503 and never as a request the service saw
+   * failure is reported as gateway's own 503 and never as a request the service saw
    * and answered. It is the only asynchronous step between deciding to call and
    * calling, and putting it last would mean an upstream had done the work of a
-   * request guard then failed to describe.
+   * request gateway then failed to describe.
    */
   async function call(
     send: ProxyFetch,
@@ -197,9 +197,9 @@ export function createRouteProxy(options: ProxyOptions): MiddlewareHandler<AuthE
       // The only way here is a signing failure, which is this process's problem
       // and not the caller's: the credential is configured and cannot be used. The
       // same 503 a dead socket gets, because from the caller's side they are the
-      // same sentence — guard cannot answer right now — and the detail goes to the
+      // same sentence — gateway cannot answer right now — and the detail goes to the
       // log so the operator can tell them apart at 3am.
-      console.error(`guard: could not mint the principal assertion for ${route.prefix}`, error);
+      console.error(`gateway: could not mint the principal assertion for ${route.prefix}`, error);
       return null;
     }
 
@@ -221,14 +221,14 @@ export function createRouteProxy(options: ProxyOptions): MiddlewareHandler<AuthE
     } catch (error) {
       // The URL, the socket error and the stack go to the log. They are the
       // platform's to know and an authenticated caller is not to be told.
-      console.error(`guard: upstream ${target} could not be reached`, error);
+      console.error(`gateway: upstream ${target} could not be reached`, error);
       return null;
     }
   }
 }
 
 /**
- * The headers guard sends, built from an allowlist and its own credentials.
+ * The headers gateway sends, built from an allowlist and its own credentials.
  *
  * The service credential is `Bearer` with the table's token and never the
  * caller's: when a table entry has no token, no `Authorization` header is sent at
@@ -293,7 +293,7 @@ async function outboundHeaders(
  * `assertion.test.ts` asserts this gate directly, against a `createRouteProxy`
  * built with a table `routeTable` would have refused, and that test is the only
  * reason the line below is not a green by omission. `assertion.ts` spreads
- * guard's envelope before the declared claims for the same reason, so the audience
+ * gateway's envelope before the declared claims for the same reason, so the audience
  * cannot be overwritten even if the reserved-name check in `checkPrincipal` were
  * removed. Three gates on one property, in three files, is not paranoia about a
  * bug — it is a statement about which of those a future change is most likely to
@@ -336,7 +336,7 @@ function bodyOf(c: Context): ReadableStream<Uint8Array> | null | undefined {
  * separator, and re-encoded. A traversal, an absolute URL in a segment and a
  * doubled slash are not rejected by a list here — after this function they are
  * not expressible. `%2e%2e` is the case that matters, because a percent-encoded
- * dot segment survives the URL parser and reaches guard as three ordinary
+ * dot segment survives the URL parser and reaches gateway as three ordinary
  * characters.
  *
  * `null` means "not a path this gateway serves", which the caller is told by the
@@ -430,7 +430,7 @@ function unreachable(): Problem {
 }
 
 function unusable(target: string, status: number, shape: string): Problem {
-  console.error(`guard: upstream ${target} answered ${status} (${shape}), which this contract does not relay`);
+  console.error(`gateway: upstream ${target} answered ${status} (${shape}), which this contract does not relay`);
 
   return { status: 503, code: "unavailable", detail: "the service this request needs did not answer" };
 }

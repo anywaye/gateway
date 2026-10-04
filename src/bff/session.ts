@@ -1,12 +1,12 @@
 // Where a browser session lives between requests.
 //
 // The browser holds a session id and nothing else; the identity token that id
-// stands for stays in guard's process. That is the whole BFF claim, and this
+// stands for stays in gateway's process. That is the whole BFF claim, and this
 // file is the only place that claim is kept or broken.
 
 /**
  * One live session. `expiresAt` is epoch milliseconds, taken from the token's
- * own expiry rather than from a guard-side TTL: identity decides how long a
+ * own expiry rather than from a gateway-side TTL: identity decides how long a
  * session is good for, and a second clock here would be a second answer.
  */
 export type SessionRecord = { token: string; expiresAt: number };
@@ -15,7 +15,7 @@ export type SessionRecord = { token: string; expiresAt: number };
  * The contract every session backend implements.
  *
  * Three methods and nothing else, deliberately. A `size`, a `list` and a
- * `count` are all things a caller could want and none of them anything guard
+ * `count` are all things a caller could want and none of them anything gateway
  * needs, and every one of them added here is a method the Redis implementation
  * has to grow. Expiry is the store's business because an expired record is not
  * a record: a backend that returned one would be handing out a session it knows
@@ -43,7 +43,7 @@ export type MemorySessionStore = SessionStore & {
   /**
    * Records held right now. v0 introspection — the deploy packet's memory
    * metrics read it. Deliberately not on `SessionStore`: the interface is what
-   * every backend owes guard, and this is what this one can cheaply answer.
+   * every backend owes gateway, and this is what this one can cheaply answer.
    */
   size(): number;
 };
@@ -61,7 +61,7 @@ const DEFAULT_MAX_SESSIONS = 10_000;
  * TODO(guard-07): Redis-backed sessions, so a session survives a restart and is
  * shared by every replica. The interface above is the seam; nothing outside this
  * file knows what is behind it. The same packet carries the shared API-key store
- * (`./apiKey`) — one deploy story, "guard's per-process state moves to Redis", and
+ * (`./apiKey`) — one deploy story, "gateway's per-process state moves to Redis", and
  * the counter store in `./rateLimitRedis` is the pattern to copy.
  */
 export function memorySessionStore(options: MemorySessionStoreOptions = {}): MemorySessionStore {

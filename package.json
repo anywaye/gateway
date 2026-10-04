@@ -1,5 +1,5 @@
 {
-  "name": "guard",
+  "name": "gateway",
   "version": "0.0.0",
   "description": "cafaye public gateway/BFF: routing, JWT verification, rate limits.",
   "license": "MIT",

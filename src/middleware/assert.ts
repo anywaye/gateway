@@ -39,7 +39,7 @@ export function assertNonEmptyString(value: unknown, field: string): asserts val
  *
  * Used for rate-limit policy names, which go into `RateLimit-Policy` and
  * `RateLimit` header values as quoted strings. A name that fails this is not
- * escaped and truncated — it is rejected, because a policy name is guard's own
+ * escaped and truncated — it is rejected, because a policy name is gateway's own
  * configuration and a wrong one is a mistake to surface rather than a string to
  * sanitise.
  */

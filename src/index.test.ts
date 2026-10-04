@@ -111,7 +111,7 @@ describe("app surface", () => {
   });
 });
 
-const CLIENT_ID = "guard-test";
+const CLIENT_ID = "gateway-test";
 
 /** The account the minted token below acts on, shared with the API-key cases. */
 const ACCOUNT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -210,7 +210,7 @@ describe("GET /v1/me", () => {
 
   test("a token that does not verify 401s and never becomes a rate-limit key", async () => {
     // The requirement, and the reason the limiter is mounted after the auth gate:
-    // a credential guard could not verify has no account, so there is nothing to
+    // a credential gateway could not verify has no account, so there is nothing to
     // count it against. Keying on an unverified claim would be a limiter any
     // caller can reset by sending a different one.
     const app = createApp({
@@ -275,10 +275,10 @@ describe("GET /v1/me", () => {
 });
 
 describe("runtimeOptions", () => {
-  test("defaults to the local identity issuer and guard's own client id", () => {
+  test("defaults to the local identity issuer and gateway's own client id", () => {
     const { jwt } = runtimeOptions({});
 
-    expect(jwt).toEqual({ issuer: "https://identity.localhost", audience: "guard" });
+    expect(jwt).toEqual({ issuer: "https://identity.localhost", audience: "gateway" });
   });
 
   test("IDENTITY_ISSUER is the issuer-only base URL", () => {
@@ -297,15 +297,15 @@ describe("runtimeOptions", () => {
     expect(runtimeOptions({ IDENTITY_JWKS_TTL_MS: "60000" }).jwt?.jwksCacheTtlMs).toBe(60_000);
   });
 
-  test("GUARD_CLIENT_ID is the audience guard accepts", () => {
-    expect(runtimeOptions({ GUARD_CLIENT_ID: "cafaye-console" }).jwt?.audience).toBe("cafaye-console");
+  test("GATEWAY_CLIENT_ID is the audience gateway accepts", () => {
+    expect(runtimeOptions({ GATEWAY_CLIENT_ID: "cafaye-console" }).jwt?.audience).toBe("cafaye-console");
   });
 
   test("an empty variable is unset, not a value", () => {
     // `IDENTITY_ISSUER=` is what an unset variable looks like in a compose file.
     const { jwt } = runtimeOptions({ IDENTITY_ISSUER: "  ", IDENTITY_JWKS_TTL_MS: "" });
 
-    expect(jwt).toEqual({ issuer: "https://identity.localhost", audience: "guard" });
+    expect(jwt).toEqual({ issuer: "https://identity.localhost", audience: "gateway" });
   });
 
   test("a malformed cache TTL is a startup error, not a silent default", () => {
@@ -327,7 +327,7 @@ describe("runtimeOptions: the BFF identity URL", () => {
   });
 
   test("IDENTITY_URL is the base URL the auth calls are built from", () => {
-    // The issuer is where guard *verifies* tokens; this is where it *asks* for
+    // The issuer is where gateway *verifies* tokens; this is where it *asks* for
     // sessions. They are the same service and two variables, because one is an
     // https origin in every environment and the other is a service address.
     expect(runtimeOptions({ IDENTITY_URL: "http://identity:8080" }).bff?.identityUrl).toBe("http://identity:8080");
@@ -446,7 +446,7 @@ describe("runtimeOptions: the route table", () => {
   test("a value that is not JSON is a startup error naming the variable", () => {
     // `JSON.parse`'s own message names a character position in a string the
     // operator never wrote, so it is replaced: a startup error that does not name
-    // the variable is one an operator reads as a bug in guard.
+    // the variable is one an operator reads as a bug in gateway.
     expect(() => runtimeOptions({ ROUTE_TABLE: "{/v1/pantry:http://pantry}" })).toThrow(/ROUTE_TABLE/);
     expect(() => runtimeOptions({ ROUTE_TABLE: "[]" })).toThrow(/ROUTE_TABLE must be a JSON object/);
     expect(() => runtimeOptions({ ROUTE_TABLE: '"http://pantry"' })).toThrow(/ROUTE_TABLE must be a JSON object/);
@@ -597,7 +597,7 @@ describe("API keys through the app", () => {
 
     // No gate mounted, so the key is not a credential and the request is
     // anonymous: the token gate answers 401 rather than the key gate answering
-    // 200 for a key guard has never heard of.
+    // 200 for a key gateway has never heard of.
     const res = await app.request("/v1/me", { headers: { authorization: `ApiKey ${issued.key}` } });
 
     expect(res.status).toBe(401);
