@@ -137,6 +137,56 @@ func sessionCookieValue(res *http.Response) string {
 	return ""
 }
 
+// hasSessionCookie is whether the answer carries a `Set-Cookie` for the session
+// cookie at all, whatever its value.
+//
+// NOT `sessionCookieValue(res) != ""`, which was the first version of this helper
+// and was wrong in a way the mutation gate found rather than a reviewer: a
+// CLEARING cookie is `Set-Cookie: __Host-bff-session=; Max-Age=0; Expires=…`, so
+// its value is the empty string, so "the cookie was cleared" and "no cookie was
+// sent" are the same observation through it. Every "the cookie was not cleared"
+// assertion below was passing vacuously until this was split into three.
+//
+// The three states are three different questions and conflating them is how a
+// sign-out bug hides: a response can set a cookie, clear one, or mention neither.
+func hasSessionCookie(res *http.Response) bool {
+	for _, c := range cookies(res) {
+		if c.Name == SessionCookie {
+			return true
+		}
+	}
+	return false
+}
+
+// setsSessionCookie is a cookie carrying a VALUE — gateway minted one.
+func setsSessionCookie(res *http.Response) bool {
+	for _, c := range cookies(res) {
+		if c.Name == SessionCookie && c.Value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// clearsSessionCookie is a cookie with no value AND an expiry in the past, which
+// is what a browser needs in order to drop it.
+//
+// The expiry is half the assertion on purpose. A `Set-Cookie` with an empty value
+// and no `Expires` is a cookie set to the empty string, not a deletion: the
+// browser stores it and the caller's next request presents an empty session id,
+// which is a different failure with the same shape in a log line.
+func clearsSessionCookie(res *http.Response) bool {
+	for _, c := range cookies(res) {
+		if c.Name != SessionCookie || c.Value != "" {
+			continue
+		}
+		if c.MaxAge < 0 || (!c.Expires.IsZero() && !c.Expires.After(time.Unix(0, 0))) {
+			return true
+		}
+	}
+	return false
+}
+
 // do asks the gateway and returns the recorded answer.
 func (h *harness) do(t *testing.T, method, path string, body string, headers map[string]string) *http.Response {
 	t.Helper()
@@ -209,8 +259,8 @@ func TestACrossOriginPostIsRefusedAndIdentityIsNeverAsked(t *testing.T) {
 		if res.StatusCode != http.StatusForbidden {
 			t.Errorf("POST %s with Sec-Fetch-Site: cross-site answered %d, and the origin gate's answer is 403", path, res.StatusCode)
 		}
-		if got := sessionCookieValue(res); got != "" {
-			t.Errorf("POST %s set a session cookie on a refused request: %q", path, got)
+		if setsSessionCookie(res) {
+			t.Errorf("POST %s set a session cookie on a refused request", path)
 		}
 	}
 	if len(h.calls) != 0 {
@@ -464,6 +514,9 @@ func TestTwoRefusalCausesProduceIdenticalResponses(t *testing.T) {
 		if got := sessionCookieValue(res); got != "" {
 			t.Errorf("%s: a refused login set a session cookie: %q", name, got)
 		}
+		if h.sessions.Size() != 0 {
+			t.Errorf("%s: a refused login stored %d record(s). A refused credential must leave nothing behind — a record nobody was told about is a session that exists and cannot be used.", name, h.sessions.Size())
+		}
 		answers = append(answers, res)
 	}
 
@@ -603,7 +656,7 @@ func TestAnExpiredSessionIs401AndIdentityIsNeverAsked(t *testing.T) {
 	if len(h.calls) != before {
 		t.Errorf("an expired session made %d call(s) to identity; there is no live token to spend", len(h.calls)-before)
 	}
-	if sessionCookieValue(res) != "" {
+	if !clearsSessionCookie(res) {
 		t.Error("the expired session's cookie was not cleared, so the browser keeps presenting a record that can never work again")
 	}
 }
@@ -634,7 +687,7 @@ func TestAWithdrawnSessionIs401AndTheRecordIsDropped(t *testing.T) {
 	if h.sessions.Size() != 0 {
 		t.Errorf("the withdrawn session is still in the store (%d record(s)); dropping it is what makes the revocation true now rather than at the token's expiry", h.sessions.Size())
 	}
-	if sessionCookieValue(res) != "" {
+	if !clearsSessionCookie(res) {
 		t.Error("a withdrawn session's cookie was not cleared")
 	}
 }
@@ -653,7 +706,7 @@ func TestAForgottenSessionIs401AndTheCookieIsCleared(t *testing.T) {
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("a session the store has forgotten answered %d, and it is a 401", res.StatusCode)
 	}
-	if sessionCookieValue(res) != "" {
+	if !clearsSessionCookie(res) {
 		t.Error("the cookie for a forgotten session was not cleared, so the browser keeps presenting it")
 	}
 }
@@ -736,7 +789,7 @@ func TestSigningOutWithAForgottenCookieIs204AndStillClears(t *testing.T) {
 	if res.StatusCode != http.StatusNoContent {
 		t.Errorf("signing out a forgotten session answered %d. Refusing is what makes sign-out look broken.", res.StatusCode)
 	}
-	if sessionCookieValue(res) != "" {
+	if !clearsSessionCookie(res) {
 		t.Error("the cookie was not cleared, so the browser keeps presenting it")
 	}
 }
@@ -783,7 +836,7 @@ func TestSigningOutWhileIdentityIsDownStillSignsOutAndSays503(t *testing.T) {
 	if h.sessions.Size() != 0 {
 		t.Errorf("the store holds %d record(s); failing to sign a browser out is worse than a token that outlives its revocation", h.sessions.Size())
 	}
-	if sessionCookieValue(res) != "" {
+	if !clearsSessionCookie(res) {
 		t.Error("the cookie was not cleared even though the local record is gone")
 	}
 }
@@ -859,7 +912,7 @@ func TestRegisterReturnsTheAccountAndNoCookie(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("registration answered %d. Body: %s", res.StatusCode, readBody(t, res))
 	}
-	if sessionCookieValue(res) != "" {
+	if setsSessionCookie(res) {
 		t.Error("a registration set a session cookie. A registration is not a login; identity has minted nothing for this browser to hold.")
 	}
 
@@ -995,6 +1048,25 @@ func TestAnUnreachableIdentityIs503AndNamesNoHost(t *testing.T) {
 	}
 }
 
+// A dependency that CRASHES is a 503 on one request, not a dead gateway. `Doer` is
+// a seam a test can supply anything behind, and a real client can panic in a
+// redirect handler or a dialer, so the recovery is not theoretical.
+func TestAPanickingIdentityIsA503AndNotADeadGateway(t *testing.T) {
+	h := build(t, func(*http.Request) (*http.Response, error) {
+		panic("identity: nil pointer dereference in the token verifier")
+	})
+
+	// If this process dies, the suite fails here with the panic rather than with
+	// an assertion — which is the point: the assertion below is about the ANSWER,
+	// and the recovery is about the process still being there to give one.
+	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
+
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("a panicking identity answered %d, and it is a 503", res.StatusCode)
+	}
+	assertNoToken(t, "the panic body", readBody(t, res))
+}
+
 // A hung identity is bounded by the timeout rather than holding the request.
 func TestAHungIdentityIsBounded(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
@@ -1039,7 +1111,7 @@ func TestASessionWithNoUsableExpiryIsRefusedAndNothingIsStored(t *testing.T) {
 			if res.StatusCode != http.StatusServiceUnavailable {
 				t.Errorf("a session with %s answered %d, and it is a 503", name, res.StatusCode)
 			}
-			if sessionCookieValue(res) != "" {
+			if setsSessionCookie(res) {
 				t.Error("a session that was refused set a cookie, so the next request refuses a cookie the browser was just given")
 			}
 			if h.sessions.Size() != 0 {
@@ -1179,24 +1251,40 @@ func TestAConfiguredIdentityRegistersAProbeAndItIsFirst(t *testing.T) {
 
 // A dependency that is DOWN is reported by name and not by detail: a readiness
 // endpoint that fails because of its own credentials is not a readiness check.
+//
+// BOTH ways down, because they are different code paths: a transport failure
+// (`call` returns an error) and a dependency that is up and answering `5xx` — which
+// is what most outages actually look like, and the case `src/bff/auth.ts` calls out
+// as the one that used to pass through with no log line at all.
 func TestADownDependencyIsUnavailableAndNamesNoReason(t *testing.T) {
-	h := build(t, func(*http.Request) (*http.Response, error) {
-		return nil, errors.New("dial tcp://identity.internal:8080: connect: connection refused (password=hunter2)")
-	})
-
-	res := h.do(t, http.MethodGet, "/readyz", "", nil)
-
-	if res.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("/readyz with a down identity answered %d, and it is a 503", res.StatusCode)
+	cases := map[string]func(*http.Request) (*http.Response, error){
+		"the transport failed": func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("dial tcp://identity.internal:8080: connect: connection refused (password=hunter2)")
+		},
+		"identity answered 500": func(*http.Request) (*http.Response, error) {
+			return answer(http.StatusInternalServerError, "<html>upstream stack trace: password=hunter2</html>"), nil
+		},
 	}
-	body := readBody(t, res)
-	if body != `{"deps":{"identity":"unavailable"}}` {
-		t.Errorf("/readyz is %s and it must be `{\"deps\":{\"identity\":\"unavailable\"}}`", body)
-	}
-	for _, leak := range []string{"hunter2", "identity.internal", "refused"} {
-		if strings.Contains(body, leak) {
-			t.Errorf("/readyz names %q: %s. Which dependency failed is named; why it failed is not.", leak, body)
-		}
+
+	for name, identity := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := build(t, identity)
+
+			res := h.do(t, http.MethodGet, "/readyz", "", nil)
+
+			if res.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("/readyz with a down identity answered %d, and it is a 503", res.StatusCode)
+			}
+			body := readBody(t, res)
+			if body != `{"deps":{"identity":"unavailable"}}` {
+				t.Errorf("/readyz is %s and it must be `{\"deps\":{\"identity\":\"unavailable\"}}`", body)
+			}
+			for _, leak := range []string{"hunter2", "identity.internal", "refused", "upstream"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("/readyz names %q: %s. Which dependency failed is named; why it failed is not.", leak, body)
+				}
+			}
+		})
 	}
 }
 
