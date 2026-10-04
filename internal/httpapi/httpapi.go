@@ -301,6 +301,7 @@ type mount struct {
 }
 
 func (m *mount) ServeHTTP(w http.ResponseWriter, r *http.Request) { m.handler.ServeHTTP(w, r) }
+
 // headOf adapts a `GET` handler to answer a `HEAD`.
 //
 // `http.ResponseWriter` cannot un-write a body, so the body goes nowhere: the

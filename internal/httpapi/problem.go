@@ -200,11 +200,7 @@ func writeProblemBody(w http.ResponseWriter, r *http.Request, body api.Problem) 
 		jsonStringMember("trace_id", body.TraceID),
 	}
 	if body.Status == api.N422 && body.Errors != nil && len(*body.Errors) > 0 {
-		encoded, err := json.Marshal(*body.Errors)
-		if err != nil {
-			panic(fmt.Sprintf("httpapi: %s %s: the field errors did not encode: %v", r.Method, r.URL.Path, err))
-		}
-		members = append(members, `"errors":`+string(encoded))
+		members = append(members, `"errors":`+encodeFieldErrors(*body.Errors))
 	}
 
 	writeRawJSON(w, r, int(body.Status), "{"+strings.Join(members, ",")+"}")
@@ -218,6 +214,27 @@ func jsonStringMember(name, value string) string {
 	encodedName, _ := json.Marshal(name)
 	encodedValue, _ := json.Marshal(value)
 	return string(encodedName) + ":" + string(encodedValue)
+}
+
+// encodeFieldErrors renders the `errors` array in the reference's order, which is
+// `{ field, code }` per entry.
+//
+// NOT `json.Marshal`, and this is the same trap as the seven members above applied
+// one level down: `api.FieldError` is a GENERATED struct, so its fields are
+// alphabetical — `code` before `field` — and `internal/equivalence` compares bodies
+// BYTE FOR BYTE. The proxy packet, which owns this function, had no 422 to compare
+// and marshalled the array; the BFF packet, which did, hand-rendered it. Taking one
+// side of the merge wholesale dropped the other's fix, and this is the commit that
+// puts it back with a note on why it is not the obvious one line.
+//
+// `errors` is appended LAST, after `trace_id`, and that ordering is the
+// reference's too.
+func encodeFieldErrors(fields []api.FieldError) string {
+	entries := make([]string, 0, len(fields))
+	for _, field := range fields {
+		entries = append(entries, "{"+jsonStringMember("field", field.Field)+","+jsonStringMember("code", string(field.Code))+"}")
+	}
+	return "[" + strings.Join(entries, ",") + "]"
 }
 
 // jsonNumberMember is one `"key":value` where the value is a JSON number and not a

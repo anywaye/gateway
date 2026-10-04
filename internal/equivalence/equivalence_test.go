@@ -1186,7 +1186,6 @@ func (c caseSpec) withHeaders(headers map[string]string) caseSpec {
 	return c
 }
 
-
 func (c caseSpec) withBody(body string) caseSpec {
 	c.body = body
 	return c
