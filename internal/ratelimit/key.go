@@ -24,8 +24,8 @@ package ratelimit
 
 import (
 	"fmt"
+	"net"
 	"net/http"
-	"net/netip"
 	"strings"
 
 	"github.com/cafaye/gateway/internal/auth"
@@ -204,23 +204,18 @@ func peerAddress(r *http.Request) string {
 //     so each became a bucket identity of its own and a caller who could put an
 //     entry in the trusted position minted a fresh allowance per request.
 //
-// `net/netip`'s `ParseAddr` is the parse — IPv4 or IPv6, nothing else — and it is a
-// pure function in the standard library rather than a dependency. It also accepts
-// the `%zone` suffix (`fe80::1%eth0`), which is part of an IPv6 literal and was the
-// reason the old charset had to allow `%` at all.
+// `net.ParseIP` is the parse — IPv4 or IPv6, nothing else — and it is a pure
+// function in the standard library rather than a dependency.
 //
-// # `netip`, NOT `net.ParseIP`, AND THE COMMENT ABOVE USED TO SAY OTHERWISE
+// # IT DOES NOT SETTLE THE `%zone` SUFFIX, AND THIS PARAGRAPH USED TO SAY IT DID
 //
-// This said `net.ParseIP` settles the zone suffix. It does not: `ParseIP` answers
-// nil for `fe80::1%eth0`, because a zone is an interface index that belongs to a
-// host and not a property of the address bytes. So every link-local IPv6 peer —
-// which is the entire IPv6 range on a machine with no global address — was read as
-// `unknown` and every caller on it shared one anonymous bucket.
-//
-// The sentence was wrong and nothing caught it, because the first draft of the test
-// had no case with a zone in it. The property was correct, the code did not have it,
-// and only a case that puts `fe80::1%eth0` in the fixture finds the gap — which is
-// why the case is still in the table rather than fixed by deleting it.
+// `ParseIP` answers nil for `fe80::1%eth0`, because a zone is an interface index
+// rather than a property of the address bytes. The `%` is still in the old charset
+// for a reason — a zone IS part of an IPv6 literal as written — so the suffix has
+// to be dealt with, and it is dealt with three lines below rather than here. The
+// fix and the reference's own behaviour are both written out there; this paragraph
+// is only here so the summary above the function does not claim a property the
+// function does not have.
 //
 // `unknown` is refused explicitly so it cannot be confused with the placeholder
 // that means the same thing, even though it would not parse either.
@@ -234,10 +229,23 @@ func addressOf(entry string) string {
 		return ""
 	}
 
-	// `netip.ParseAddr` rather than `net.ParseIP`: the first accepts a `%zone`
-	// suffix and the second does not, which is the whole difference and is
-	// described above.
-	if _, err := netip.ParseAddr(bare); err != nil {
+	// THE ZONE IS STRIPPED FOR THE PARSE AND KEPT IN THE ANSWER, and that is not
+	// tidiness — it is a measured divergence from the reference.
+	//
+	// `src/middleware/limitKey.ts` parses with Node's `net.isIP`, which accepts
+	// `fe80::1%eth0` and returns 6 for it (measured: `node -e` over the same
+	// literals). `net.ParseIP` — Go's equivalent — returns nil for it, because a zone
+	// is a scope identifier the parser is not given an interface table for. So a
+	// port that called `net.ParseIP` directly refused every link-local IPv6 address
+	// carrying a zone, fell through to `addressOf`'s empty answer, and put EVERY such
+	// caller in the shared `ip:unknown` bucket.
+	//
+	// The zone stays in the bucket name because the reference's does: two callers on
+	// different interfaces are different addresses, and the reference keeps them apart.
+	// Stripping it here would be a second divergence, in the opposite direction, and
+	// the one the zone's own purpose argues against.
+	host, _, _ := strings.Cut(bare, "%")
+	if net.ParseIP(host) == nil {
 		return ""
 	}
 	return bare
