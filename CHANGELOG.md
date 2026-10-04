@@ -89,6 +89,35 @@ dependency versions follow npm's own rules.
   a 501. Recorded because the honest-looking answer was the wrong one, and because
   the next packet inherits the decision rather than re-deriving it.
 
+- **`account_scope.yml` declares its one account-scoped route again.** `GET /v1/me`
+  is the only route in `gateway` that can reach another account's data, and it was
+  declared with no row at all: core's `scoping-bypassed` reads the `app.use` mounts
+  above a row through `chain_gate` with a **three-line** window, and MD19's
+  public-prefix exception had made the `/v1/*` mount's body four statements, so
+  `jwt.requireJwt` fell to the fifth line and out of reach. One blank line inside
+  that body is the whole of the fix, and it is argued at the mount because a
+  security declaration that depends on a blank line is a fragility the next reader
+  has to be told about.
+
+  The row is now `accountScoped: true` with `accountFrom.via: requireJwt` at
+  `src/middleware/jwt.ts:346`, **verified by the run** — `chain_gate` finds
+  `requireJwt` at `src/index.ts:254` and `account-key-lost` does not fire — and
+  `account-scope.nothing-scoped` is gone with it. This is the first packet in
+  which this repository has had an account-scoped entry point that a machine could
+  check.
+
+  The Go implementation's registration of the same operation still has no row, and
+  that is one honest `undeclared` rather than two. It is not a format limitation:
+  two rows for one `(method, path)` do take two registrations. It is that neither
+  alternative survives a run — a `false` row there cannot be refuted by any check
+  (`handler_for` resolves `wrapper.X` to the generated wrapper and never reaches
+  `internal/httpapi`), and a `true` row is a failure that cannot be cleared (chi
+  mounts middleware with `r.Use(`, which `chain_gate` cannot match). Measured both
+  sides in `REPORT-gateway-account-scope-ratchet-01.md` §3.
+
+  `surface.minimum` stays **14**. It is not lowered to make a failure go away: it
+  is why 14 registrations against 13 rows is a question somebody had to answer.
+
 ### Changed
 
 - **`gate.yml` and `mise.toml`.** Four proofs (`go-vet`, `go-generated`,

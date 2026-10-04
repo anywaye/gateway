@@ -1082,7 +1082,8 @@ the source with the packet that replaces them.
   available from the minter (`publicJwk()`), so wiring a
   `/.well-known/jwks.json` is small — and it is deliberately not done here. It
   would add a route to the public edge of the gateway: an operation in
-  `openapi/v1.yaml`, six `registeredAt` anchors in `account_scope.yml`, and a
+  `openapi/v1.yaml`, a `registeredAt` anchor in `account_scope.yml` **on each
+  implementation** while `src/` and `internal/` are both live, and a
   `surface.minimum` change this packet has no standing to make, all for something
   no *caller* needs. Upstreams are already configured out of band — they need
   gateway's `token` the same way — so the key travels the road the `token` does.
