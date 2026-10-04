@@ -10,6 +10,14 @@
 // drifted between the two tests is a fixture that compares two different key sets
 // and reports the difference as an equivalence failure.
 //
+// # IT KNOWS NOTHING ABOUT THE VERIFIER
+//
+// It mints keys, tokens and documents. It does NOT build an `auth.Verifier`, even
+// though every caller wants one, because a fixture package that imports the package
+// under test cannot be imported BY that package's tests — an import cycle Go rejects
+// in a test build. The two callers build the verifier themselves, in four lines,
+// from `Issuer`, `Audience` and `Clock`, which are exported for exactly that reason.
+//
 // # IT IS NOT PART OF THE SERVICE
 //
 // Nothing outside a `_test.go` file imports this package, so the Go linker drops
@@ -39,8 +47,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/cafaye/gateway/internal/auth"
 )
 
 // The claim values a test can ask for, and the two that are not values at all.
@@ -89,20 +95,6 @@ const (
 	Valid   = time.Hour
 )
 
-// Verifier builds a verifier for this fixture's key set, reading `Clock`.
-//
-// Returned as a two-value function rather than a helper that fails the test itself,
-// because the equivalence runner wants the ERROR and this package's tests want a
-// fatal — and a helper that swallowed the error would hide a configuration mistake
-// behind a nil verifier.
-func (f *Fixture) Verifier(options auth.Options) (*auth.Verifier, error) {
-	options.Issuer = or(options.Issuer, Issuer)
-	options.Audience = or(options.Audience, Audience)
-	options.JWKSURL = f.URL
-	options.Now = func() time.Time { return Clock }
-	return auth.New(options)
-}
-
 // Fixture is one key pair, the JWKS document it publishes, and a server that
 // publishes it.
 //
@@ -124,6 +116,12 @@ type Fixture struct {
 	// Where the document is served, or "" if `NewFixture` was not asked for a
 	// server.
 	URL string
+
+	// DocumentURL is the URL the fixture's own handler serves `Document` from, set
+	// by `Serve`. It is separate from `URL` because a test that wants the key set at
+	// a path other than the well-known one — or served by a handler that fails on
+	// demand — points the VERIFIER here while `URL` stays the conventional address.
+	DocumentURL string
 
 	server *httptest.Server
 
@@ -175,10 +173,10 @@ func NewFixture(t *testing.T) *Fixture {
 func (f *Fixture) Serve(t *testing.T) *Fixture {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.fetched++
-		failing, status := f.failing, f.failWith
+		failing, status, document := f.failing, f.failWith, f.Document
 		f.mu.Unlock()
 
 		if failing {
@@ -187,12 +185,12 @@ func (f *Fixture) Serve(t *testing.T) *Fixture {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(f.Document)
+		_, _ = w.Write(document)
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(f.server.Close)
 
-	f.server = server
-	f.URL = server.URL + "/.well-known/jwks.json"
+	f.URL = f.server.URL + "/.well-known/jwks.json"
+	f.DocumentURL = f.URL
 	return f
 }
 
@@ -212,12 +210,18 @@ func (f *Fixture) Fetches() int {
 // Used for the identity-is-down case: `503` is the shape a real outage has, and
 // `200` with a login page is the shape a misconfigured proxy has. Both are worth
 // driving, and only one is a status code.
+//
+// `0` is NOT a status and is spelled as HEALING rather than as a magic value: a
+// test that drives an outage and then recovers needs the recovery to be a fact
+// rather than a number nobody can read.
 func (f *Fixture) FailWith(status int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.failing = true
-	f.failWith = status
+	f.failing, f.failWith = status != 0, status
 }
+
+// Heal puts the key-set endpoint back to serving the document.
+func (f *Fixture) Heal() { f.FailWith(0) }
 
 // Claims is a token's payload, as a test writes it.
 //
@@ -261,8 +265,69 @@ type Claims struct {
 	RawClaims map[string]any
 }
 
+// Publish adds a key to the document this fixture serves, under its own `kid`.
+//
+// It is the rotation a test drives: the set gateway holds does not carry the new
+// key, and the only way it learns that identity now publishes it is the unknown-`kid`
+// refresh. `Publish` is separate from `Serve` for exactly that reason — a fixture
+// whose document could only be written once could not express a rotation at all.
+func (f *Fixture) Publish(t *testing.T, kid string, key *rsa.PublicKey) {
+	t.Helper()
+
+	var document struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	if err := json.Unmarshal(f.Document, &document); err != nil {
+		t.Fatalf("decoding the fixture's own document to add a key: %v", err)
+	}
+
+	document.Keys = append(document.Keys, map[string]any{
+		"kty": "RSA",
+		"use": "sig",
+		"alg": "RS256",
+		"kid": kid,
+		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+	})
+
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("re-encoding the JWKS document: %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Document = encoded
+}
+
+// NewKey generates a second key pair, for a rotation.
+//
+// Separate from `Publish` because publishing a key and SIGNING with it are two
+// decisions a test makes at two different moments: the point of a rotation test is
+// that a token signed by a key the cached set does not carry is admitted after one
+// refresh, and minting it before publishing is what makes that observable.
+func NewKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating a second 2048-bit test key: %v", err)
+	}
+	return key
+}
+
 // Mint signs a token and returns it in compact JWS form.
 func (f *Fixture) Mint(t *testing.T, claims Claims) string {
+	t.Helper()
+	return MintWith(t, f.Private, claims)
+}
+
+// MintWith signs a token with a key that is not necessarily this fixture's.
+//
+// A package function rather than a method because the point of a rotation test is a
+// token signed by a key the VERIFIER's set does not carry, and expressing that as a
+// method on the fixture whose set it is not in would read as if it were.
+func MintWith(t *testing.T, key *rsa.PrivateKey, claims Claims) string {
 	t.Helper()
 
 	header := map[string]any{"typ": "JWT", "alg": "RS256"}
@@ -312,7 +377,7 @@ func (f *Fixture) Mint(t *testing.T, claims Claims) string {
 		"." + base64.RawURLEncoding.EncodeToString(encodedPayload)
 
 	digest := sha256.Sum256([]byte(signingInput))
-	signature, err := rsa.SignPKCS1v15(rand.Reader, f.Private, crypto.SHA256, digest[:])
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
 	if err != nil {
 		t.Fatalf("signing the token: %v", err)
 	}

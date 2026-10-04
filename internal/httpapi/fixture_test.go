@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cafaye/gateway/internal/auth"
 	"github.com/cafaye/gateway/internal/ratelimit"
@@ -56,10 +57,17 @@ func tokenValid(t *testing.T, f *testkeys.Fixture) string {
 func authVerifierFor(t *testing.T, f *testkeys.Fixture) (*auth.Verifier, error) {
 	t.Helper()
 
-	// The issuer, the audience and the clock all come from the fixture, so a test
-	// that mints a token and a test that verifies it cannot disagree about which of
-	// the three they are.
-	return f.Verifier(auth.Options{})
+	// The issuer, the audience and the clock are the fixture's OWN constants, so a
+	// test that mints a token and a test that verifies it cannot disagree about which
+	// of the three they are. Three lines rather than a `testkeys` helper, because a
+	// fixture package that imported `internal/auth` could not be imported by
+	// `internal/auth`'s own tests — an import cycle Go rejects in a test build.
+	return auth.New(auth.Options{
+		Issuer:   testkeys.Issuer,
+		Audience: testkeys.Audience,
+		JWKSURL:  f.URL,
+		Now:      func() time.Time { return testkeys.Clock },
+	})
 }
 
 // askWithVerifier is `ask` plus the two fields this packet added, so a test does not
