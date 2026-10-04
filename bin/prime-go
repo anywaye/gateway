@@ -135,10 +135,31 @@ echo "$out" | grep -E '^(ok|FAIL|---|\?)|equivalence:' || true
 # `    file.go:357: `, so anchoring at the start of the line finds nothing and the
 # block below would report a green on a run that skipped everything. Measured, not
 # assumed — the first version of this line anchored and matched nothing.
-did_not_run="$(printf '%s\n' "$out" |
-  sed -n 's/.*\(equivalence: DID NOT RUN.*\)/\1/p' | head -1)"
+#
+# # HERE STRINGS, NOT PIPES, AND THIS IS NOT A STYLE PREFERENCE
+#
+# Both of these used to pipe `$out` into `sed … | head -1` and `grep -q`. That is
+# wrong under `set -o pipefail`, and it was wrong quietly for as long as it worked:
+#
+#   - `grep -q` exits the INSTANT it matches, closing the read end of the pipe.
+#     `printf` is then killed by SIGPIPE — and `pipefail` reports the pipeline's
+#     status as non-zero even though `grep` matched. So the `if` below took its
+#     `else` branch on a run where the summary was present and matched.
+#   - The same applies to `head -1` closing the pipe on `sed`.
+#
+# The failure needs `$out` to be larger than the pipe buffer, because below that
+# size the producer writes everything and exits before the consumer exits. So it
+# fires only once the test output grows — which is to say it fires on the run after
+# someone adds tests, and reports "internal/equivalence printed neither its summary
+# nor a counted skip" about a tier that ran and printed exactly what it always
+# prints. A gate whose failure message names the wrong cause is worse than no gate,
+# because the reader goes looking for a missing summary line that is right there.
+#
+# `<<<` writes to a temporary file rather than a pipe, so no producer is ever
+# killed and `pipefail` reports what the match actually was.
+did_not_run="$(grep -m1 -o 'equivalence: DID NOT RUN.*' <<<"$out" || true)"
 if [ -z "$did_not_run" ]; then
-  if printf '%s\n' "$out" | grep -q 'equivalence: [0-9]* cases'; then
+  if grep -q 'equivalence: [0-9]* cases' <<<"$out"; then
     echo "equivalence: RAN — the summary line is above"
   else
     echo "bin/prime-go: internal/equivalence printed neither its summary nor a counted" >&2
