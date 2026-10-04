@@ -257,8 +257,14 @@ info:
     section and mounted (not served) on the `ALL /v1/*` pair above.
   contact:
     name: gateway
-    url: https://github.com/cafaye/guard
-    email: gateway@cafaye.com
+    # The GitHub repository was renamed cafaye/guard -> cafaye/gateway after
+    # this document was written. The old URL still redirects, so this was never
+    # broken -- but `contact.url` is what a generated client, a docs renderer
+    # and a reader with a bug report each follow, and this is the last
+    # occurrence of the old name in a file the fleet publishes. No search for
+    # `guard` in the TypeScript or the Go source finds this one; it lives in
+    # the contract, which is the one artifact whose every byte is outward-facing.
+    url: https://github.com/cafaye/gateway
   license:
     name: MIT
     url: https://opensource.org/license/mit
