@@ -10,6 +10,109 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **A Go gateway, beside the TypeScript one, serving the same contract.**
+  `gateway` is being rewritten in Go: `net/http` + `chi`, with `oapi-codegen`
+  generating the server from `openapi/v1.yaml`, because the contract is the
+  framework and no Gin, no Echo (`MVP-SCOPE.md`).
+
+  **`src/` is NOT deleted and is not legacy.** It is the reference implementation
+  and remains what serves traffic; the Go service is measured against it on every
+  gate run. Deleting it is a later packet, once equivalence has been *proven*
+  rather than asserted — a port and a deletion in one commit produce a diff where
+  nobody can tell a porting bug from a mechanical edit, which is the review this
+  rewrite most needs.
+
+  What the Go service serves today is **two operations of seven**: `GET /healthz`
+  and `GET /readyz`, plus both error envelopes. The other five — `GET /v1/me` and
+  the four `/auth` routes — are declared by the contract, need a subsystem this
+  packet does not port, and answer the **v0 `404`**. A `501` would have been more
+  truthful about the code and less true about the contract: `createApp({})` does
+  not register `/v1/me` without a verifier and does not register `/auth/*`
+  without an identity to ask, so the reference answers `404` too, and where the
+  two implementations differ the TypeScript answer is the correct one.
+
+  The ported pieces, each in the place the rule it serves already was:
+
+  - **The error envelope**, from `src/problem.ts` into `internal/httpapi/problem.go`
+    — core's RFC 9457 `problem+json` with the `code` and `trace_id` extensions, a
+    fixed title per code, `errors[]` scoped to a `422`, `instance` as the path and
+    never the query, and a `trace_id` equal to the `X-Trace-Id` header. An
+    undeclared code is refused rather than rendered, where `src/problem.ts`
+    rendered `title: undefined` into the JSON. Nothing writes a problem document
+    yet, so it is reachable from the first Wave 3 handler and not before.
+  - **Configuration arrives as an argument**, in the form Go needs a different
+    mechanism for. `httpapi.New(Options)` takes its configuration;
+    `httpapi.RuntimeOptions(Env)` is the only function in the module that reads
+    one. Go's global is `os.Getenv`, which any package may call at any time, so
+    the property is held by two checks that read the package's own sources: one
+    file may call `os.Getenv` and one variable may be read.
+  - **The contract is generated and the generator's output is committed**, with
+    `bin/prime-go` regenerating and diffing it — because the Go router *is* that
+    file, so a stale one does not fail to compile, it answers the old routes with
+    the new contract's promises.
+  - **`bin/prime-go`**, and `bin/prime` now runs it, so the declared gate covers
+    both implementations rather than being two gates wearing one name.
+  - **`Dockerfile.golang`** — distroless/static, at the repository root, and not
+    named `*.go`, because `go build ./...` compiles every `.go` file in the tree.
+    It is not named `Dockerfile` because that is the TypeScript image and this
+    packet does not replace it; the rename lands with the deletion of `src/`.
+  - **`internal/equivalence`** — the check that says the port is right rather
+    than compiling. It stands the TypeScript reference up as a subprocess, drives
+    the same requests at both, and compares status, `Content-Type`, the presence
+    of the contract-declared headers and the body **byte for byte**: 24 cases × 3
+    configurations = **72 comparisons, 0 differences**. The cases are derived from
+    the generated registrations, so an operation added to the contract is compared
+    the day it lands; what it does not cover — every error status but `404` — is
+    asserted by a test rather than left for a reader to discover.
+
+  `README.md` gains a *Go rewrite* section: the table of which operations are Go,
+  which are still TypeScript, what the equivalence check covers, and what it does
+  not.
+
+### Fixed
+
+- **Every problem document would have been served with the wrong media type.**
+  `writeJSON` set `Content-Type: application/json` unconditionally, so
+  `writeProblem` setting `application/problem+json` and then calling it produced
+  the media type that says "this is not a problem document". Found by
+  `TestAProblemIsTheDocumentedEnvelope`, which asserts the content type rather
+  than decoding the body and stopping there — `AGENTS.md` asks for that on every
+  handler and this is the case that needed it.
+
+- **Every JSON body carried a trailing newline.** `json.Encoder.Encode` appends
+  one to every value it writes, a convenience for a stream of values to a file,
+  and Hono's `c.json()` does not — so 63 of the first 72 equivalence comparisons
+  failed on one byte that no client would ever notice and every port would have
+  shipped. `writeJSON` marshals with `json.Marshal` and writes the bytes.
+
+- **`GET /v1/me` on the Go side is a 404 the reference agrees with**, rather than
+  a 501. Recorded because the honest-looking answer was the wrong one, and because
+  the next packet inherits the decision rather than re-deriving it.
+
+### Changed
+
+- **`gate.yml` and `mise.toml`.** Four proofs (`go-vet`, `go-generated`,
+  `go-equivalence`, and `ok` now bracketing three steps rather than two), a Go
+  toolchain requirement, `miseTask: prime`, and `[tasks.prime]` — so `mise run
+  prime` resolves here for the first time. The proof list is now at the schema's
+  maximum of 8, which is recorded as a finding about the format.
+- **`account_scope.yml`.** `internal/api/api.gen.go` joins `surface.sources` and
+  `minimum` goes 7 → 14, which is only meaningful because
+  `internal/api/stripbaseurl` removes the `options.BaseURL+` token from the
+  generated registrations — without it the checker's own words are that the floor
+  "is not being violated, it is unfalsifiable". `undeclared` goes 1 → 2: both
+  implementations register `GET /v1/me` and a row cannot be scoped to a file, so
+  the route is visibly uncovered rather than declared wrong. Recorded as a DECISION
+  NEEDED in the file.
+- **CI.** `setup-go` with `go-version-file: go.mod`, `git diff --exit-code` on
+  `go.mod`/`go.sum`, and a step that reads the equivalence comparison count out of
+  the run and fails under 72. `GATEWAY_EQUIVALENCE_REQUIRED=1` is set job-wide so
+  the tier cannot skip. There is deliberately **no** `prime-go` job.
+- **`pins.test.ts`** gained two cases and one flag. It drives `bin/prime` against a
+  stand-in bun, which cannot run the equivalence reference, so it passes `--no-go`
+  — and now asserts that the flag's skip banner appears and that an unknown
+  argument is still refused.
+
 - **A private upstream now learns who the caller is.** A `ROUTE_TABLE` entry that
   declares `principal` causes gateway to send that upstream a short-lived signed
   assertion of the verified caller, in a header of its own

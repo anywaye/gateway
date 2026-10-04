@@ -5,19 +5,41 @@ anything; the house rules in `moon/PLAN.md` §1 and §3 apply on top of it.
 
 ## What this repository is
 
-`gateway`, TypeScript on Bun >= 1.3, one HTTP process. It is the only door into a
+`gateway`, one HTTP process, **mid-rewrite into Go**. It is the only door into a
 cafaye deployment: it authenticates callers, limits what they can ask for, and
 (forwards requests) to the service that owns the work. The contracts are owned by
 `cafaye/core`; the manifest in `cafaye.yml` is how the other tools find this
 service.
 
-v0 terminates real auth — RS256 tokens verified against identity's JWKS — and
-forwards a configured path prefix to the service that owns it. The README's "Not
-built yet" list is the source of truth for what this repository does not claim.
+**TWO IMPLEMENTATIONS ARE LIVE AND BOTH ARE CURRENT.** `src/` is TypeScript on
+Bun >= 1.3 and is the **reference** — not legacy, not scheduled for deletion on
+this packet's say-so. `cmd/gateway` and `internal/` are the Go rewrite, which
+serves the same contract and is currently **two operations of seven**: the two
+probes and the error envelope. `src/` is deleted in a later packet, once
+`internal/equivalence` has proven equivalence rather than asserted it. The README's
+[Go rewrite](README.md#the-go-rewrite) section is the table of which is which,
+and its "Not built yet" list is the source of truth for what this repository does
+not claim.
+
+The rules below are written for the TypeScript implementation because it is the
+one that has the security core. They bind the Go rewrite too — the security
+properties are properties of *gateway*, not of a language — and the Go-specific
+mechanisms they translate into are named where they differ.
 
 ## Layout
 
+TWO TREES. Everything under `src/`, `test/` and `pins.test.ts` is TypeScript and
+is the reference. Everything under `cmd/` and `internal/` is the Go rewrite.
+
 ```
+cmd/gateway/main.go      the Go binary — reads PORT, hands the result to httpapi.New, listens
+internal/api/            oapi-codegen output, the //go:generate lines, and stripbaseurl
+internal/httpapi/        Options, New, probes, the problem envelope, the one env reader
+internal/equivalence/    the Go side of the equivalence check, and the scenarios it compares
+test/equivalence/reference.ts   the TypeScript side, stood up on a port by the same check
+bin/prime-go             the Go tier of the gate
+Dockerfile.golang        distroless/static; NOT `Dockerfile`, which is the TypeScript image
+
 src/index.ts            the app factory (createApp), env parsing, Bun.serve bootstrap
 src/problem.ts          core's error envelope — the one rejection path
 src/probe.ts            what a readiness probe is, so a module can offer one
@@ -44,16 +66,26 @@ test/openapiDocument.test.ts  openapi/v1.yaml held to the router, both direction
 test/noSkips.test.ts     reads the suite's own source; fails on any skip outside one allowlist
 pins.test.ts            the bun pin, asserted across every file that states it
 openapi/v1.yaml         the HTTP contract, and the open decisions in its header
-bin/prime               the gate: frozen install, typecheck, bun test
+bin/prime               the gate: frozen install, typecheck, bun test, then bin/prime-go
 .github/workflows/ci.yml   kit's reusable workflow, plus the four jobs it cannot own
 ```
 
-`createApp` is the only thing the tests import, and it must stay importable
-without opening a socket — the `Bun.serve` call is behind `import.meta.main`.
-Configuration arrives as an argument (`AppOptions`), never as a module-level
-global read from the environment, so a test can build two differently-configured
-apps in one process. `runtimeOptions` is the single place the environment is
-read.
+`createApp` is the only thing the TypeScript tests import, and it must stay
+importable without opening a socket — the `Bun.serve` call is behind
+`import.meta.main`. Configuration arrives as an argument (`AppOptions`), never as
+a module-level global read from the environment, so a test can build two
+differently-configured apps in one process. `runtimeOptions` is the single place
+the environment is read.
+
+**The same property, in Go, and it needs a different mechanism to hold.**
+`httpapi.New(Options)` takes its configuration and `httpapi.RuntimeOptions(Env)`
+is the only function in the module that reads one. Go makes this *easier to lose*
+than TypeScript did, because `os.Getenv` is a free function any package may call
+at any time — so "there is no global" is not a property one can assert by
+inspection. Two checks read `internal/httpapi`'s own sources instead: exactly one
+file may call `os.Getenv` (it is `env.go`), and `RuntimeOptions` may read exactly
+one variable. A new packet that adds a variable adds the assertion with it, and a
+new file that reaches for `os.Getenv` fails the gate rather than passing review.
 
 ## Rules
 
@@ -262,10 +294,13 @@ the file: filling it in needs an OpenAPI document, and specs are manager-owned.
 
 ```sh
 mise trust && mise install   # once per clone, if you use mise — see below
-bin/prime                    # frozen install, typecheck, bun test
+bin/prime                    # THE GATE: frozen install, typecheck, bun test, then bin/prime-go
+bin/prime-go                 # the Go tier alone: gofmt, build, vet, test, codegen currency
+bin/prime --no-go            # everything but the Go tier, and it prints that it skipped
 bun run typecheck            # tsc --noEmit, must print nothing
 docker build --target test . # the suite inside the image, the same tree CI builds
 docker compose build         # the runtime image itself
+docker build -f Dockerfile.golang .   # the Go runtime image
 ```
 
 All of them before a commit lands.
@@ -274,6 +309,51 @@ All of them before a commit lands.
 read an untrusted config, and `bun run typecheck` reaches `node` to launch
 `tsc`, so an untrusted `mise.toml` fails the gate for a reason that has nothing
 to do with the code. Run it once per clone before the first gate.
+
+**`bin/prime` runs BOTH TIERS, and that is not optional.** `bin/prime-go` exists
+so a developer working on the Go port does not have to install bun to find out
+whether `go vet` is happy; `bin/prime` invokes it so the *declared gate* covers
+both implementations. A gate a change to either language can pass without the
+other running would be two gates wearing one name, and `gate.yml`'s proofs are
+checked by RUNNING `gate.command` — so a Go change that broke `go vet` would
+otherwise ship through a green `bin/prime`. When `src/` is deleted, this line goes
+with it. `--no-go` is the one escape, it prints a loud skip, and `pins.test.ts`
+asserts both that the banner appears and that an unknown argument is still
+refused.
+
+**The Go pin is stated in three files and enforced by none of them.**
+`mise.toml`'s `go`, `go.mod`'s own `go` directive and `Dockerfile.golang`'s
+`ARG GO_VERSION` all say 1.26.1, which is what `pantry` and `identity` say.
+`bin/prime-go` compares mise.toml against go.mod **before it runs anything**, and
+compares both against the running toolchain, because the cafaye-rb lesson is that
+a developer on a newer compiler silently produces a binary CI never built and
+reads the difference as a defect in the code under test.
+
+**The generated code is committed, and a gate proves it is current.**
+`internal/api/api.gen.go` is `oapi-codegen` output and it is in the tree, because
+`bin/prime-go` regenerates and diffs it — and a header grep is not a substitute,
+since it is true of every file the generator has ever written. The Go router IS
+that file, so a stale one does not fail to compile: it answers the old routes
+with the new contract's promises. Regenerate and commit **in the same commit as
+the document change**. The step runs offline from the module cache via a `file://`
+GOPROXY and does not skip when it cannot run: no `|| true`, no conditional green.
+
+**`internal/api/stripbaseurl` is part of generation, not a hand edit.** The second
+`//go:generate` line removes the `options.BaseURL+` token from the route
+registrations. Core's chi recogniser requires a `/`-prefixed literal as the first
+term after `(`, so an untouched `oapi-codegen` registration is INVISIBLE to
+`account-scope-check` — measured on this tree: 8 registrations readable, 6
+unreadable, and `surface-thin` reporting that the floor "is not being violated, it
+is unfalsifiable". With the token removed: 14 readable, 0 unreadable. A hand edit
+would be a permanently red gate; `bin/prime-go` also fails on a committed file
+that has regressed, matching the SHAPE rather than the token so it cannot fire on
+the comment that explains the step.
+
+**A generated file needs the same tripwire for its own step.** `stripbaseurl`
+exits non-zero when it has nothing to rewrite, because exiting 0 there would be a
+green saying "the registrations are readable" while the file still says
+`options.BaseURL+`. A post-processing step that silently does nothing is worse
+than no step.
 
 **An environment-gated tier that skips is a green run that verified nothing.**
 `rateLimitRedisLive.test.ts` needs a real `redis-server`, so it skips when
@@ -295,6 +375,34 @@ source and the tripwire would then always fail for the wrong reason.
 
 Set the environment and prove the count. A tier added without all three is a tier
 nobody will notice is not running.
+
+**THE EQUIVALENCE TIER IS THE FOURTH MECHANISM, AND IT IS GATED THE SAME WAY.**
+`internal/equivalence` needs `bun` to stand the TypeScript reference up, so it
+skips without it, and `go test` **discards a passing package's output entirely** —
+so a package printing its own skip row prints it into a void on every green run.
+That is not a theory: the Redis tier did exactly this in TypeScript here.
+Therefore `bin/prime-go` runs `go test -v`, filters the output, and counts the
+skip at the GATE; `GATEWAY_EQUIVALENCE_REQUIRED=1` turns it into a failure inside
+the test; the CI `prime` job sets it and additionally reads the comparison count
+and fails under 72.
+
+Three details that were measured rather than reasoned, and each was wrong first:
+
+- the gate's `sed` needs `.*` before `equivalence:` and not `^`, because
+  `go test -v` prefixes log lines with `    file.go:357: `. The anchored version
+  matched nothing, which would have reported a green on a run that skipped
+  everything.
+- `gate.yml` carries **no floor** on the comparison count: the line only exists on
+  a run that found `bun`, so a `minimum` on it would turn every developer's machine
+  without bun into a red gate. A floor on something a legitimate environment
+  cannot print is not a floor. The number is held in CI instead, where the flag
+  guarantees it is printed.
+- the degraded scenario's dependency names are deliberately **not alphabetical**
+  (`redis, identity, aperture`). A planted mutation that swapped the hand-written
+  `/readyz` ordering for `json.Marshal(api.Readiness{…})` PASSED while the names
+  were `aperture, identity, redis`, because a sorted set renders identically
+  whether the gateway preserves insertion order or sorts. Planting a mutation and
+  finding it does not fail is the only way to find that one.
 
 **An account-scoped entry point needs a negative test, and the count is asserted.**
 `test/tenantEntryPoints.test.ts` derives the enumeration from the code — the

@@ -1,0 +1,45 @@
+# oapi-codegen's configuration for the gateway SERVICE.
+#
+# The generator is pinned at v2.8.0 by the `//go:generate` line in generate.go
+# rather than here, and the split is deliberate and copied from pantry's
+# `internal/api/oapi-codegen.yaml`: `go run <module>@<version>` resolves in
+# module-aware mode and ignores this module's go.mod, so the GENERATOR is never a
+# dependency of this repository. What is a dependency is
+# `github.com/oapi-codegen/runtime`, which the generated code imports.
+#
+#   package: api   The same package as generate.go, and NOT a subpackage. This
+#                  module's generated types are under `internal/`, so they are
+#                  already unreachable from outside the module and a subpackage
+#                  would buy no isolation.
+#   models: true     typed structs for every schema in openapi/v1.yaml, so a
+#                    response cannot carry a key the document does not name.
+#   chi-server: true a chi router with a method per operationId. The document IS
+#                    the routing table — internal/httpapi/routes_test.go asserts
+#                    the served routes and the document's paths agree in both
+#                    directions.
+#   strict-server    deliberately FALSE, as in pantry. Its interface returns the
+#                    declared response TYPE per method instead of writing the
+#                    writer itself, and gateway has to write a problem document on
+#                    two routes the generated code does not own (chi's own 404
+#                    and 405). Generating both and using neither would be 10,000
+#                    lines of unreferenced output that a lint exclusion then has
+#                    to excuse.
+#
+# No `client: true`. gateway is the server here; a generated client would put a
+# second, divergent spelling of this document in this repository.
+package: api
+
+# Relative to THIS FILE's directory, not to the directory `go generate` runs in
+# (`go generate ./internal/api/` runs with `internal/api/` as its working
+# directory). Measured, not assumed: `output: api.gen.go` is correct and
+# `output: internal/api/api.gen.go` writes to `internal/api/internal/api/`.
+output: api.gen.go
+
+generate:
+  models: true
+  chi-server: true
+
+output-options:
+  name-normalizer: ToCamelCaseWithInitialisms
+  skip-prune: false
+  nullable-type: false

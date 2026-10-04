@@ -125,14 +125,31 @@ describe("the gate obeys the pin rather than only needing a bun", () => {
     return dir;
   };
 
-  /** Run `bin/prime` against a bun reporting `version`, and keep the output. */
-  const primeAgainst = (version: string): { code: number; stdout: string; stderr: string } => {
+  /**
+   * Run `bin/prime` against a bun reporting `version`, and keep the output.
+   *
+   * `--no-go`, and the reason is that the stand-in cannot run anything. It exits
+   * 0 whatever it is asked, so when `bin/prime` grew the Go tier
+   * (gateway-go-substrate-01) the tier reached the equivalence check — which
+   * stands the reference up by RUNNING `bun test/equivalence/reference.ts` — and
+   * the stand-in printed nothing and exited, which the check correctly reads as a
+   * broken runtime and fails. A red gate for a reason this file is not about is
+   * a test that has stopped being about its subject.
+   *
+   * The flag is the gate's own, it prints a loud skip banner rather than
+   * pretending, and `TheGoSkipIsLoud` below asserts that it does. So scoping the
+   * run this way narrows what is exercised and does not hide it.
+   */
+  const primeAgainst = (
+    version: string,
+    extra: string[] = [],
+  ): { code: number; stdout: string; stderr: string } => {
     const dir = fakeBun(version);
     try {
       // `PATH` first, so this bun wins over whatever mise has shimmed. The rest
       // of PATH stays: dropping it would make the run fail for want of `bun`
       // rather than for the version, which is the defect this file is about.
-      const proc = Bun.spawnSync(["./bin/prime"], {
+      const proc = Bun.spawnSync(["./bin/prime", "--no-go", ...extra], {
         cwd: fileURLToPath(root),
         env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
       });
@@ -174,6 +191,30 @@ describe("the gate obeys the pin rather than only needing a bun", () => {
     // admitted — a second reading at the end of the run could disagree with the
     // check that let the run start.
     expect(run.stdout).toContain(`prime ok (bun ${PIN})`);
+  });
+
+  test("the --no-go escape hatch says out loud that it skipped", () => {
+    // The escape hatch is exercised by every case above, which means it is
+    // load-bearing for this file and could be removed without anything here going
+    // red — unless this case exists. It asserts the two things that make the flag
+    // honest rather than a hole: the banner is printed, and it says the Go tier
+    // did not run.
+    const run = primeAgainst(PIN);
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain("SKIPPING the Go tier (--no-go)");
+    expect(run.stdout).toContain("did NOT run");
+  });
+
+  test("an unknown argument is still refused, and --no-go is not one of them", () => {
+    // `--no-go` is a hole in the gate by construction, so the thing next to it in
+    // the `case` is the thing that matters: the arm is exhaustive, and adding a
+    // flag is a reviewable act rather than an accident that happens to fall
+    // through to the `*)` arm. Running it proves the arm still refuses.
+    const run = primeAgainst(PIN, ["--no-such-flag"]);
+
+    expect(run.code).toBe(2);
+    expect(run.stderr).toContain("unknown argument: --no-such-flag");
   });
 });
 

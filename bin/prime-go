@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# bin/prime-go — the Go tier of gateway's gate.
+#
+#   ./bin/prime-go   gofmt, build, vet, test, generated-code currency
+#
+# WHY A SECOND SCRIPT rather than six more steps in bin/prime. `bin/prime` is the
+# declared gate (gate.yml: `command: [bin/prime]`) and it is the TypeScript tier,
+# which is still the reference implementation: 578 tests across 25 files and a
+# `docker build --target test` that runs them inside the image. This is the Go
+# tier, and the two coexist for the length of the rewrite — `src/` is deleted in a
+# later packet, once equivalence is proven, and until then a change to either
+# language can break the gate of the other. A developer working on the Go port
+# should not have to install bun to find out whether `go vet` is happy, and the
+# tiers having one file each is what makes "which tier is red" a question with an
+# answer.
+#
+# Green on a bare machine with a Go toolchain on PATH and no network. The one
+# tier that needs anything else — the equivalence check — prints a COUNTED SKIP
+# naming the reason rather than reporting a green that verified nothing; see the
+# equivalence section below.
+set -euo pipefail
+set -o pipefail
+
+cd "$(dirname "$0")/.."
+
+step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
+
+# THE TOOLCHAIN ASSERTION, and it is this script's first step and its only
+# precondition: this repository pins a Go version in TWO files (mise.toml's `go`
+# and Dockerfile.golang's ARG GO_VERSION), and nothing makes the go command
+# enforce either. Without the check a developer on a newer Go silently produces a
+# binary CI never built, and reads the difference as a defect in the code under
+# test — the cafaye-rb lesson, in a second language.
+if ! command -v go >/dev/null 2>&1; then
+  echo "bin/prime-go: go is not on PATH — run 'mise install' in this worktree" >&2
+  exit 127
+fi
+
+pinned_go="$(sed -n 's/^go *= *"\(.*\)"/\1/p' mise.toml)"
+if [ -z "$pinned_go" ]; then
+  echo "bin/prime-go: mise.toml pins no go toolchain, so this gate cannot check the" >&2
+  echo "  toolchain it is about to run. Either restore the pin or stop claiming one." >&2
+  exit 127
+fi
+
+# go.mod's own `go` directive is the third copy of the number, and it is the one
+# the compiler enforces. A go.mod newer than the pin means somebody raised the
+# language version without raising the pin, and the error that produces is a
+# wall of text about language features.
+mod_go="$(sed -n 's/^go *\([0-9][0-9.]*\).*/\1/p' go.mod)"
+if [ -n "$mod_go" ] && [ "$mod_go" != "$pinned_go" ]; then
+  echo "bin/prime-go: go.mod declares go $mod_go and mise.toml pins $pinned_go." >&2
+  echo "  One language version, two files (go.mod, mise.toml) plus the ARG" >&2
+  echo "  GO_VERSION in Dockerfile.golang that names the image tag. Fix whichever is" >&2
+  echo "  wrong rather than the one you read first." >&2
+  exit 127
+fi
+
+actual_go="$(go version | awk '{print $3}' | sed 's/^go//')"
+if [ "$actual_go" != "$pinned_go" ] && [ "${actual_go#"$pinned_go."}" = "$actual_go" ]; then
+  echo "bin/prime-go: go is $actual_go, and mise.toml pins $pinned_go." >&2
+  echo "  Run 'mise install' in this worktree. Continuing would report compiler" >&2
+  echo "  errors about language features as if they were defects in the code." >&2
+  exit 127
+fi
+
+step "toolchain: go $actual_go (mise.toml pins $pinned_go)"
+go version
+
+step "gofmt -l"
+# `-l` prints the files that NEED formatting and exits 0 either way, so the count
+# is the assertion. An empty list is the pass and a non-empty one is a red that
+# names the file.
+#
+# `./cmd ./internal` and not `./...`, for the reason pantry's does the same: the
+# generated file is not this repository's to format, and a generator release that
+# changes its own indentation would otherwise turn every run red over a file
+# nobody is allowed to edit by hand.
+unformatted="$(gofmt -l ./cmd ./internal)"
+if [ -n "$unformatted" ]; then
+  echo "bin/prime-go: these files are not gofmt-clean:" >&2
+  echo "$unformatted" | sed 's/^/  /' >&2
+  exit 1
+fi
+echo "every file under ./cmd and ./internal is gofmt-clean"
+
+step "go build ./..."
+go build ./...
+
+step "go vet ./..."
+go vet ./...
+
+step "go test ./..."
+# `-v`, AND THE OUTPUT IS FILTERED, and both halves are load-bearing.
+#
+# -count=1 defeats the test cache: a gate that can report a stale green is a gate
+# that reports what it ran last, not what it would report now.
+#
+# `go test` DISCARDS a passing package's output entirely, so a package that prints
+# its own `skip:` row prints it into a void on every green run — which is
+# precisely the silent pass this repository has been bitten by before on the
+# TypeScript side (`rateLimitRedisLive.test.ts`). It was measured there rather
+# than assumed; it is true here for the same reason, and the equivalence tier's
+# skip is the one that needs it.
+out="$(go test -count=1 -v ./... 2>&1)" || {
+  echo "$out"
+  echo "bin/prime-go: go test failed; the full -v output is above." >&2
+  exit 1
+}
+echo "$out" | grep -E '^(ok|FAIL|---|\?)|equivalence:' || true
+
+# THE COUNTED SKIP, made countable AT THE GATE rather than inside `go test`.
+#
+# `internal/equivalence` needs `bun` to stand the TypeScript reference up. A
+# machine without it is a legitimate green — and it must never be an INVISIBLE
+# one, so the skip is counted here. That is the same contract
+# `rateLimitRedisLive.test.ts` keeps, for the same failure: a gate with two ways
+# of being skipped and one way of insisting is a gate whose silence can be read.
+#
+# WHICH MECHANISM DOES WHAT, because two of them sound redundant and only one
+# fires on each path. With the flag UNSET the tier skips, the run is green, and
+# this block is the only thing that says so: it prints the reason, counts it, and
+# on a machine that has bun it prints the comparison count instead. With the flag
+# SET the tier fails inside `go test` — the step above, which exits 1 and prints
+# the whole `-v` output — so the escalation below is never reached from there. It
+# is kept because a reader landing on this block in a 400-line dump should not have
+# to know which mechanism fired, and because a check that cannot count its own
+# skips cannot be trusted to have run them.
+#
+# A missing summary line is a FAILURE rather than a zero. The line is the evidence
+# that the tier ran and had something to say; if the test's message changes, this
+# step fails and names it, rather than reporting "0 skipped" because the grep found
+# nothing.
+# `.*` before the marker and not `^`: `go test -v` prefixes a log line with
+# `    file.go:357: `, so anchoring at the start of the line finds nothing and the
+# block below would report a green on a run that skipped everything. Measured, not
+# assumed — the first version of this line anchored and matched nothing.
+did_not_run="$(printf '%s\n' "$out" |
+  sed -n 's/.*\(equivalence: DID NOT RUN.*\)/\1/p' | head -1)"
+if [ -z "$did_not_run" ]; then
+  if printf '%s\n' "$out" | grep -q 'equivalence: [0-9]* cases'; then
+    echo "equivalence: RAN — the summary line is above"
+  else
+    echo "bin/prime-go: internal/equivalence printed neither its summary nor a counted" >&2
+    echo "  skip, so whether it ran is unknown, and a gate that cannot count its own" >&2
+    echo "  skips cannot be trusted to have run them." >&2
+    exit 1
+  fi
+else
+  echo "equivalence: DID NOT RUN — $did_not_run"
+  if [ "${GATEWAY_EQUIVALENCE_REQUIRED:-0}" = "1" ]; then
+    echo "bin/prime-go: GATEWAY_EQUIVALENCE_REQUIRED=1 and there is nothing to compare against." >&2
+    exit 3
+  fi
+fi
+
+step "the generated server matches the OpenAPI document"
+# REGENERATE AND DIFF, and this replaced a grep — which is the whole reason this
+# step exists as a rewrite rather than an addition.
+#
+# WHAT IT USED TO DO, and why it was a hole rather than a check. A header grep —
+#
+#     grep -q '^// Code generated by … version v2\.8\.0 DO NOT EDIT\.$' "$gen"
+#
+# is true of every file the generator has EVER written, including one written from
+# an older document. An `api.gen.go` that had drifted from `openapi/v1.yaml` by
+# three operations would pass that step, and the failure would not even be silent
+# for long: the Go router is generated, so a stale file answers the OLD routes
+# with the NEW contract's promises.
+#
+# THE MEASUREMENT THAT MAKES THE REWRITE POSSIBLE, and it is the reason this is a
+# gate rather than a note: `oapi-codegen` runs offline from the module cache on
+# this machine.
+#
+#     $ GOFLAGS=-mod=mod GOPROXY="file://$(go env GOMODCACHE)/cache/download" \
+#         go generate ./internal/api/
+#
+# Plain `GOPROXY=off` does NOT work — `go run <module>@<version>` still asks the
+# proxy for the module's deprecation notice and fails with "module lookup disabled
+# by GOPROXY=off" — so the file:// proxy is not a stylistic choice, it is the
+# only offline spelling that resolves.
+#
+# AND THE GATE DOES NOT SKIP WHEN IT CANNOT RUN. There is no `|| true`, no
+# conditional that returns green without the generator, and no "warn and
+# continue": `set -euo pipefail` is already in force, so a missing generator, an
+# empty cache or a network-dependent `go run` all fail this step. A gate that
+# cannot run is not a gate that passed.
+gen="internal/api/api.gen.go"
+if [ ! -f "$gen" ]; then
+  echo "bin/prime-go: $gen is missing. Run 'go generate ./internal/api/'." >&2
+  exit 1
+fi
+
+# The checksum BEFORE regeneration, so this step can say whether it had to repair
+# the working tree. Regenerating is destructive by construction — it overwrites
+# whatever was there — and a step that silently rewrites a file a reader did not
+# know it was rewriting is a step that surprises whoever is holding the
+# repository. Reporting it costs one `cksum` and turns a surprise into a line.
+gen_before="$(cksum < "$gen")"
+
+module_cache="$(go env GOMODCACHE)"
+# `regen_out` AND NOT `out`, and that is a correction rather than a style. The
+# variable holding `go test`'s output is named `out` twenty lines above, so
+# regenerating into it would overwrite the test results and this script would
+# print a suite count of zero and exit ZERO.
+#
+# Caught by reading the gate's own output rather than its exit status, which is
+# the standing rule in the worker contract applied to this repository's own
+# script. A variable name is not a cosmetic choice in a script that reports its
+# own coverage.
+if ! regen_out="$(GOFLAGS=-mod=mod GOPROXY="file://$module_cache/cache/download" GOSUMDB=off \
+  go generate ./internal/api/ 2>&1)"; then
+  echo "bin/prime-go: regeneration FAILED, so whether $gen matches" >&2
+  echo "  openapi/v1.yaml is unknown. A generator that cannot run is not a gate that" >&2
+  echo "  passed, and this step deliberately fails rather than warning:" >&2
+  echo "$regen_out" | sed 's/^/    /' >&2
+  echo >&2
+  echo "  If this machine has no oapi-codegen v2.8.0 in its module cache, fetch it once" >&2
+  echo "  with a network and re-run: go mod download github.com/oapi-codegen/oapi-codegen/v2" >&2
+  exit 1
+fi
+echo "$regen_out" | sed 's/^/  /'
+
+# The header assertion is KEPT as well as the diff, and it is not redundant: it
+# names the generator version the committed file came from, which a diff against a
+# freshly-generated file would not tell you — a diff proves the two agree, not
+# which generator produced either.
+grep -q '^// Code generated by github.com/oapi-codegen/oapi-codegen/v2 version v2\.8\.0 DO NOT EDIT\.$' "$gen" || {
+  echo "bin/prime-go: $gen does not carry the oapi-codegen v2.8.0 header. The" >&2
+  echo "  generator is pinned on internal/api/generate.go's //go:generate line; if" >&2
+  echo "  that pin moved, say so in the same commit as the regenerated file." >&2
+  exit 1
+}
+
+# The post-processing step's own claim, checked rather than trusted. It rewrites
+# the registrations so core's account-scope checker can read them, and it says it
+# refuses when it has nothing to rewrite — so the thing worth asserting is that
+# the committed file carries the result.
+grep -q '^// POST-PROCESSED BY internal/api/stripbaseurl' "$gen" || {
+  echo "bin/prime-go: $gen does not carry the stripbaseurl header, so the route" >&2
+  echo "  registrations are still spelled r.Get(options.BaseURL+…) and core's" >&2
+  echo "  account-scope checker cannot read them. Run 'go generate ./internal/api/'." >&2
+  exit 1
+}
+#   OR ONE REGISTRATION WHOSE PATH IS AN EXPRESSION RATHER THAN A LITERAL.
+# The pattern is the SHAPE, not the token, and that is a correction: the first
+# draft grepped for `options.BaseURL+` anywhere in the file, and the header comment
+# stripbaseurl prepends quotes the generator's own output in order to explain
+# itself — so the gate went red on its own documentation. A check that fires on the
+# text describing the thing it checks is a check whose red means nothing.
+#
+# `^\s*r\.<method>\(\s*[^"]` is core's recogniser's requirement read as a pattern:
+# a `/`-prefixed string literal must be the FIRST term after the open paren. Any
+# registration line that does not satisfy it is invisible to
+# `account-scope-check`, and this repository's whole surface would read as
+# `route_defs=0` — a count of nothing printing exactly like a count of zero.
+if grep -qE '^[[:space:]]*r\.(Get|Post|Put|Patch|Delete|Head)\([[:space:]]*[^"]' "$gen"; then
+  echo "bin/prime-go: $gen has a route registration whose path is an expression" >&2
+  echo "  rather than a string literal, so core's account-scope checker cannot read" >&2
+  echo "  it and this repository's surface reads as route_defs=0. Run" >&2
+  echo "  'go generate ./internal/api/' — stripbaseurl removes the token." >&2
+  exit 1
+fi
+
+# `git status --porcelain` rather than `git diff --quiet` because the gate must
+# also catch a file that is UNTRACKED-but-present, and because `git diff` alone
+# reports nothing for a tree with no HEAD (a fresh clone's first run).
+drift="$(git status --porcelain -- "$gen" | sed 's/^/    /')"
+if [ -n "$drift" ]; then
+  echo "bin/prime-go: $gen DOES NOT MATCH openapi/v1.yaml. Regenerating changed it:" >&2
+  echo "$drift" >&2
+  echo >&2
+  echo "  Run 'go generate ./internal/api/' and commit the result WITH the document" >&2
+  echo "  change, in the same commit. generate.go says so: \"regeneration is only" >&2
+  echo "  correct immediately after the document changes, in the same commit\" — and" >&2
+  echo "  this step is what enforces it rather than trusting it." >&2
+  exit 1
+fi
+gen_after="$(cksum < "$gen")"
+if [ "$gen_before" != "$gen_after" ]; then
+  echo "$gen WAS NOT WHAT openapi/v1.yaml PRODUCES, and this step has overwritten it."
+  echo "  The committed state is correct — regenerate-and-diff could not have reached"
+  echo "  this line otherwise — but the working tree had a hand edit, a stale"
+  echo "  regeneration or a generator-version difference in it. Review what is there"
+  echo "  now before committing:  git diff -- $gen"
+  echo
+fi
+echo "$gen regenerates byte-identically from openapi/v1.yaml, carries the v2.8.0 header, and its registrations are readable"
+
+# THE COUNTED SUITE, and it is printed here rather than left to be read out of
+# `go test`'s own per-package lines. Two counts, because one of them cannot catch
+# the failure the other cannot:
+#
+#   `suite:`    `--- PASS:` lines — moves when ANY test is lost, in any package.
+#   `packages:` `ok ` lines — moves when a package stops compiling into the suite.
+#
+# Without `-v` this count would be zero on a wholly green gate, which is a floor
+# that never fires and reads as the strongest kind of proof. The count is of PASS
+# lines and not of tests that did not fail: a red gate still prints every passing
+# test in the failing packages, so a red run's number is high by design — read it
+# WITH this script's exit status and the `--- FAIL:` lines above.
+suite_passed="$(printf '%s\n' "$out" | grep -c '^--- PASS: ' || true)"
+suite_failed="$(printf '%s\n' "$out" | grep -c '^--- FAIL: ' || true)"
+suite_packages="$(printf '%s\n' "$out" | grep -c '^ok  ' || true)"
+echo
+echo "suite: ${suite_passed} passed, ${suite_failed} failed"
+echo "packages: ${suite_packages} with tests"
+
+# TWO LINES, NOT ONE, and that is a decision rather than an oversight: a `proof`
+# in gate.yml may capture exactly ONE group, because `minimum` reads the last one
+# and a second group would make the floor mean whichever number happened to come
+# second. `packages:` is printed for a reader and is NOT proved — a floor on it is
+# worth almost nothing, because losing a package's tests is already caught by
+# `suite` losing its tests, and losing a package from the suite without losing a
+# test means the tests moved. An unused-looking number next to a proved one is
+# still worth printing, and worth saying out loud that it is not proved.
+#
+# A NOTE ON THE FLOOR AND THIS PACKET'S SHAPE. `suite` moves when a test goes
+# missing, which is what a floor is for, and it moves DOWN as well as up: the
+# equivalence tier counts as one test whether it compared 72 things or none. That
+# is why the equivalence tier prints its own comparison count on every green run
+# — the floor says "something ran", and only the tier's own line says how much.
+step "ok"

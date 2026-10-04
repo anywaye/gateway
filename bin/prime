@@ -3,12 +3,20 @@
 # kit template — prime a Bun worktree. Copy to bin/prime in the service repo and
 # run it after `git clone`, `git worktree add`, or `git pull --rebase`.
 #
-#   bin/prime            # frozen install, typecheck, then the full test suite
+#   bin/prime            # frozen install, typecheck, bun test, then the Go tier
 #   bin/prime --fast     # frozen install only
+#   bin/prime --no-go    # everything but ./bin/prime-go, and it says so
 #
 # WHAT IT PROMISES
-#   Exit 0: bun.lock installs exactly, the type checker is clean, and every test
-#   passes. Anything else: nonzero, with the failing step named.
+#   Exit 0: bun.lock installs exactly, the type checker is clean, every
+#   TypeScript test passes, and the Go tier is green. Anything else: nonzero,
+#   with the failing step named.
+#
+#   The Go tier is `./bin/prime-go` and it is required, not probed. Both
+#   implementations are live — `src/` is still the reference — so a gate that ran
+#   only one of them would be two gates wearing one name. `--no-go` is the one
+#   escape, it prints the skip, and it exists for a contributor with bun and no
+#   Go toolchain.
 #   `set -euo pipefail` is the whole mechanism — no error handling to forget.
 #
 # STRICTNESS NOTES
@@ -31,9 +39,19 @@
 set -euo pipefail
 
 FAST=0
+SKIP_GO=0
 for arg in "$@"; do
   case "$arg" in
-    --fast) FAST=1 ;;
+    # `--no-go` exists for one reason and it is narrow: a contributor who has bun
+  # and no Go toolchain still needs to be able to run and debug the TypeScript
+  # tier, and "install a second toolchain or you cannot run any of this" is the
+  # kind of gate nobody runs. It PRINTS the skip, loudly, and it is the only
+  # condition under which the Go tier does not run — so a developer who takes it
+  # for granted is told every time. `gate.yml`'s proof for the Go tier is
+  # therefore not reachable through this flag, and a gate that checks its own
+  # coverage is the only thing that notices when somebody changes that.
+  --fast) FAST=1 ;;
+  --no-go) SKIP_GO=1 ;;
     -h | --help)
       sed -n '2,22p' "$0"
       exit 0
@@ -138,6 +156,32 @@ fi
 
 step "bun test"
 bun test
+
+# THE GO TIER, and it is required rather than probed.
+#
+# Two languages, one gate. `bin/prime-go` exists so a developer working on the Go
+# port does not have to install bun to find out whether `go vet` is happy — and
+# this line exists so the declared gate is the WHOLE gate. A gate that a change to
+# either language can pass without running the other one is two gates wearing one
+# name, and `gate.yml`'s proof block is checked by RUNNING `command`, so a Go
+# change that broke `go vet` would have shipped through a green `bin/prime`.
+#
+# Probed the way `typecheck` is NOT: an absent `typecheck` script is a day-one
+# repository, an absent Go toolchain is a missing prerequisite, and
+# `bin/prime-go` says which one it is and exits 127 before running anything.
+# "gateway has no Go yet" stopped being true when `internal/api/api.gen.go`
+# landed; it becoming untrue again is a deletion, and a deletion gets its own
+# commit rather than a conditional.
+#
+# `src/` is still here — the TypeScript tier above is the reference
+# implementation, not a legacy one — so this is additive for as long as both
+# exist. When `src/` goes, this line goes with it.
+if [ "$SKIP_GO" -eq 1 ]; then
+  step "SKIPPING the Go tier (--no-go): bin/prime-go did NOT run, and a green run is not a full one"
+else
+  step "bin/prime-go"
+  ./bin/prime-go
+fi
 
 # The version printed here is the one `require_pinned_bun` verified, not a second
 # reading of `--version` at the end of the run: a banner that reports whatever

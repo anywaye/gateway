@@ -1,0 +1,86 @@
+# Dockerfile.golang — the Go gateway's image.
+#
+#   docker build -f Dockerfile.golang -t cafaye/gateway-go .
+#   docker compose -f docker-compose.golang.yml up gateway-go
+#
+# ------------------------------------------------------------------------------
+# WHY THIS FILE IS NAMED `Dockerfile.golang` AND NOT `Dockerfile`.
+# ------------------------------------------------------------------------------
+#
+# `Dockerfile` is the TypeScript image and it is not being replaced. `src/` is
+# still the reference implementation and still builds and serves; this packet
+# lands the Go service BESIDE it, and the packet that deletes `src/` is a later
+# one, once equivalence has been proven. Two images, two files, one per
+# implementation — and when `src/` goes, `Dockerfile` goes with it and this file
+# is renamed to `Dockerfile` in that same commit, not before, so there is never a
+# commit in which the name pointed at an implementation that no longer existed.
+#
+# ------------------------------------------------------------------------------
+# WHY IT IS AT THE REPOSITORY ROOT AND NOT NAMED `docker/Dockerfile.go`.
+# ------------------------------------------------------------------------------
+#
+# The name is load-bearing and the trap was measured, not guessed:
+# `go build ./...` compiles every `.go` file in the tree, so a file named
+# `docker/Dockerfile.go` is a Go source file to the go command, and a directory
+# holding only that file is still a package. The build stops with
+#
+#     docker/Dockerfile.go:1:1: illegal character U+0023 '#'
+#
+# `pantry/Dockerfile`'s header records the same measurement. This file avoids it
+# twice over: it is at the root, which is where `pantry` and `identity` both put
+# theirs, and it is not named `*.go`, which is the part that actually breaks.
+#
+# ------------------------------------------------------------------------------
+# THE ARRANGEMENT, and the one deviation from `pantry/Dockerfile`.
+# ------------------------------------------------------------------------------
+#
+# This is pantry's layout, which is kit's Go template with the deviations identity
+# documents, and the reasoning there applies here almost unchanged: a distroless
+# image is what you get when nothing migrates at boot. `pantry` chose
+# `distroless/static` over kit's debian-slim because its image has no entrypoint
+# script to run — a script needs a shell, and nothing migrates, so the shell is
+# not bought. gateway is the same case with even less to do: this service holds no
+# rows, runs no migration, and opens no connection at boot.
+#
+# THE ONE PLACE IT DIVERGES. `pantry` copies `go.mod`/`go.sum` first and then the
+# whole tree; so does this. What `pantry` does NOT have, and what is therefore
+# new here, is `.dockerignore`. gateway's `.dockerignore` was written for the
+# TypeScript image and it drops `bin`, `README.md`, `AGENTS.md`, `cafaye.yml`,
+# `docker-compose.yml` and `Dockerfile` from the build context — none of which
+# `go build ./...` needs, and all of which this file's `COPY . .` would fail on
+# if it named them. The build context is shared, so `COPY . .` here copies
+# whatever the TypeScript build's ignore rules leave: `src/`, `test/`, `openapi/`,
+# `internal/`, `cmd/`. `src/` and `test/` in a Go image is dead weight of the same
+# kind pantry documents in its own header — nothing imports them — and it is not
+# fixed here because filtering a COPY is how a test double ends up in a shipped
+# image, which is the failure `test/dockerStage.test.ts` exists to prevent. It is
+# recorded here instead, which is where `pantry/Dockerfile` records its own.
+#
+# `--locked` is a cargo flag and has no Go equivalent; what makes two builds of one
+# commit the same artefact here is `go mod download` against a committed go.sum
+# with GOFLAGS unset, so a build cannot silently resolve a newer module.
+ARG GO_VERSION=1.26
+
+FROM golang:${GO_VERSION} AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 GOOS=linux
+# go.mod/go.sum first: the dependency layer caches until the manifests change.
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/gateway
+
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+WORKDIR /app
+COPY --from=build /out/service /app/service
+# nonroot, not root. There is no shell in this image, so a compromised process
+# cannot curl-and-pipe.
+USER nonroot:nonroot
+EXPOSE 8080
+# The service is stateless: no connection pool to close, no schema to migrate and
+# nothing to flush, so SIGTERM is the whole shutdown story and cmd/gateway handles
+# it. That it is the WHOLE story is a consequence of this packet, not a claim
+# beyond it: the counter store, the identity connection and the upstream
+# connections arrive with the packets that own them, and each may change what
+# shutdown has to do.
+ENTRYPOINT ["/app/service"]
