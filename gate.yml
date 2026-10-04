@@ -47,15 +47,27 @@
 # measurement rather than a claim about the tree; the stale direction is the one
 # nobody reads, and it is corrected at the floor it affects.
 #
-# WHAT THE DEVELOPER'S COMMAND IS NOT, MEASURED. `mise run prime` does not
-# resolve in this repository. `mise.toml` carries `[tools]` and `[env]` and NO
-# `[tasks]` table, and `mise tasks` in a clean worktree prints nothing at all.
-# That is why `command` below names `bin/prime` and `miseTask` is absent
-# rather than set to `prime`: naming a task this repository does not have is
-# `gate.task-missing`, a FAILURE, and the honest declaration of a repository
-# with no task is no task. See REPORT-guard-09-gate.md — this is the one place
-# gateway does not match the fleet's shape, and it is recorded rather than
-# papered over by inventing a task nobody runs.
+# WHAT THE DEVELOPER'S COMMAND IS, AND WHY IT USED NOT TO BE `mise run prime`.
+# Measured on REPORT-guard-09-gate.md: `mise run prime` did NOT resolve in this
+# repository. `mise.toml` carried `[tools]` and `[env]` and no `[tasks]` table at
+# all, and `mise tasks` printed nothing — so `command` named `bin/prime` and
+# `miseTask` was absent, on the reasoning that naming a task this repository did
+# not have is `gate.task-missing`, a FAILURE. gateway was the one service in the
+# fleet whose gate could not be reached through mise, and it was recorded rather
+# than papered over by inventing a task nobody ran.
+#
+# IT RESOLVES NOW, and the thing that changed is the Go tier
+# (gateway-go-substrate-01). That packet needed `[tasks.prime-go]`,
+# `[tasks.build-go]`, `[tasks.run-go]`, `[tasks.generate-go]`, `[tasks.fmt-go]` and
+# `[tasks.lint-go]` — a contributor working on the port needs a task to
+# regenerate the contract and a task to run the tier, and those are tasks. Having
+# written six of them, leaving `[tasks.prime]` absent would be a repository whose
+# mise tasks are all about the second language and not about the gate. So
+# `[tasks.prime]` was added, `miseTask: prime` was added below, and the fleet's
+# shape is matched. `miseTask` stays `prime` rather than `prime-go`: `prime-go`
+# is one tier and `gate.command` is the gate, and `check_mise_task` compares the
+# task's `run` against `entrypoint` precisely so the two cannot disagree about
+# which file the gate is.
 #
 # ------------------------------------------------------------------------------
 # RED-PROVED. A gate that has never been observed red is not a gate, so this
@@ -105,16 +117,21 @@ gate:
   # mise absent. Declaring `mise run prime` would be declaring a command that
   # cannot run here at all.
   command: [bin/prime]
-  # `miseTask` is deliberately ABSENT. The format's own checker treats a
-  # repository that has a mise config but no `[tasks]` correctly: it reports
-  # nothing, because there is no task to disagree with. Adding
-  # `miseTask: prime` would be `gate.task-missing` and a red run over a
-  # repository that is fine. If gateway ever grows `[tasks.prime]` in mise.toml,
-  # this line is the one to add, in the same commit — and `check_mise_task`
-  # will then hold the task's `run` string to `entrypoint` below.
-  #
+  # The task `mise run prime` resolves to, and it now exists — see the header.
+  # `check_mise_task` holds `[tasks.prime].run` against `entrypoint` below, so
+  # pointing `miseTask` at a task that runs a DIFFERENT file is
+  # `gate.task-entrypoint-mismatch` rather than a divergence nobody notices.
+  miseTask: prime
   # The file behind the command, and the file a developer is told to run in
   # AGENTS.md's "Gates" section and in the repository's own header.
+  #
+  # IT IS BOTH TIERS. `bin/prime` runs `bun install --frozen-lockfile`,
+  # `tsc --noEmit`, `bun test` and then `./bin/prime-go`, because two
+  # implementations are live — `src/` is still the reference — and a gate a
+  # change to either could pass without the other running would be two gates
+  # wearing one name. `--no-go` is the one escape, it prints its skip, and
+  # `pins.test.ts` asserts both that the banner appears and that an unknown
+  # argument is still refused.
   entrypoint: bin/prime
   # Deliberately generous, and the reason is the same as every other adopter's.
   # A warm gate measured ~36s; a cold checkout has to resolve and fetch `hono`
@@ -236,11 +253,65 @@ gate:
       # remove the banner from the script, so this catches the silent skip
       # rather than the script that would have to change with it.
       match: '^== bun run typecheck$'
+    # ---------------------------------------------------------------------
+    # THE GO TIER. Four of these five exist because the Go tier is a SECOND
+    # GATE inside `command`, and a second gate inside a gate is exactly where a
+    # silent skip lives: `bin/prime` could go on passing with `./bin/prime-go`
+    # never invoked, which is the same class of defect the `typecheck` proof
+    # above exists for and the reason it is worth repeating rather than assuming
+    # the first one generalises.
+    # AT THE SCHEMA'S MAXIMUM, and that is a finding about the format rather than
+    # about this repository: `schemas/gate.schema.json` caps `proof` at 8 and this
+    # file now has exactly 8. The cap is not enforced by anything in core — a
+    # ninth would be a validation failure and that is all — so the next proof
+    # anybody wants here means either folding one into a broader pattern or
+    # deleting one. Folding is the better of the two and it is a call for whoever
+    # needs it, not a rule stated here for them.
+    #
+    # WHAT IS NOT HERE, AND WHY: a proof on `==> toolchain: go`. `bin/prime-go`
+    # compares mise.toml's pin against go.mod's own `go` directive as its FIRST
+    # step and exits 127 on a mismatch, so a wrong toolchain cannot reach a green
+    # run — the assertion cannot lie, only exit. And the requirement is named in
+    # `external.requirements` below, where a reader looking for the toolchain
+    # looks. A proof for a step that fails rather than continuing is ceremony.
+    - id: go-vet
+      # `go vet` ran, which is what this repository treats as its Go linter.
+      # `bin/prime` probes for `typecheck` and continues without it; nothing
+      # probes for `vet`, so this is the assertion that it did not stop running.
+      match: '^==> go vet \./\.\.\.$'
+    - id: go-generated
+      # The contract is current. This is the step that regenerates
+      # `internal/api/api.gen.go` from `openapi/v1.yaml` and fails when the
+      # committed file differs — and the property is load-bearing in a way it is
+      # not for most gates, because the Go router IS the generated file: a stale
+      # one does not fail to compile, it answers the old routes with the new
+      # contract's promises.
+      match: '^==> the generated server matches the OpenAPI document$'
+    - id: go-equivalence
+      # The equivalence tier REPORTED, one way or the other, and this is a
+      # presence proof with no `minimum` on purpose.
+      #
+      # `internal/equivalence` needs `bun` to stand the TypeScript reference up,
+      # so it skips on a machine without one — and `go test` discards a passing
+      # package's output, which is why `bin/prime-go` runs it with `-v` and why
+      # the counted skip has to be surfaced at the gate. `bin/prime-go` prints
+      # `equivalence: RAN …` or `equivalence: DID NOT RUN …`; this asserts one of
+      # them appeared.
+      #
+      # NO FLOOR ON THE COMPARISON COUNT, and that is a decision rather than an
+      # oversight. The line that carries the count —
+      # `equivalence: 24 cases x 3 scenarios = 72 comparisons` — only exists on a
+      # run that found bun, so making it a proof with a `minimum` would turn
+      # every developer's machine without bun into a red gate. A floor on
+      # something a legitimate environment cannot print is not a floor. The count
+      # is proved in CI instead, where the job sets
+      # `GATEWAY_EQUIVALENCE_REQUIRED=1` and cannot skip at all.
+      match: '^equivalence: '
     - id: ok
-      # The gate reached its own last line. With `install` and `typecheck`
-      # above it, the three step markers bracket the run: two steps started,
-      # the gate finished. Cheap, and it is what distinguishes "the suite
-      # printed its summary" from "the gate completed".
+      # The gate reached its own last line. With `install`, `typecheck` and the
+      # four Go proofs above it, the markers bracket the run: three steps started,
+      # two suites finished, the gate completed. Cheap, and it is what
+      # distinguishes "the suite printed its summary" from "the gate completed".
       match: '^== prime ok \(bun '
     #
     # NOT ASSERTED HERE, BECAUSE THE FORMAT CANNOT EXPRESS IT, and gateway is the
@@ -312,6 +383,25 @@ external:
         unmet: >-
           bun install --frozen-lockfile exits nonzero on a cold checkout with
           no network, and the suite never starts
+    - kind: toolchain
+      # THE SECOND TOOLCHAIN, and it is a requirement rather than a detail for
+      # the same reason bun is: `bin/prime` runs `./bin/prime-go` as its last
+      # step, so without Go the declared gate exits 127 before finishing. It is
+      # 1.26.1, the same number `pantry/go.mod` and `identity/go.mod` state, and
+      # `bin/prime-go` asserts mise.toml against go.mod before it runs anything.
+      #
+      # `go --version` rather than the version itself, for the same reason the
+      # bun requirement above is a bare command: the checker does not run it, and
+      # the check the gate performs itself is the one that counts.
+      name: >-
+        go 1.26.1 on PATH, the pin in mise.toml, go.mod's own go directive, and
+        Dockerfile.golang's ARG GO_VERSION. Without it bin/prime exits 127 in
+        ./bin/prime-go before any Go test runs.
+      satisfy:
+        command: [go, version]
+        unmet: >-
+          bin/prime-go exits 127 with "mise.toml pins no go toolchain" or "go is
+          not on PATH" in the message, and no Go step banner is printed at all
   # NOT required, and named so nobody goes looking for them:
   #
   #   * no credential, of any kind. The suite is hermetic by construction:
@@ -357,4 +447,13 @@ ci:
   # REPORT-guard-09-gate.md is where it is written down; a declaration that
   # implied CI and the local gate verify the same set would be the false green
   # this format exists to remove.
+  # WHAT THIS BLOCK NOW COVERS, which is more than it did. `check_ci` reads one
+  # workflow's `run:` bodies, and the `prime` job's is literally `run:
+  # bin/prime` — so the Go tier is inside what this block can see, because
+  # `bin/prime` is what invokes `bin/prime-go`. There is no `prime-go` CI job
+  # and that is a decision rather than an omission: a second job running the
+  # second tier would be the gate existing twice, and the two could disagree
+  # about what "the Go tier is green" means. The residue that IS outside this
+  # block is unchanged and still recorded: the `ci` job (kit's reusable workflow),
+  # `redis`, `manifest` and `image`.
   invokes: [bin/prime]

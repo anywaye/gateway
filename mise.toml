@@ -39,6 +39,10 @@ go = "1.26.1"
 # which dependency tree a script sees.
 NODE_ENV = "development"
 
+[tasks.prime]
+description = "The gate: both tiers, TypeScript and Go"
+run = "./bin/prime"
+
 [tasks.prime-go]
 description = "The Go tier of the gate: gofmt, build, vet, test, generated-code currency"
 run = "./bin/prime-go"

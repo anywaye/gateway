@@ -28,6 +28,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# `GATEWAY_EQUIVALENCE_REQUIRED` is read by `internal/equivalence` and turns
+# "bun is not on PATH" from a skip into a failure at module load. It is here and
+# only here for the same reason the Redis job sets
+# `GATEWAY_REDIS_REQUIRED=true`: a skip nobody can see is a green run that
+# verified nothing, and this repository has been bitten by that twice — once on
+# the Redis tier and once by `docker build --target test` running 392 tests
+# across 15 files where the host ran 399 across 16.
+#
+# It is a JOB-level env rather than a step-level one because `bin/prime` now runs
+# the Go tier itself, and the equivalence check is inside it. There is deliberately
+# no `prime-go` job: two jobs running two tiers would be the gate existing twice,
+# and the two could disagree about what "the Go tier is green" means.
+env:
+  GATEWAY_EQUIVALENCE_REQUIRED: "1"
+
 jobs:
   # -------------------------------------------------------------- shared half
   # `language: bun` runs install (frozen), typecheck and test. It is the same
@@ -61,8 +76,71 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.12"
+      # `go-version-file: go.mod` rather than a literal version, and that is the
+      # point: the pin now lives in `go.mod` (which the compiler enforces) and in
+      # `mise.toml` (which `bin/prime-go`'s first step checks against it), and a
+      # literal here would be a FOURTH copy for CI to disagree with. Two copies,
+      # one of them checked by the gate at startup — the arrangement
+      # `pantry/.github/workflows/ci.yml:35` states the same way.
+      #
+      # The step order matters and it is not alphabetical: `setup-bun` before
+      # `setup-go` is irrelevant, but `setup-go` must come before `bin/prime`,
+      # because `bin/prime` now ends in `./bin/prime-go` and that script exits 127
+      # on a machine with no Go toolchain rather than skipping.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: bin/prime
         run: bin/prime
+      - name: go.mod and go.sum are untouched
+        # The Go half of the check the next step does for `bun.lock`.
+        #
+        # `bin/prime-go` runs `go build ./...` and `go test ./...`, and neither
+        # rewrites the manifests — but a plain `go get` or a `go mod tidy` left in
+        # a dependency bump would resolve a different tree than the one that was
+        # committed, and the run would stay green while doing it. The Go
+        # equivalent of `--frozen-lockfile` does not exist, so this is the check
+        # that stands in for it: cheap, and it catches drift that is otherwise
+        # invisible. The generated-code step inside `bin/prime-go` depends on
+        # `api.gen.go` matching `openapi/v1.yaml`, and it uses the module cache
+        # offline — so a manifest that resolved differently is a manifest the
+        # regeneration step would also have disagreed about.
+        run: |
+          git diff --exit-code -- go.mod go.sum \
+            || { echo "bin/prime moved go.mod or go.sum — the build is no longer against the committed tree"; exit 1; }
+      - name: the equivalence tier compared something, and said how much
+        # The env var above turns "bun is not on PATH" into a failure, so a green
+        # run of `bin/prime` in this job means the reference was stood up and 72
+        # request/scenario pairs were compared. This step makes the CLAIM
+        # legible: it reads the count out of the run's own output and fails if it
+        # is not there.
+        #
+        # It is a second assertion on the same evidence rather than a third
+        # mechanism, and the redundancy is the point — `gate.yml` deliberately
+        # cannot put a floor on that count (a legitimate developer machine without
+        # bun never prints the line), so the only place the count is held to a
+        # number is here, where `GATEWAY_EQUIVALENCE_REQUIRED=1` guarantees it is
+        # printed at all.
+        run: |
+          summary="$(bin/prime-go 2>&1)"
+          echo "$summary"
+          comparisons="$(printf '%s\n' "$summary" |
+            sed -n 's/.*equivalence: \([0-9][0-9]*\) cases x \([0-9][0-9]*\) scenarios = \([0-9][0-9]*\) comparisons.*/\3/p' |
+            tail -n 1)"
+          # `.*` before `equivalence:` and not `^`: `go test -v` prefixes a log
+          # line with `    file.go:403: `, so an anchored pattern matches nothing
+          # and this step would fail on every green run. Measured — the anchored
+          # version is what shipped in the first draft of this step.
+          if [ -z "$comparisons" ]; then
+            echo "the equivalence tier printed no comparison count; a check that cannot say what it compared is a check that cannot be read"
+            exit 1
+          fi
+          if [ "$comparisons" -lt 72 ]; then
+            echo "the equivalence tier compared $comparisons pairs, expected 72 — fewer means the derived case list shrank"
+            exit 1
+          fi
+          echo "equivalence: $comparisons comparisons, every one of them answered identically by both sides"
       - name: bun.lock is untouched
         # `bin/prime` runs `bun install --frozen-lockfile`, which fails rather
         # than rewriting the lock — so this is expected to be a no-op, and that is
