@@ -38,7 +38,12 @@
 //     carries a `token`, are both refusals for the same reason: a security field
 //     an operator half-configured must not resolve to anything at all. See
 //     `checkPublic`.
+//   * a claim name that is not a claim name, one of the claims guard owns
+//     (`iss`, `aud`, `exp`…), and a `public` entry that also declares
+//     `principal` — see `checkPrincipal` for why the last one is the sharpest
+//     rule in the file.
 import { assertNonEmptyString } from "../middleware/assert";
+import { RESERVED_CLAIMS } from "./assertion";
 
 /** One upstream, and the credential guard attaches when it calls. */
 export type RouteTarget = {
@@ -82,6 +87,29 @@ export type RouteTarget = {
    * means — the field is additive and no deployed route changes behaviour.
    */
   public?: boolean;
+  /**
+   * The claims this upstream is declared to need, and therefore the only claims
+   * guard will assert about the caller when it calls.
+   *
+   * Optional, and absent means **no assertion is minted at all** — not "an
+   * assertion with no claims", which would be a token whose only content is which
+   * gateway minted it. An upstream that has not declared what it needs has not
+   * asked, and the alternative hands every service in a deployment a credential
+   * it never agreed to hold.
+   *
+   * The names are claim names on the caller's verified token, read from the token
+   * rather than from guard's typed principal, so `scope` crosses as the string
+   * identity signed and `github_id` — which is not a field guard knows — crosses
+   * without guard being taught its name. A name the token does not carry is
+   * omitted, never invented and never refused: a publisher whose token carries no
+   * `github_id` has to reach pantry as *no publisher record*, which is the
+   * refusal MD19 wants, rather than as a token that says something untrue.
+   *
+   * Two values are refused rather than honoured, both in `checkPrincipal`: a name
+   * guard owns (`iss`, `aud`, `exp`…), and an empty list. And a `public` entry
+   * that declares this field refuses to boot at all — see `routeTable`.
+   */
+  principal?: string[];
 };
 
 /** Path prefix -> upstream. The whole of routing's configuration. */
@@ -101,6 +129,15 @@ export type ResolvedRoute = {
    * credential" from "a credential named false".
    */
   public?: boolean;
+  /**
+   * The claims to assert about the caller, or nothing when the entry declared
+   * none.
+   *
+   * Absent rather than `[]` for the same reason `token` is absent when there is
+   * none: a reader should not have to tell "declared nothing" from "declared an
+   * empty set", and the minter's behaviour differs from neither.
+   */
+  principal?: string[];
 };
 
 /**
@@ -144,6 +181,10 @@ export function routeTable(table: RouteTable): RouteTable {
     // field that is only checked once the table is otherwise whole is a field
     // whose rule has already been half-kept by the time it runs.
     const open = checkPublic(key, target?.public);
+    // Same pass, same reason: `principal` is a security field, and a security
+    // field checked in a later sweep is one whose rule has already been half-kept
+    // by the time it runs.
+    const principal = checkPrincipal(key, target?.principal);
 
     // The contradiction, refused rather than resolved. Both resolutions are
     // wrong in a way an operator cannot see from the running service: honouring
@@ -165,7 +206,34 @@ export function routeTable(table: RouteTable): RouteTable {
       );
     }
 
-    checked[key] = { baseUrl, token, public: open };
+    // THE SHARPEST RULE IN THIS FILE, and the one that makes MD19's first
+    // property structural rather than conditional: **a public route gets no
+    // assertion, ever.** Declaring the claims a public route needs is an operator
+    // who has not noticed that a public route has no caller to assert one about —
+    // and it is the exact shape of the bug this field could introduce, because the
+    // machinery to mint one would be configured, present and correct. Honouring it
+    // would mint a signed token saying who sent a request that nobody was required
+    // to send, and the only evidence would be an assertion appearing in a place
+    // the table called anonymous.
+    //
+    // Refused rather than ignored, and refused at BOOT rather than at the send
+    // site: an entry that says this and does not get it is a table that lies about
+    // what is on the wire, and a reader of the table is exactly who that
+    // misleads. `proxy.ts` also refuses to mint for a public entry — see
+    // `assertionFor` — because a security property that depends only on a
+    // validation three files away is one refactor away from gone.
+    if (open === true && principal !== undefined) {
+      throw new RangeError(
+        `routeTable: ${key} is declared public AND declares principal claims, and a public route carries no ` +
+          `assertion about a caller. "public" means the prefix is mounted with no caller credential required, so ` +
+          `there is no verified caller to assert anything about: an assertion here would be a signed statement ` +
+          `about a request that nobody was required to make. Drop "principal" if the route really is anonymous, or ` +
+          `drop "public" if the upstream really does need to know who the caller is — a private prefix is what ` +
+          `carries the assertion.`,
+      );
+    }
+
+    checked[key] = { baseUrl, token, public: open, principal };
   }
 
   return checked;
@@ -226,6 +294,7 @@ export function resolveRoute(table: RouteTable, path: string): ResolvedRoute | n
       baseUrl: upstream.baseUrl,
       ...(upstream.token === undefined ? {} : { token: upstream.token }),
       ...(upstream.public === true ? { public: true } : {}),
+      ...(upstream.principal === undefined ? {} : { principal: [...upstream.principal] }),
     };
     bestLength = prefix.length;
   }
@@ -382,6 +451,110 @@ function checkPublic(prefix: string, value: unknown): boolean | undefined {
         `says, and the string a reader would take for permission is the one value that must never be coerced ` +
         `into it. Write true or false without quotes, or omit the field — an entry with no public field requires ` +
         `a caller credential.`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * The claims an upstream is declared to need, or nothing when it declared none.
+ *
+ * Four refusals, and each one is a value an operator can type in JSON and believe
+ * has been honoured.
+ *
+ *   * **Not an array.** `{"principal": "sub"}` is a string where a list was
+ *     wanted. Coerced it would be one claim named `s`,`u`,`b`; read literally it
+ *     is a configuration that does not mean what it says, which is the same defect
+ *     `checkPublic` exists for and refuses for the same reason.
+ *   * **An empty array.** Which is *not* the same as omitting the field, and the
+ *     difference is the whole contract: omitted means "no assertion", and an empty
+ *     list can only mean "an assertion carrying no claims" — a token whose entire
+ *     content is which gateway minted it, which asserts nothing and costs a
+ *     signature on every request. An operator who means the first should be able
+ *     to type the first.
+ *   * **A name guard owns.** `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` are the
+ *     envelope, and honouring one would produce a token whose audience or
+ *     lifetime the operator chose rather than guard — which is a way to mint an
+ *     assertion that verifies for a route it was never minted for.
+ *     `RESERVED_CLAIMS` is imported from `assertion.ts` rather than written out
+ *     here so the two halves cannot drift: a name refused at one end and honoured
+ *     at the other is the worst of both, and a list written twice is a list that
+ *     goes stale.
+ *   * **A name with whitespace, a control character or a wildcard.** A claim name
+ *     is a single token from a signed payload; `"*"` in particular is the shape
+ *     that would quietly turn "minimal claims" into "the whole JWT", which is the
+ *     one outcome the field exists to prevent, and it is refused here for the same
+ *     reason `checkPrefix` refuses a glob: a second matching language to get wrong.
+ *
+ * A repeat is deduplicated rather than refused. Two spellings of the same name is
+ * an operator's editor and not an undecided question, and refusing it would train
+ * a reader to ignore a rule that matters.
+ *
+ * The list is copied, so a caller cannot reach in afterwards and append a claim to
+ * a table that was validated — the same reason `routeTable` returns a fresh object
+ * and `limitTable` returns a copy.
+ */
+function checkPrincipal(prefix: string, value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+
+  if (!Array.isArray(value)) {
+    throw new RangeError(
+      `routeTable: ${prefix} principal must be an array of claim names, got ${JSON.stringify(value)}. ` +
+        `It is a list in JSON, not a string: {"principal":"sub"} is a configuration that does not mean what it ` +
+        `says. Write ["sub"], or omit the field to declare that this upstream needs no assertion at all.`,
+    );
+  }
+  if (value.length === 0) {
+    throw new RangeError(
+      `routeTable: ${prefix} principal is an empty array, which is not the same as leaving the field out. ` +
+        `An empty list can only mean an assertion carrying no claims — a signed statement about the caller that ` +
+        `says nothing, at the cost of a signature on every request. Omit "principal" if this upstream needs no ` +
+        `assertion; write the claim names if it does.`,
+    );
+  }
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const name = checkClaimName(prefix, raw);
+    if (seen.has(name)) continue;
+
+    seen.add(name);
+    out.push(name);
+  }
+
+  return out;
+}
+
+/** One claim name, or the reason it is not one. */
+function checkClaimName(prefix: string, value: unknown): string {
+  if (typeof value !== "string" || value === "") {
+    throw new RangeError(
+      `routeTable: ${prefix} principal must hold claim names as non-empty strings, got ${JSON.stringify(value)}`,
+    );
+  }
+  if (value === "*") {
+    throw new RangeError(
+      `routeTable: ${prefix} principal may not name "*". The list is what this upstream is declared to need, ` +
+        `and a wildcard is the one entry that would turn "minimal claims" into the caller's whole JWT — which is ` +
+        `exactly what the field exists to prevent. Name the claims.`,
+    );
+  }
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) {
+    throw new RangeError(
+      `routeTable: ${prefix} principal claim names may not contain whitespace or control characters, got ` +
+        `${JSON.stringify(value)}. A claim name is one token from a signed payload, so a name with a space in it ` +
+        `is a name no upstream can look up.`,
+    );
+  }
+  if (RESERVED_CLAIMS.includes(value)) {
+    throw new RangeError(
+      `routeTable: ${prefix} principal may not name "${value}", which is guard's own and not the caller's. ` +
+        `The issuer, the audience that binds the assertion to this upstream, the lifetime and the correlation id ` +
+        `are set by guard from the route it is calling; an entry that chose them would be minting an assertion ` +
+        `that verifies for a route it was never minted for. Declare the caller's own claims instead — "sub", ` +
+        `"account_id", "github_id" — and guard will bind and date it.`,
     );
   }
 

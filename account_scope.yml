@@ -32,7 +32,11 @@ surface:
   # different answers came from.
   sources:
     - src/index.ts
-  # 7 registrations in that file.
+  # 7 registrations in that file. The assertion packet added NO registration —
+  # it did not need one, and an added route is what would have forced this
+  # `minimum` to move. See `principal` in `src/routes/table.ts`: the public half
+  # of guard's assertion key is exposed through the minter rather than at
+  # `/.well-known/jwks.json`, precisely so this file does not change.
   minimum: 7
   accountKey: account_id
 
@@ -48,7 +52,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 121
+      line: 157
 
   - id: readyz
     kind: http
@@ -58,16 +62,16 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 123
+      line: 159
 
   # --- THE ONE ENTRY POINT THIS DECLARATION CANNOT CONTAIN -------------------
-  # `GET /v1/me` (src/index.ts:187) resolves an account and returns it, and BOTH
+  # `GET /v1/me` (src/index.ts:247) resolves an account and returns it, and BOTH
   # of the ways to say so are answered by a FAILURE. Measured, not reasoned:
   #
   #   accountScoped: true, accountFrom.via: requireJwt,
   #   file src/middleware/jwt.ts, line 346
   #                 ->  FAIL account-scope.scoping-bypassed
-  #                     "registered at src/index.ts:187, which does not go
+  #                     "registered at src/index.ts:247, which does not go
   #                      through requireJwt"
   #
   #   accountScoped: false, reason: public
@@ -77,10 +81,10 @@ entryPoints:
   #                      c.json(c.get("principal")));"
   #
   # BOTH ARE FALSE ON THIS ROUTE, and the reason is Hono's registration order.
-  # The JWT gate is `app.use("/v1/*", ...)` at src/index.ts:160 — TWENTY-SEVEN
+  # The JWT gate is `app.use("/v1/*", ...)` at src/index.ts:219 — TWENTY-EIGHT
   # LINES ABOVE the route — and Hono answers in registration order, so a route
   # registered after a `use` IS behind it. The file's own comment at
-  # src/index.ts:157 says so: "Hono matches handlers in registration order and a
+  # src/index.ts:197 says so: "Hono matches handlers in registration order and a
   # route registered before a `use` answers first and never calls `next`." The
   # registration line therefore says NOTHING about whether the route is scoped.
   #
@@ -101,13 +105,13 @@ entryPoints:
   # ---------------------------------------------------------------------------
   # The route, for the record:
   #
-  #   GET /v1/me   src/index.ts:187   resolves the account at
+  #   GET /v1/me   src/index.ts:247   resolves the account at
   #                 src/middleware/jwt.ts:346 — `accountId: typeof
   #                 payload.account_id === "string" && payload.account_id !== ""
   #                 ? payload.account_id : undefined`, inside `principalOf` —
   #                 through the `requireJwt` gate at
   #                 src/middleware/jwt.ts:241, which is mounted on `/v1/*` at
-  #                 src/index.ts:160.
+  #                 src/index.ts:219.
   # ---------------------------------------------------------------------------
 
   # --- the browser surface --------------------------------------------------
@@ -124,7 +128,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 240
+      line: 280
 
   - id: bff-login
     kind: http
@@ -134,7 +138,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 241
+      line: 281
 
   - id: bff-logout
     kind: http
@@ -144,7 +148,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: src/index.ts
-      line: 242
+      line: 282
 
   - id: bff-me
     kind: http
@@ -154,4 +158,4 @@ entryPoints:
     reason: none
     registeredAt:
       file: src/index.ts
-      line: 243
+      line: 283

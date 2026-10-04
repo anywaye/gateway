@@ -53,15 +53,33 @@
 // deny list has to have thought of `Authorization`, `Cookie`, `X-Forwarded-For`
 // and every header a future proxy invents.
 //
-// What that costs, stated plainly because it is the open half: an upstream
-// cannot tell which caller sent a request. The per-upstream `token` is a
-// service credential, not a delegation, and no header here asserts who the
-// caller was. Propagating a verified principal is a deliberate decision with
-// both halves written — guard asserting it *and* the service verifying it —
-// and it is not this packet.
+// What that costs, stated plainly because it is what the assertion exists to
+// buy: the per-upstream `token` is a service credential, not a delegation, and
+// on its own an upstream cannot tell which caller sent a request.
+//
+// The half of the answer that was previously missing is here, and it is additive
+// rather than a change to the rule above. `ASSERTION_HEADER` crosses on a route
+// whose entry **declared** claims, carrying a **short-lived signed assertion of
+// the verified principal** — see `assertion.ts` for why it is a JWT and not the
+// caller's token, why the audience is the upstream's origin, and why the claims
+// are the ones the table named. It is still not the caller's `Authorization`:
+// guard signs its own statement, so this remains an allowlist of what crosses and
+// the caller still chooses nothing about what a service sees.
+//
+// Two things it deliberately is NOT, both because MD19 ruled them:
+//
+//   * **Never on a public entry.** That is what makes a route public, and it is
+//     enforced twice — refused at boot in `routeTable`, and refused again at the
+//     send site below. The duplication is the point: a security property that
+//     depends only on a validation in another file is one refactor away from gone.
+//   * **Never a wildcard.** An upstream that declared nothing gets no assertion at
+//     all. An entry that names claims gets exactly those, so a service in a
+//     deployment can never be handed a credential it did not ask for.
 import type { Context, MiddlewareHandler } from "hono";
 import { problem, type Problem } from "../problem";
-import { resolveRoute, type RouteTable } from "./table";
+import { resolveRoute, type ResolvedRoute, type RouteTable } from "./table";
+import { ASSERTION_HEADER, type AssertionMinter } from "./assertion";
+import type { AuthEnv } from "../middleware/jwt";
 
 /** Where a routed request goes, when nothing says otherwise: five seconds. */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 5_000;
@@ -81,6 +99,15 @@ export type ProxyOptions = {
   fetch?: ProxyFetch;
   /** How long one call to a service may take. */
   timeoutMs?: number;
+  /**
+   * Mints the principal assertion, or nothing when this deployment has none.
+   *
+   * Omitted means no assertion is minted on any route, which is the state every
+   * deployment that has not configured a signing key is in — and it is the reason
+   * the whole feature is additive: an unconfigured gateway sends exactly the
+   * headers it sent before, so no existing route can change behaviour through it.
+   */
+  assertion?: AssertionMinter;
 };
 
 /**
@@ -108,10 +135,11 @@ const FORWARDED_RESPONSE_HEADERS = ["content-type"] as const;
  * `next()`, and lands on the same 404 an unrouted path does: it is not a route
  * this gateway serves, which is a truer sentence than one invented here.
  */
-export function createRouteProxy(options: ProxyOptions): MiddlewareHandler {
+export function createRouteProxy(options: ProxyOptions): MiddlewareHandler<AuthEnv> {
   const table = options.routes;
   const timeoutMs = options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   const send = options.fetch ?? ((input: string | URL | Request, init?: RequestInit) => fetch(input, init));
+  const assertion = options.assertion;
 
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
     throw new RangeError(`createRouteProxy: timeoutMs must be an integer >= 1, got ${String(timeoutMs)}`);
@@ -126,7 +154,7 @@ export function createRouteProxy(options: ProxyOptions): MiddlewareHandler {
     if (path === null) return next();
 
     const target = `${route.baseUrl}${path}${url.search}`;
-    const response = await call(send, target, c, route.token, timeoutMs);
+    const response = await call(send, target, c, route, assertion, timeoutMs);
 
     // A 2xx or a 4xx is the service's own contract and crosses unchanged: a 401
     // that became a 200 would report a refusal as a success, and a 422 that
@@ -147,19 +175,39 @@ export function createRouteProxy(options: ProxyOptions): MiddlewareHandler {
    * process that stops answering. No retry: a retry multiplies load on a service
    * that is already failing, and the limiter counts one attempt, so a retry
    * would make the accounting describe traffic guard never refused.
+   *
+   * The assertion is minted **before** the fetch rather than after, so a signing
+   * failure is reported as guard's own 503 and never as a request the service saw
+   * and answered. It is the only asynchronous step between deciding to call and
+   * calling, and putting it last would mean an upstream had done the work of a
+   * request guard then failed to describe.
    */
   async function call(
     send: ProxyFetch,
     target: string,
     c: Context,
-    token: string | undefined,
+    route: ResolvedRoute,
+    assertion: AssertionMinter | undefined,
     timeoutMs: number,
   ): Promise<Response | null> {
+    let headers: Headers;
+    try {
+      headers = await outboundHeaders(c, route, assertion);
+    } catch (error) {
+      // The only way here is a signing failure, which is this process's problem
+      // and not the caller's: the credential is configured and cannot be used. The
+      // same 503 a dead socket gets, because from the caller's side they are the
+      // same sentence — guard cannot answer right now — and the detail goes to the
+      // log so the operator can tell them apart at 3am.
+      console.error(`guard: could not mint the principal assertion for ${route.prefix}`, error);
+      return null;
+    }
+
     try {
       return await within(
         send(target, {
           method: c.req.method,
-          headers: outboundHeaders(c, token),
+          headers,
           body: bodyOf(c),
           // `manual`, because the default follows a redirect — and a `Location`
           // an internal service answers with is an address that is not on the
@@ -180,25 +228,90 @@ export function createRouteProxy(options: ProxyOptions): MiddlewareHandler {
 }
 
 /**
- * The headers guard sends, built from an allowlist and its own credential.
+ * The headers guard sends, built from an allowlist and its own credentials.
  *
- * The credential is `Bearer` with the table's token and never the caller's: when
- * a table entry has no token, no `Authorization` header is sent at all, which is
- * a different thing from sending one this process invented. A caller's
- * `Authorization` and `Cookie` are not in the list and so cannot cross, and the
- * test in `proxy.test.ts` asserts on the recorded request rather than on this
- * function.
+ * The service credential is `Bearer` with the table's token and never the
+ * caller's: when a table entry has no token, no `Authorization` header is sent at
+ * all, which is a different thing from sending one this process invented. A
+ * caller's `Authorization` and `Cookie` are not in the list and so cannot cross,
+ * and the test in `proxy.test.ts` asserts on the recorded request rather than on
+ * this function.
+ *
+ * The assertion is a **third** header rather than a second value in the first,
+ * and `assertionFor` is where the decision to add it is made.
  */
-function outboundHeaders(c: Context, token: string | undefined): Headers {
+async function outboundHeaders(
+  c: Context,
+  route: ResolvedRoute,
+  assertion: AssertionMinter | undefined,
+): Promise<Headers> {
   const headers = new Headers();
 
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = c.req.header(name);
     if (value !== undefined) headers.set(name, value);
   }
-  if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
+  if (route.token !== undefined) headers.set("authorization", `Bearer ${route.token}`);
+
+  const asserted = await assertionFor(c, route, assertion);
+  if (asserted !== undefined) headers.set(ASSERTION_HEADER, asserted);
 
   return headers;
+}
+
+/**
+ * The assertion for this request, or nothing.
+ *
+ * ## THE FOUR CONDITIONS, AND WHICH OF THEM IS LOAD-BEARING
+ *
+ *   1. a minter is configured — absent means no assertion on any route, which is
+ *      what every deployment that has not configured a key is in;
+ *   2. **the entry is not `public`** — MD19's first property, and the only
+ *      condition here that is a security rule rather than a convenience;
+ *   3. the entry **declared** claims — an upstream that has not said what it
+ *      needs gets nothing, which is the "no wildcard" half of the rule and the
+ *      reason an undeclared route cannot be handed a credential it did not ask
+ *      for;
+ *   4. there is a **verified principal** — which is absent when the app was built
+ *      with no `jwt` verifier, and in that case the pass-through has been serving
+ *      anyone all along. There is nothing to assert and nothing to assert *about*,
+ *      so the header is simply not set. That is not a new hole and not a closed
+ *      one: an app with `routes` and no verifier forwards with no credential, and
+ *      this packet does not change that.
+ *
+ * ## WHY CONDITION 2 IS CHECKED HERE AND NOT ONLY IN `routeTable`
+ *
+ * `routeTable` already refuses `public` together with `principal`, so condition 2
+ * is unreachable through `createApp`. It is written out anyway, and that is not
+ * redundancy for its own sake: the two live in different files, only one of them
+ * is a validation a reader will think to look at when changing the other, and a
+ * security property that rests entirely on a rule three files away is one refactor
+ * from being decorative. The cost is one comparison on a path that already did a
+ * `resolveRoute` and a `fetch`; the benefit is that the rule is visible at the
+ * line where the header is written.
+ *
+ * `assertion.test.ts` asserts this gate directly, against a `createRouteProxy`
+ * built with a table `routeTable` would have refused, and that test is the only
+ * reason the line below is not a green by omission. `assertion.ts` spreads
+ * guard's envelope before the declared claims for the same reason, so the audience
+ * cannot be overwritten even if the reserved-name check in `checkPrincipal` were
+ * removed. Three gates on one property, in three files, is not paranoia about a
+ * bug — it is a statement about which of those a future change is most likely to
+ * remove by accident.
+ */
+async function assertionFor(
+  c: Context,
+  route: ResolvedRoute,
+  assertion: AssertionMinter | undefined,
+): Promise<string | undefined> {
+  if (assertion === undefined) return undefined;
+  if (route.public === true) return undefined;
+  if (route.principal === undefined) return undefined;
+
+  const principal = c.get("principal");
+  if (principal === undefined) return undefined;
+
+  return assertion.mint(principal, { audience: route.baseUrl, claims: route.principal });
 }
 
 /**

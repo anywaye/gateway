@@ -1,6 +1,16 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createJwtVerifier, DEFAULT_IDENTITY_ISSUER, type AuthEnv, type JwtOptions } from "./middleware/jwt";
+import { readFileSync } from "node:fs";
+import {
+  createAssertionMinter,
+  DEFAULT_ASSERTION_ISSUER,
+  DEFAULT_ASSERTION_TTL_MS,
+  MAX_ASSERTION_TTL_MS,
+  readAssertionKey,
+  type AssertionKey,
+  type AssertionOptions,
+} from "./routes/assertion";
 import { rateLimit, type RateLimitOptions } from "./middleware/rateLimit";
 import { memoryRateLimitStore } from "./middleware/rateLimitStore";
 import type { RateLimitStore } from "./middleware/rateLimitTypes";
@@ -77,6 +87,26 @@ export type AppOptions = {
    */
   routes?: RouteTable;
   /**
+   * Guard's own signing key, and how long an assertion it mints is good for.
+   *
+   * Omit and **no assertion is minted on any route** — which is the state every
+   * deployment that has not configured a key is in, and the reason the feature is
+   * additive rather than a change: an unconfigured gateway sends exactly the
+   * headers it sent before this option existed.
+   *
+   * Configuring it still asserts nothing on a route whose entry did not declare
+   * `principal` claims, and never on a `public` entry. Both are stated where they
+   * are enforced — `routeTable`'s refusals and `proxy.ts`'s `assertionFor`.
+   *
+   * The key is a **key object, not a string**, because this file reads the
+   * `ASSERTION_SIGNING_KEY_FILE` path and hands over bytes. The private key is
+   * deliberately not read from an environment variable: an environment value
+   * appears in `docker inspect`, in `/proc/<pid>/environ` and in any crash dump,
+   * and this repository already refuses a base URL carrying a password for the
+   * same reason.
+   */
+  assertion?: AssertionOptions;
+  /**
    * How the pass-through reaches a service. Both halves are for tests and for
    * nothing else, and both are arguments for the reason `AppOptions` is one: a
    * suite that has to be near a listening upstream to assert what guard sends is
@@ -114,6 +144,12 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
   // the first request of the week. Validated only when one was given, because an
   // app built with no services is a legitimate shape: it forwards nothing.
   const routes = options.routes === undefined ? null : routeTable(options.routes);
+
+  // Built before the app is assembled so a bad issuer or an over-long lifetime is
+  // a refusal to construct the app at all, on the same footing as a malformed
+  // route table: both are an operator who has typed something that does not mean
+  // what they meant, and neither should be discovered by a request.
+  const assertion = options.assertion === undefined ? undefined : createAssertionMinter(options.assertion);
 
   // Liveness is unconditional and touches nothing. A dependency outage must not
   // get the process restarted out from under in-flight requests; that is
@@ -227,6 +263,10 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
       routes,
       ...(options.proxy?.fetch ? { fetch: options.proxy.fetch } : {}),
       ...(options.proxy?.timeoutMs === undefined ? {} : { timeoutMs: options.proxy.timeoutMs }),
+      // Built once here rather than per request: the minter memoises its
+      // published key, so a minter constructed here is one export on the first
+      // proxied request rather than one per request.
+      ...(assertion === undefined ? {} : { assertion }),
     });
     app.use(ROUTE_MOUNT, proxy);
   }
@@ -349,6 +389,73 @@ export function runtimeOptions(env: Record<string, string | undefined> = Bun.env
       ...(redis ? { store: redisRateLimitStore({ commands: redis.commands, prefix: redis.prefix }) } : {}),
     },
     ...routesFromEnv(env),
+    ...assertionFromEnv(env),
+  };
+}
+
+/**
+ * The principal assertion's signing key, or nothing at all.
+ *
+ * Four variables, and only the first is required — because only the first is
+ * needed:
+ *
+ *   ASSERTION_SIGNING_KEY_FILE  path to a PKCS#8 PEM. Unset or empty means no
+ *                               assertion is minted on any route, which is the
+ *                               default and the reason this feature cannot change
+ *                               a deployment that has not asked for it.
+ *   ASSERTION_SIGNING_KEY_ID    the `kid` upstreams select the key by. Defaults to
+ *                               the RFC 7638 thumbprint of the public key, which
+ *                               cannot collide between two deployments the way an
+ *                               invented `guard-1` can.
+ *   ASSERTION_ISSUER            who minted it. Defaults to `https://guard.localhost`,
+ *                               matching `DEFAULT_IDENTITY_ISSUER`'s shape.
+ *   ASSERTION_TTL_MS            how long it is good for. Defaults to 120_000 and is
+ *                               **refused above `MAX_ASSERTION_TTL_MS`** — see
+ *                               `assertion.ts` for why a lifetime nobody may
+ *                               exceed is the property and not the default.
+ *
+ * A path rather than the PEM itself, and `readFileSync` rather than a lazy read so
+ * that a file which is not there is a **startup** failure naming the variable,
+ * which is the rule every other field in this function follows. The PEM is then
+ * parsed synchronously by `readAssertionKey`, so a file that exists and is not a
+ * key is also a startup failure. There is no third case: a key that is only
+ * discovered to be wrong on the first proxied request would be the one
+ * configuration mistake here that reads as a 503 on every request.
+ *
+ * `ASSERTION_TTL_MS` is parsed by `wholeNumber` with `MAX_ASSERTION_TTL_MS` as its
+ * floor, which reads oddly and is deliberate — it names the ceiling in the error
+ * message and reuses the one integer-from-the-environment check in this file
+ * rather than adding a second spelling of it.
+ */
+function assertionFromEnv(env: Record<string, string | undefined>): { assertion?: AssertionOptions } {
+  const path = env.ASSERTION_SIGNING_KEY_FILE?.trim();
+  if (!path) return {};
+
+  let pem: string;
+  try {
+    pem = readFileSync(path, "utf8");
+  } catch {
+    throw new RangeError(
+      `guard: ASSERTION_SIGNING_KEY_FILE names ${JSON.stringify(path)}, and that file could not be read. It is a ` +
+        `path to a PKCS#8 PEM private key, and guard reads it once at startup so a missing key is a refusal to ` +
+        `boot rather than a 503 on every proxied request. Unset the variable to mint no principal assertions at all.`,
+    );
+  }
+
+  const key: AssertionKey = readAssertionKey(pem, env.ASSERTION_SIGNING_KEY_ID?.trim() || undefined);
+  const ttl = wholeNumber(
+    env.ASSERTION_TTL_MS,
+    DEFAULT_ASSERTION_TTL_MS,
+    "ASSERTION_TTL_MS",
+    MAX_ASSERTION_TTL_MS,
+  );
+
+  return {
+    assertion: {
+      key,
+      issuer: env.ASSERTION_ISSUER?.trim() || DEFAULT_ASSERTION_ISSUER,
+      ttlMs: ttl,
+    },
   };
 }
 
@@ -369,6 +476,12 @@ export function runtimeOptions(env: Record<string, string | undefined> = Bun.env
  * caller credential required. It is refused in any form that could mean something
  * other than what it says — `"true"` as a string, or alongside a `token` — which
  * is `checkPublic`'s rule and not this file's.
+ *
+ * `principal` is a list of the claim names this upstream is declared to need, and
+ * it is the only thing that makes guard sign an assertion about the caller for
+ * this route. Absent means no assertion; an entry that is `public` and declares
+ * it refuses to boot, because a public route has no verified caller to assert
+ * one about.
  *
  * Unset or empty means no routing at all, which is the honest default for a
  * deployment that has not decided where anything goes. A value that is not JSON,
@@ -391,7 +504,7 @@ function routesFromEnv(env: Record<string, string | undefined>): { routes?: Rout
   } catch {
     throw new RangeError(
       `guard: ROUTE_TABLE must be a JSON object mapping a path prefix to {"baseUrl": …, "token"?: …, ` +
-        `"public"?: true|false}, and it is not JSON. It names ${JSON.stringify(raw)}.`,
+        `"public"?: true|false, "principal"?: ["…"]}, and it is not JSON. It names ${JSON.stringify(raw)}.`,
     );
   }
 
