@@ -26,7 +26,7 @@
 //
 // A second tier fixes that. `rateLimitRedisLive.test.ts` runs this file's script
 // against a real redis-server, and the `redis` job in `.github/workflows/ci.yml`
-// forces it with `GUARD_REDIS_REQUIRED=true` so it cannot pass by skipping. It
+// forces it with `GATEWAY_REDIS_REQUIRED=true` so it cannot pass by skipping. It
 // found two defects a transcription cannot: Redis truncates a returned Lua number
 // toward zero, and one `-ERR` reply used to wedge this connection permanently.
 //
@@ -85,9 +85,9 @@ return {1, next, next - interval - window, math.max(0, limit - used)}
 export type RedisRateLimitStoreOptions = {
   commands: RedisCommands;
   /**
-   * Sub-namespace, so two guards (or two environments) sharing one Redis do not
-   * read each other's buckets. It is *added to* guard's own namespace rather
-   * than replacing it: a key outside `guard:rl` is a key nobody can find again
+   * Sub-namespace, so two gateways (or two environments) sharing one Redis do not
+   * read each other's buckets. It is *added to* gateway's own namespace rather
+   * than replacing it: a key outside `gateway:rl` is a key nobody can find again
    * with `KEYS`, and a bucket namespace an operator can typo away is a bucket
    * namespace that silently stops limiting. Constrained to the base64url
    * alphabet because it ends up in a Redis key.
@@ -95,7 +95,7 @@ export type RedisRateLimitStoreOptions = {
   prefix?: string;
 };
 
-const NAMESPACE = "guard:rl";
+const NAMESPACE = "gateway:rl";
 
 export type RedisRateLimitStore = RateLimitStore & {
   /** The Redis key a bucket lives in. v0 introspection, off the trait. */
@@ -140,13 +140,13 @@ export function redisRateLimitStore(options: RedisRateLimitStoreOptions): RedisR
  */
 function verdictOf(reply: unknown): Verdict {
   if (!Array.isArray(reply) || reply.length !== 4) {
-    throw new Error(`guard: the rate-limit script answered ${JSON.stringify(reply)}`);
+    throw new Error(`gateway: the rate-limit script answered ${JSON.stringify(reply)}`);
   }
 
   const numbers = reply.map((part) => {
     const value = Number(part);
     if (!Number.isFinite(value)) {
-      throw new Error(`guard: the rate-limit script answered a non-number in ${JSON.stringify(reply)}`);
+      throw new Error(`gateway: the rate-limit script answered a non-number in ${JSON.stringify(reply)}`);
     }
     return value;
   });
@@ -239,7 +239,7 @@ export function parseReply(bytes: Uint8Array, at = 0): { value: RespValue; read:
     case 0x2b: // '+' simple string
       return { value: line, read: line.length + 3 };
     case 0x2d: // '-' error
-      throw new RedisReplyError(`guard: redis said ${line}`, line.length + 3);
+      throw new RedisReplyError(`gateway: redis said ${line}`, line.length + 3);
     case 0x3a: // ':' integer
       return { value: integer(line), read: line.length + 3 };
     case 0x24: {
@@ -248,7 +248,7 @@ export function parseReply(bytes: Uint8Array, at = 0): { value: RespValue; read:
       if (length < 0) return { value: null, read: line.length + 3 };
 
       const start = at + line.length + 3;
-      if (start + length + 2 > bytes.byteLength) throw new Error("guard: redis sent a truncated reply");
+      if (start + length + 2 > bytes.byteLength) throw new Error("gateway: redis sent a truncated reply");
 
       return { value: decoder.decode(bytes.subarray(start, start + length)), read: line.length + 3 + length + 2 };
     }
@@ -267,7 +267,7 @@ export function parseReply(bytes: Uint8Array, at = 0): { value: RespValue; read:
       return { value: items, read: cursor - at };
     }
     default:
-      throw new Error(`guard: redis sent an unknown reply type ${JSON.stringify(String(marker ?? ""))}`);
+      throw new Error(`gateway: redis sent an unknown reply type ${JSON.stringify(String(marker ?? ""))}`);
   }
 }
 
@@ -276,13 +276,13 @@ function readLine(bytes: Uint8Array, at: number): string {
   for (let i = at + 1; i < bytes.length - 1; i++) {
     if (bytes[i] === 0x0d && bytes[i + 1] === 0x0a) return decoder.decode(bytes.subarray(at + 1, i));
   }
-  throw new Error("guard: redis sent a truncated reply");
+  throw new Error("gateway: redis sent a truncated reply");
 }
 
 function integer(line: string): number {
   const value = Number(line);
   if (!Number.isInteger(value)) {
-    throw new Error(`guard: redis sent ${JSON.stringify(line)} where a whole number was due`);
+    throw new Error(`gateway: redis sent ${JSON.stringify(line)} where a whole number was due`);
   }
   return value;
 }
@@ -379,7 +379,7 @@ export async function connectRedis(options: RedisConnectionOptions): Promise<Red
         fail(error instanceof Error ? error : new Error(String(error)));
       },
       close() {
-        fail(new Error("guard: the redis connection closed"));
+        fail(new Error("gateway: the redis connection closed"));
       },
     },
   });

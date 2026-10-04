@@ -88,7 +88,7 @@ const SUITE_INPUTS = [
 ] as const;
 
 /** CI greps this prefix out of the suite's own output and diffs it against `find`. */
-const REPORT_PREFIX = "GUARD_IMAGE_TEST";
+const REPORT_PREFIX = "GATEWAY_IMAGE_TEST";
 
 describe("the test stage", () => {
   test("copies every test file in the repository", () => {

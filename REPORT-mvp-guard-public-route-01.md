@@ -14,16 +14,16 @@ manager, and the packet's "Done means" line asking for a push is overridden by i
 
 ## 1. The defect
 
-The MVP directive is that `site → guard → identity/pantry → Postgres` runs end to
+The MVP directive is that `site → gateway → identity/pantry → Postgres` runs end to
 end locally. It did not, and MD18 measured why: **no credential could get through
-guard's `/v1/*` at all**, for four independent reasons at once.
+gateway's `/v1/*` at all**, for four independent reasons at once.
 
 | # | what | where |
 |---|---|---|
-| 1 | site's client claims guard gates `/v1/*` on a `guard-api` scope. `requireScope` is never called outside tests — there is no scope gate. | `site/src/lib/pantry.ts:41`, `guard/src/index.ts:158` |
+| 1 | site's client claims gateway gates `/v1/*` on a `gateway-api` scope. `requireScope` is never called outside tests — there is no scope gate. | `site/src/lib/pantry.ts:41`, `guard/src/index.ts:158` |
 | 2 | `runtimeOptions()` declares `apiKeys` and handles it at `:140` but never sets it, so the key gate is unreachable in a running process. | `guard/src/index.ts:287` |
-| 3 | the SDK sends `Authorization: Bearer cafaye_…`; guard's key gate matches `/^apikey(?:\s\|$)/i` and its key shape is `caf_` + 43 while identity mints `cafaye_` + 43. | `limitKey.ts:195`, `apiKey.ts:210,229`, `apikeys.go:75` |
-| 4 | `guard-api` does not exist in identity's `AllScopes()`, and the only mint route is owner-and-session-only. | `apikeys.go:238-241`, `httpapi/apikeys.go:76` |
+| 3 | the SDK sends `Authorization: Bearer cafaye_…`; gateway's key gate matches `/^apikey(?:\s\|$)/i` and its key shape is `caf_` + 43 while identity mints `cafaye_` + 43. | `limitKey.ts:195`, `apiKey.ts:210,229`, `apikeys.go:75` |
+| 4 | `gateway-api` does not exist in identity's `AllScopes()`, and the only mint route is owner-and-session-only. | `apikeys.go:238-241`, `httpapi/apikeys.go:76` |
 
 Closing it the way site's comment imagines is four repositories in sequence. MD18
 rules instead that a `ROUTE_TABLE` entry may declare itself public. That is this
@@ -40,7 +40,7 @@ $ grep -n "API_KEY_SCHEME" src/middleware/limitKey.ts
 ```
 
 What I could not reproduce, and say so plainly: I did **not** run
-`site → guard → identity` end to end. Doing so needs `identity` and `pantry`
+`site → gateway → identity` end to end. Doing so needs `identity` and `pantry`
 built and running, neither of which is in this worktree, and the packet forbids
 touching either. The blocker is MD18's measurement, read rather than re-measured.
 
@@ -63,7 +63,7 @@ Two refusals, and **the contradiction is refused rather than resolved**:
    route serving anyone — including `"false"`, which would open the route as
    surely as `"true"`.
 2. **`public: true` with a `token`.** The two are different credentials answering
-   different questions: `public` is about the **caller**, `token` is guard's own
+   different questions: `public` is about the **caller**, `token` is gateway's own
    credential to the **service**. Guessing which one was meant would either hand an
    anonymous caller a credential-protected upstream, or quietly `401` a route the
    table calls open. Neither is visible from the running service, so it does not
@@ -100,7 +100,7 @@ one winning entry rather than two independent lookups.
   exist, and a store with no issuing endpoint. Left alone.
 - **`site/src/lib/pantry.ts:41`.** Its comment becomes true next packet. Left
   alone, per the brief.
-- **Every other repository.** Only `guard` was touched.
+- **Every other repository.** Only `gateway` was touched.
 
 ---
 
@@ -170,7 +170,7 @@ $ bun test src/middleware/rateLimitRedisLive.test.ts
  0 pass   15 skip   0 fail   Ran 15 tests across 1 file
 ```
 
-`GUARD_REDIS_URL` is unset — `bin/prime` never sets it, by design — so the live
+`GATEWAY_REDIS_URL` is unset — `bin/prime` never sets it, by design — so the live
 Redis tier is skipped in full. That is the same count as before this packet (the
 gate's own prose said 14; see §5). Nothing else in the suite skipped.
 
@@ -244,11 +244,11 @@ false.** `relay()` adds it unconditionally, and the comment says why: *"proxied
 traffic is authenticated"*. A `public` entry is not authenticated. The header is
 still the safe direction and still wrong for a catalog read that `MVP-SCOPE.md`
 says may be edge-cacheable. Documented in the README's *Not built yet* rather than
-changed, because relaxing it per entry needs a decision about what guard will
+changed, because relaxing it per entry needs a decision about what gateway will
 vouch for in a shared cache.
 
 **d. `RATE_LIMIT_REQUESTS` cannot lower the `/v1/` allowance.** `limits.ts:64` has
-a shipped `/v1/` route entry (limit 600, policy `guard-api`), and `runtimeOptions`
+a shipped `/v1/` route entry (limit 600, policy `gateway-api`), and `runtimeOptions`
 overrides only the table's `default` — `routes` is passed through verbatim. The
 README does say the per-route entries are not overridable in v0, but the
 consequence for `/v1/` specifically is the whole API surface rather than just the
@@ -269,7 +269,7 @@ and becomes true next packet. Left alone, per the brief.
 1. **MD18 packet 2 — pantry.** Two bugs that stop it booting in
    `caf.dev.compose.yaml` at all: `dockerfile: docker/Dockerfile` names a path
    that does not exist, and the service reads `PANTRY_DATABASE_URL` while the
-   compose sets `DATABASE_URL`. Unblocked by this packet and needs no guard work.
+   compose sets `DATABASE_URL`. Unblocked by this packet and needs no gateway work.
 2. **MD18 packet 3 — the whole-stack compose and the e2e assertion.** The thing
    the MVP directive actually asks for. Unbuildable until 1 and 2 land.
 3. **A per-prefix rate-limit allowance**, and it is now urgent rather than tidy:
@@ -278,7 +278,7 @@ and becomes true next packet. Left alone, per the brief.
    is code and the prefixes are configuration, so this is the pairing packet.
 4. **Per-entry `cache-control`**, from (c).
 5. **`requireScope`, then `apiKeys`,** in that order, and both blocked behind
-   identity growing a `guard-api` scope. Adding either now turns a green packet
+   identity growing a `gateway-api` scope. Adding either now turns a green packet
    red against today's identity.
 
 ---

@@ -3,16 +3,16 @@ import type { Context } from "hono";
 /**
  * core's error envelope: RFC 9457 problem+json with cafaye's extensions
  * (core/docs/openapi-conventions.md, "Error envelope"). No service invents its
- * own error body, and this is the one every rejection in guard goes through.
+ * own error body, and this is the one every rejection in gateway goes through.
  *
- * Only the codes guard can actually produce. The reserved list is longer — a
+ * Only the codes gateway can actually produce. The reserved list is longer — a
  * routed packet adds `not_found`, `rate_limited` and `internal` — and the codes
  * here are not a closed set for the platform, only for this repository.
  *
  * `invalid_json`, `account_locked` and `payload_too_large` are not on core's
  * reserved list. They are the slugs identity already answers with
  * (identity/internal/httpapi/problem.go), and one vocabulary across the platform
- * beats a guard-private synonym for the same failure. Recorded as a DECISION
+ * beats a gateway-private synonym for the same failure. Recorded as a DECISION
  * NEEDED in cafaye.yml.
  */
 export type ProblemCode =
@@ -97,7 +97,7 @@ export function problem(c: Context, { status, code, detail, errors }: Problem): 
  * 32 hex characters, the shape core's conventions show.
  *
  * This is a correlation id for a single failed response, not a distributed
- * trace: guard has no tracing yet, and a request that never reached a handler
+ * trace: gateway has no tracing yet, and a request that never reached a handler
  * still has to leave something a caller can quote in a bug report.
  */
 function newTraceId(): string {

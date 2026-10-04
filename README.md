@@ -1,14 +1,14 @@
-# guard
+# gateway
 
 The cafaye public gateway. It is the only door into a cafaye deployment:
-`guard` authenticates callers, limits what they can ask for, and forwards
+`gateway` authenticates callers, limits what they can ask for, and forwards
 requests to the service that owns the work.
 
 **Status: v0 has working auth, a browser login surface, API keys, and
 routing.** Tokens are verified for real against identity's published keys; a
-browser signs in through guard and comes away with a session cookie instead of a
+browser signs in through gateway and comes away with a session cookie instead of a
 token; a script can hold a scoped, revocable API key; a configured path prefix
-is forwarded to the service that owns it, carrying a credential guard chose
+is forwarded to the service that owns it, carrying a credential gateway chose
 rather than one the caller sent — and, on a route that declared what it needs, a
 short-lived signed assertion of *which caller* it was. Rate-limit counters are per
 process unless
@@ -22,12 +22,12 @@ and [Not built yet](#not-built-yet) before relying on anything here.
 | ------ | ---------------- | -------------- | ------------ | ---------------------------------------------------------- |
 | GET    | `/healthz`       | no             | **never**    | always `200 {"status":"ok"}` — liveness, touches nothing     |
 | GET    | `/readyz`        | no             | **never**    | `200 {"deps":{…}}`, or `503` if a registered probe is down   |
-| GET    | `/v1/me`         | bearer or key  | yes (`guard-api`) | `200` echoing the verified `{sub, scope, claims}`      |
-| `*`    | `/v1/<prefix>/…` | bearer or key, **or nothing** on an entry the table marks `public` | yes (`guard-api`) | forwarded to the service the table names, prefix removed — see [Routing](#routing) |
-| POST   | `/auth/register` | same-origin    | yes (`guard-auth-register`) | `201 {id, email}`. No session: a registration is not a login |
-| POST   | `/auth/login`    | same-origin    | yes (`guard-auth-login`) | `200 {expires_at}` + the `__Host-bff-session` cookie |
-| POST   | `/auth/logout`   | same-origin    | yes (`guard-auth-logout`) | `204`, cookie cleared, identity asked to revoke    |
-| GET    | `/auth/me`       | cookie         | yes (`guard-auth`) | `200 {id, email}`, proxied to identity with the stored token |
+| GET    | `/v1/me`         | bearer or key  | yes (`gateway-api`) | `200` echoing the verified `{sub, scope, claims}`      |
+| `*`    | `/v1/<prefix>/…` | bearer or key, **or nothing** on an entry the table marks `public` | yes (`gateway-api`) | forwarded to the service the table names, prefix removed — see [Routing](#routing) |
+| POST   | `/auth/register` | same-origin    | yes (`gateway-auth-register`) | `201 {id, email}`. No session: a registration is not a login |
+| POST   | `/auth/login`    | same-origin    | yes (`gateway-auth-login`) | `200 {expires_at}` + the `__Host-bff-session` cookie |
+| POST   | `/auth/logout`   | same-origin    | yes (`gateway-auth-logout`) | `204`, cookie cleared, identity asked to revoke    |
+| GET    | `/auth/me`       | cookie         | yes (`gateway-auth`) | `200 {id, email}`, proxied to identity with the stored token |
 
 `/v1/*` is the API surface: bearer tokens and API keys, never a cookie.
 `/auth/*` is the browser surface, and a browser never touches the other one — see
@@ -54,11 +54,11 @@ The two shapes an error can take, and why, is a **DECISION NEEDED** — see
 
 ## The HTTP contract
 
-[`openapi/v1.yaml`](openapi/v1.yaml) is guard's OpenAPI 3.1 document, and it
+[`openapi/v1.yaml`](openapi/v1.yaml) is gateway's OpenAPI 3.1 document, and it
 describes the seven operations in the table above and nothing else — which is
 **not** the same as "everything the gateway answers": a configured
 [route table](#routing) forwards a whole subtree of paths whose names belong to
-the services behind guard, and OpenAPI describes paths rather than subtrees. The
+the services behind gateway, and OpenAPI describes paths rather than subtrees. The
 document's header says so, and so does this section.
 
 It is what a generated client is built from, so it is held to the router by
@@ -105,7 +105,7 @@ ROUTE_TABLE='{"/v1/pantry":{"baseUrl":"http://pantry:8080","token":"…"}}'
 
 With that table, `GET /v1/pantry/items?limit=2` is sent to
 `http://pantry:8080/items?limit=2` and the answer is relayed. A path no prefix
-claims is guard's own `404`.
+claims is gateway's own `404`.
 
 **Static is the right design here, not just the right scope.** The set of
 services in a deployment is small, known, and changes with a deploy rather than
@@ -138,7 +138,7 @@ Four things it does **not** do, because each one is a different packet:
 
 - It does not make `/v1/*` anonymous, and it is not how `/v1/me` gets answered
   anonymously. One entry, by name.
-- It does not remove the rate limit. A public route spends the `guard-api` budget
+- It does not remove the rate limit. A public route spends the `gateway-api` budget
   like every other `/v1/` path — see below.
 - It does not give the upstream anything. A `public` entry **cannot** carry a
   `token`: the two are different credentials and an entry with both refuses to
@@ -147,7 +147,7 @@ Four things it does **not** do, because each one is a different packet:
   learns who is calling](#a-private-upstream-learns-who-is-calling).
 - It does not forward the caller's credential. A caller who sends one to a public
   prefix has it dropped, exactly as on a private one — and what a private route
-  gets instead is a *new* header carrying guard's own signature, never their token.
+  gets instead is a *new* header carrying gateway's own signature, never their token.
 
 **What it costs, stated plainly.** The rate-limit bucket is keyed on the account,
 the key, or the client address — in that order. An anonymous request has none of
@@ -174,24 +174,24 @@ value is a refusal to boot, for the reason `REDIS_URL=redis//redis` is:
 
 | Value                                                       | Why it is refused                                                   |
 | ----------------------------------------------------------- | ------------------------------------------------------------------ |
-| not JSON, or not an object                                  | `JSON.parse`'s own message names a character position in a string the operator never wrote; guard's names the variable |
+| not JSON, or not an object                                  | `JSON.parse`'s own message names a character position in a string the operator never wrote; gateway's names the variable |
 | a prefix outside `/v1/`                                     | the pass-through is mounted on `/v1/*`, so it could never match — a route that silently forwards nothing |
 | a glob (`*`, `?`)                                            | a prefix is a path, not a second matching language                 |
 | a `.` or `..` segment, encoded or not                        | a traversal configured on purpose, in the notation a caller's path arrives in |
-| `/v1/me`                                                     | it is guard's own route, registered before the pass-through; an entry that can never fire is a claim, not a configuration |
+| `/v1/me`                                                     | it is gateway's own route, registered before the pass-through; an entry that can never fire is a claim, not a configuration |
 | a base URL with a path, a query, a fragment or credentials   | the caller's path is appended to it, so a base with a path puts the request somewhere nobody serves it — and a base with a password is a password in a log line |
 | a token containing whitespace or a control character         | it is written into an `Authorization` header verbatim, so a newline in it is header injection configured on purpose |
 | a `public` that is not `true` or `false`                     | `{"public":"true"}` is what an operator writes when they mean public and have not checked that JSON has no booleans-as-strings. Coerced, it is a route serving anyone |
 | an entry that is `public` **and** carries a `token`           | two credentials answering two different questions, and nobody reading the table can say which was meant — so the message names both ways out |
 | an entry that is `public` **and** declares `principal` claims | a public route has no verified caller, so there is nothing to assert one about — and honouring it would mint a signed statement about a request nobody was required to make |
 | `principal` that is not an array, or is empty                 | `{"principal":"sub"}` does not mean what it says, and `[]` is **not** "no assertion": it is an assertion carrying no claims, at the cost of a signature per request |
-| `principal` naming `iss`, `aud`, `exp`, `nbf`, `iat` or `jti` | those are guard's envelope. An entry that chose its own audience or lifetime would mint an assertion that verifies for a route it was never minted for |
+| `principal` naming `iss`, `aud`, `exp`, `nbf`, `iat` or `jti` | those are gateway's envelope. An entry that chose its own audience or lifetime would mint an assertion that verifies for a route it was never minted for |
 | `principal` naming `"*"`, or a name with whitespace in it      | `"*"` is "minimal claims" quietly turned into the caller's whole JWT, and a name with a space in it is a name no upstream can look up |
 | `{}`                                                         | `ROUTE_TABLE={}` forwards nothing, and an operator would find out from 404s |
 
 ### A private upstream learns who is calling
 
-A route entry may declare **which claims its upstream needs**, and guard then
+A route entry may declare **which claims its upstream needs**, and gateway then
 sends that upstream a short-lived signed assertion of the caller in a header of
 its own, `X-Cafaye-Principal`:
 
@@ -202,8 +202,8 @@ ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
 ```
 
 The upstream answers `POST /v1/pantry/services/…` having been handed a compact
-JWS it can verify against guard's published key. It did not get: the caller's
-`Authorization` (never — that would make guard a confused deputy and a relay for
+JWS it can verify against gateway's published key. It did not get: the caller's
+`Authorization` (never — that would make gateway a confused deputy and a relay for
 a token minted for a different audience), the caller's `Cookie`, or any claim the
 entry did not declare.
 
@@ -213,13 +213,13 @@ Five rules, each of which is a refusal or a startup error rather than a default:
   combination refuses to boot *and* is refused again at the send site, because a
   security property that rests only on a validation in another file is one
   refactor from being decorative.
-- **Not the caller's token.** guard signs **its own** statement, over **its own**
+- **Not the caller's token.** gateway signs **its own** statement, over **its own**
   key. The caller's token was minted for a different audience and carries whatever
   the caller was given.
 - **Bound to the upstream.** `aud` is that upstream's base URL origin, so a leaked
   assertion is worth nothing on any other upstream. `kid` is the RFC 7638
   thumbprint of the key unless an operator sets one, because two deployments both
-  calling their key `guard-1` is a key set in which an upstream verifies against
+  calling their key `gateway-1` is a key set in which an upstream verifies against
   the wrong deployment.
 - **Short-lived.** Two minutes by default, and `ASSERTION_TTL_MS` is **refused
   above ten minutes** — a lifetime nobody may exceed is the property; a default is
@@ -230,14 +230,14 @@ Five rules, each of which is a refusal or a startup error rather than a default:
   is the refusal, rather than as a token saying something untrue.
 
 **It is off unless a deployment turns it on**, and that is what makes it safe to
-add to a running gateway. Configure nothing and guard forwards exactly the
+add to a running gateway. Configure nothing and gateway forwards exactly the
 headers it forwarded before:
 
 | Variable                        | Default                  | Meaning                                                     |
 | ------------------------------ | ------------------------ | ----------------------------------------------------------- |
 | `ASSERTION_SIGNING_KEY_FILE`   | *unset — no assertions*  | Path to a **PKCS#8 PEM**. A missing or malformed file is a refusal to boot |
 | `ASSERTION_SIGNING_KEY_ID`     | the key's thumbprint     | The `kid` an upstream selects the key by                    |
-| `ASSERTION_ISSUER`             | `https://guard.localhost` | Who minted it, which is the `iss` an upstream checks        |
+| `ASSERTION_ISSUER`             | `https://gateway.localhost` | Who minted it, which is the `iss` an upstream checks        |
 | `ASSERTION_TTL_MS`             | `120000`, max `600000`   | How long an assertion is good for                           |
 
 A **file path, not the PEM in a variable**, and the distinction is not tidiness: an
@@ -257,13 +257,13 @@ against a key set nobody has, and refused.
 
 ### The credential rule, which is the part that matters
 
-**guard attaches the credential. The caller's `Authorization` is never forwarded
+**gateway attaches the credential. The caller's `Authorization` is never forwarded
 to a service, and neither is their `Cookie`.**
 
 If a caller could set an arbitrary `Authorization` and have it reach pantry,
-guard would be a confused deputy: the caller authenticates *to guard* and then
-chooses who they are *downstream*. Every property "guard is the only door" rests
-on — that the credential a service sees is one guard issued or verified — would
+gateway would be a confused deputy: the caller authenticates *to gateway* and then
+chooses who they are *downstream*. Every property "gateway is the only door" rests
+on — that the credential a service sees is one gateway issued or verified — would
 be gone, and an attacker would need no credential for the service at all, only a
 valid one for the edge. `GET /auth/me` already holds this line for identity by
 taking the **stored** token from the session; routed traffic is the same shape
@@ -284,7 +284,7 @@ per-service `token` is a service credential, not a delegation. It can now — on
 route that **declared** what it needs, and only there. See
 [A private upstream learns who is calling](#a-private-upstream-learns-who-is-calling).
 
-### Failures behind the edge are guard's to translate
+### Failures behind the edge are gateway's to translate
 
 | From the service                       | To the caller                                             |
 | -------------------------------------- | --------------------------------------------------------- |
@@ -308,12 +308,12 @@ in a cache between here and the caller is an account's data at rest.
 
 There are **no retries**. A retry multiplies load on a service that is already
 failing, and the limiter counts one attempt, so a retry would make the
-accounting describe traffic guard never refused.
+accounting describe traffic gateway never refused.
 
 ### What a routed path goes through
 
 Everything a route does, in the order the app registers it: the API-key gate, the
-`/v1/*` bearer gate, the limiter, then `/v1/me` for the one path guard owns, then
+`/v1/*` bearer gate, the limiter, then `/v1/me` for the one path gateway owns, then
 the pass-through. So a routed request is **authenticated and rate limited**
 without either of those knowing that routing exists — and an anonymous request to
 a configured prefix that is not marked `public` is a `401` with no service
@@ -325,7 +325,7 @@ whether or not the route is open; and the limiter is still below it, so anonymou
 traffic is still counted. See [A route can declare itself
 public](#a-route-can-declare-itself-public).
 
-Routed paths spend the `guard-api` allowance, the same budget as the rest of
+Routed paths spend the `gateway-api` allowance, the same budget as the rest of
 `/v1/`; a per-prefix allowance is not configurable yet because the limit table is
 code and the prefixes are configuration, and that pairing is [Not built
 yet](#not-built-yet).
@@ -333,7 +333,7 @@ yet](#not-built-yet).
 The upstream path is **rebuilt**, never forwarded as received: each segment is
 decoded, refused if it is `.`, `..`, empty or holds a separator, and re-encoded.
 A traversal is therefore not filtered, it is not expressible — with the caveat
-that the URL parser resolves `..` and `%2e%2e` *before* guard sees the path, so a
+that the URL parser resolves `..` and `%2e%2e` *before* gateway sees the path, so a
 `..` can only climb to another configured prefix or out of `/v1` and into a `404`.
 
 ## Auth
@@ -348,12 +348,12 @@ there.
 nothing else. identity's token never reaches the page. See
 [BFF auth flow](#bff-auth-flow).
 
-- **Algorithm: RS256, and nothing else.** The algorithm is guard's decision, not
+- **Algorithm: RS256, and nothing else.** The algorithm is gateway's decision, not
   the token's, and it is checked before any key is fetched — so an `alg: none` or
-  HS256 token cannot make guard call identity. core's conventions also allow
+  HS256 token cannot make gateway call identity. core's conventions also allow
   ES256; see the DECISION NEEDED in [cafaye.yml](cafaye.yml).
 - **Keys:** `{IDENTITY_ISSUER}/.well-known/jwks.json`. `IDENTITY_ISSUER` is the
-  **issuer-only base URL** (e.g. `https://identity.localhost`); guard appends the
+  **issuer-only base URL** (e.g. `https://identity.localhost`); gateway appends the
   fixed well-known path itself. The path is not part of the variable, and a
   trailing slash is fine.
 - **Caching:** the key set is held in memory for `IDENTITY_JWKS_TTL_MS`
@@ -367,7 +367,7 @@ nothing else. identity's token never reaches the page. See
   unlimited fetch allowance for anyone naming a `kid`. The TTL is also the
   revocation window: a key identity withdraws keeps verifying until the cache
   expires.
-- **Claims checked:** `iss` (the issuer), `aud` (guard's client id), `exp`,
+- **Claims checked:** `iss` (the issuer), `aud` (gateway's client id), `exp`,
   `nbf`, and a non-empty `sub`. `scope` is read when present as a
   space-separated string and split into a set; absent means no scopes, never all
   of them.
@@ -384,7 +384,7 @@ Handlers read the verified principal off the context, and a scope gate mounts
 after the auth gate:
 
 ```ts
-const jwt = createJwtVerifier({ issuer: "https://identity.localhost", audience: "guard" });
+const jwt = createJwtVerifier({ issuer: "https://identity.localhost", audience: "gateway" });
 
 app.use("/v1/*", jwt.requireJwt);
 app.get("/v1/invoices", jwt.requireScope("billing.read"), (c) => c.json(c.get("principal")));
@@ -392,16 +392,16 @@ app.get("/v1/invoices", jwt.requireScope("billing.read"), (c) => c.json(c.get("p
 
 ## BFF auth flow
 
-A browser talks to guard and to nothing else. It never sees identity's endpoints,
+A browser talks to gateway and to nothing else. It never sees identity's endpoints,
 never holds identity's token, and never names its own session: it holds a session
-id out of a cookie guard minted, and guard swaps that id for the token when a
+id out of a cookie gateway minted, and gateway swaps that id for the token when a
 request needs one. A token in a page is a token a cross-site script can read; a
 session id in an `HttpOnly` cookie is not.
 
 ### Sign in
 
 ```
-browser                    guard                          identity
+browser                    gateway                          identity
   |                          |                                |
   |-- POST /auth/login ----->|                                |
   |   Origin: console…       |                                |
@@ -449,7 +449,7 @@ credential the `HttpOnly` cookie exists to keep away from it.
   straight after signing in. The deletion repeats every attribute: a browser
   matches a cookie to delete on name, domain and path, and one mismatch leaves
   the original in place — the bug that makes "sign out" appear to do nothing.
-- **The session id is `crypto.randomUUID()`, minted by guard, never accepted from
+- **The session id is `crypto.randomUUID()`, minted by gateway, never accepted from
   the caller.** Fixation needs an id the attacker knows in advance.
 - **The store is a `SessionStore` — three methods — and the v0 implementation
   is a `Map`.** Expiry is the store's business, because a record the store knows
@@ -466,7 +466,7 @@ credential the `HttpOnly` cookie exists to keep away from it.
   needs no CSRF defence, and putting the gate on the `/auth/*` prefix would
   demand an `Origin` header from it.
 - **The origin is compared by host, not by scheme.** A TLS-terminating proxy
-  rewrites the scheme guard sees while the browser's header still says `https`,
+  rewrites the scheme gateway sees while the browser's header still says `https`,
   and comparing it would 403 every real browser. The host is the one the browser
   addressed the request to, and a cross-site requester cannot choose it.
 - **Only the statuses identity documents for a route are mapped.** A `200` to
@@ -566,7 +566,7 @@ The key is derived in one order, and nothing a caller chose is ever in it.
   address can carry a `%zone` — and a bucket name becomes a Redis key. The
   identity is therefore hashed into the key, which makes an unsafe key impossible
   by construction rather than by a charset somebody remembers, and means a
-  `KEYS guard:rl:*` scan does not yield a list of the accounts hitting the edge.
+  `KEYS gateway:rl:*` scan does not yield a list of the accounts hitting the edge.
 
 ### Why sliding, and why one step
 
@@ -595,8 +595,8 @@ group's Standards Track draft,
 has nothing to do with rate limiting.
 
 ```
-RateLimit-Policy: "guard-api";q=600;w=60     # §3: the policy. q = quota, w = window seconds
-RateLimit: "guard-api";r=598;t=44            # §4: r = available, t = effective window
+RateLimit-Policy: "gateway-api";q=600;w=60     # §3: the policy. q = quota, w = window seconds
+RateLimit: "gateway-api";r=598;t=44            # §4: r = available, t = effective window
 RateLimit-Limit: 600                          # the trio the draft dropped in -08,
 RateLimit-Remaining: 598                      # which deployed clients and proxies
 RateLimit-Reset: 44                           # still parse. Seconds, counting down.
@@ -629,12 +629,12 @@ is what stops an attack and generous where generosity is what a client needs.
 
 | Policy                | Limit   | Window | Claimed by                        |
 | --------------------- | ------- | ------ | --------------------------------- |
-| `guard-api`           | 600     | 1 min  | `/v1/*` and anything unclaimed     |
-| `guard-auth`          | 60      | 1 min  | any other `/auth/` route           |
-| `guard-auth-login`    | 10      | 1 min  | `POST /auth/login`                 |
-| `guard-auth-register` | 5       | 1 min  | `POST /auth/register`              |
-| `guard-auth-logout`   | 30      | 1 min  | `POST /auth/logout`                |
-| `guard-api-keys`      | 60      | 1 min  | `/v1/api-keys`                     |
+| `gateway-api`           | 600     | 1 min  | `/v1/*` and anything unclaimed     |
+| `gateway-auth`          | 60      | 1 min  | any other `/auth/` route           |
+| `gateway-auth-login`    | 10      | 1 min  | `POST /auth/login`                 |
+| `gateway-auth-register` | 5       | 1 min  | `POST /auth/register`              |
+| `gateway-auth-logout`   | 30      | 1 min  | `POST /auth/logout`                |
+| `gateway-api-keys`      | 60      | 1 min  | `/v1/api-keys`                     |
 
 Longest matching prefix wins, on a path-segment boundary, so `/v1/` never claims
 `/v1alpha/`. The **policy name is the unit of accounting**, not the route: it is
@@ -661,7 +661,7 @@ a startup error, and the connection is opened on first use so a Redis that is
 *down* is not a refusal to boot.
 
 **A store that cannot answer fails OPEN**, and the cost is named rather than
-hidden: for as long as the counter store is unreachable, guard applies no limit at
+hidden: for as long as the counter store is unreachable, gateway applies no limit at
 all. Failing closed would hand a Redis outage to every caller as a `429`, which is
 the same class of mistake as restarting the process on a dependency blip and much
 harder to notice. The `RateLimit-*` headers are left off rather than guessed at —
@@ -674,8 +674,8 @@ through a line-for-line transcription of the script (`rateLimitRedis.test.ts`), 
 the RESP2 encoder and parser are covered as pure functions — so `bin/prime` needs
 no server and no network. A second tier,
 `src/middleware/rateLimitRedisLive.test.ts`, runs the same script against a real
-`redis-server`; it is gated on `GUARD_REDIS_URL`, and the `redis` job in
-`.github/workflows/ci.yml` sets it with `GUARD_REDIS_REQUIRED=true` so a run
+`redis-server`; it is gated on `GATEWAY_REDIS_URL`, and the `redis` job in
+`.github/workflows/ci.yml` sets it with `GATEWAY_REDIS_REQUIRED=true` so a run
 cannot pass by quietly skipping it. `TODO(guard-06)` in
 `src/middleware/rateLimitRedis.ts` — run it in the *deploy* pipeline — is still
 open; CI proves the script, not that a given deployment sets `REDIS_URL`.
@@ -690,7 +690,7 @@ where one exists — `unauthorized`, `forbidden`, `unavailable`, `conflict`,
 `validation_failed` — plus `invalid_json` (400), `account_locked` (423) and
 `payload_too_large` (413), which are the slugs identity already answers with and
 which core does not name. One vocabulary across the platform beats a
-guard-private synonym for the same failure; recorded as a DECISION NEEDED in
+gateway-private synonym for the same failure; recorded as a DECISION NEEDED in
 [cafaye.yml](cafaye.yml). `errors[]` appears on a `422` and nowhere else, as core
 scopes it.
 
@@ -700,14 +700,14 @@ The `/auth` routes map each identity refusal onto that envelope: a `401` login i
 case, and never identity's own body — it can carry a field name, a host or a
 reason that means nothing outside identity.
 
-> **DECISION NEEDED (guard).** The rest of the surface still answers
+> **DECISION NEEDED (gateway).** The rest of the surface still answers
 > `{ "error": …, "message": … }` with `application/json` — the `404` and the
 > `500`. Two error shapes in one gateway is a wart, and core says no service
 > invents its own error body. The `429` moved onto the envelope with the rate
 > limiter that produces it; what is left is the `404` and the `500`, and moving
 > them means touching every response, and the envelope's `trace_id` has to match an
 > `X-Trace-Id` that exists on *every* response, which is a trace-propagation
-> middleware that does not exist yet. Requested: a `guard-0N` that adds trace-id
+> middleware that does not exist yet. Requested: a `gateway-0N` that adds trace-id
 > propagation and moves `404`/`500` onto the same envelope in one go. Until then,
 > read the `Content-Type` to tell the two apart.
 
@@ -718,7 +718,7 @@ than a copy of it, and this section and the document cannot describe two
 different things without the reader noticing one of them is out of date. That
 document's `Problem.code` enum is the list above and the two extra slugs
 `cafaye.yml` records; it deliberately does **not** list `not_found` or
-`internal`, because guard produces neither.
+`internal`, because gateway produces neither.
 
 ## Configuration
 
@@ -730,21 +730,21 @@ environment, so a test can build two differently configured apps in one process.
 | Variable                 | Default                     | Meaning                                                            |
 | ------------------------ | --------------------------- | ------------------------------------------------------------------ |
 | `PORT`                   | `8080`                      | Listen port.                                                        |
-| `IDENTITY_ISSUER`        | `https://identity.localhost` | Issuer-only base URL. The `/.well-known/jwks.json` path is appended by guard, not written here. Also the expected `iss`. |
+| `IDENTITY_ISSUER`        | `https://identity.localhost` | Issuer-only base URL. The `/.well-known/jwks.json` path is appended by gateway, not written here. Also the expected `iss`. |
 | `IDENTITY_JWKS_URL`      | derived from the issuer     | Full key-set URL, for a key set served somewhere other than the issuer's own well-known path. |
 | `IDENTITY_JWKS_TTL_MS`   | `300000`                    | How long a fetched key set is reused, in milliseconds.              |
-| `GUARD_CLIENT_ID`        | `guard`                     | The `aud` guard accepts — guard's own client id.                   |
+| `GATEWAY_CLIENT_ID`        | `gateway`                     | The `aud` gateway accepts — gateway's own client id.                   |
 | `IDENTITY_URL`           | `http://localhost:8080`     | identity's base URL for the `/auth` calls: where a session is *requested*, as against `IDENTITY_ISSUER`, which is where tokens are *verified*. http(s), no path. |
 | `RATE_LIMIT_REQUESTS`    | `600`                       | Requests per window on the general allowance. Integer ≥ 1; `0` is a startup error, not "unlimited". |
 | `RATE_LIMIT_WINDOW_MS`   | `60000`                     | Length of that window in milliseconds. Integer ≥ 1. |
 | `TRUSTED_PROXIES`        | `0`                         | How many proxies append to `X-Forwarded-For`, and therefore how much of it is believed. `0` believes none of it and keys on the socket peer. |
 | `REDIS_URL`              | unset                       | `redis://` or `rediss://` — host and port, no path. Set it and the counters are shared by every replica and survive a restart. Unset and they are this process's memory. |
-| `REDIS_PREFIX`           | `guard:rl`                  | Sub-namespace inside guard's own, so two guards or two environments sharing one Redis do not read each other's buckets. |
-| `ROUTE_TABLE`            | unset                       | One JSON object of path prefix → `{baseUrl, token?, public?}`: where each prefix goes, and whether it is caller-anonymous. Unset and guard forwards nothing. Every prefix must be under `/v1/`, and every value in it is validated at startup — see [Routing](#routing). |
+| `REDIS_PREFIX`           | `gateway:rl`                  | Sub-namespace inside gateway's own, so two gateways or two environments sharing one Redis do not read each other's buckets. |
+| `ROUTE_TABLE`            | unset                       | One JSON object of path prefix → `{baseUrl, token?, public?}`: where each prefix goes, and whether it is caller-anonymous. Unset and gateway forwards nothing. Every prefix must be under `/v1/`, and every value in it is validated at startup — see [Routing](#routing). |
 
 `IDENTITY_URL` is a second variable for one service on purpose. The issuer is an
-https origin in every environment, including the compose stack; the address guard
-*dials* is a service name, and inside a container `localhost` is guard itself. So
+https origin in every environment, including the compose stack; the address gateway
+*dials* is a service name, and inside a container `localhost` is gateway itself. So
 `docker-compose.yml` sets it explicitly rather than relying on the default.
 
 An empty or whitespace-only variable counts as unset, which is what
@@ -803,7 +803,7 @@ IDENTITY_URL=http://identity.localhost:8080 \
   bun run src/index.ts
 ```
 
-With Docker, guard's compose file is an OVERRIDE and not a stack of its own — the
+With Docker, gateway's compose file is an OVERRIDE and not a stack of its own — the
 Postgres cluster, NATS, Redis, the OTel collector and the four observability
 backends all come from kit, at the commit named in `kit.ref`:
 
@@ -853,8 +853,8 @@ with:
 | Job          | What it is                                                        | Why kit cannot own it |
 | ------------ | ----------------------------------------------------------------- | --------------------- |
 | `ci`         | kit's `bun` job: frozen install, typecheck, test                   | — it *is* the shared half |
-| `prime`      | runs `bin/prime` itself, then `git diff --exit-code -- bun.lock`     | the gate is guard's command, and the lockfile check needs an install to have run |
-| `redis`      | the live Redis tier, against a real `redis:7.4.1-alpine`            | guard's counter store is guard's dependency |
+| `prime`      | runs `bin/prime` itself, then `git diff --exit-code -- bun.lock`     | the gate is gateway's command, and the lockfile check needs an install to have run |
+| `redis`      | the live Redis tier, against a real `redis:7.4.1-alpine`            | gateway's counter store is gateway's dependency |
 | `manifest`   | `cafaye.yml` against core's fetched manifest schema                 | it reaches into `cafaye/core` |
 | `image`      | hadolint, `docker build --target test`, the test files it ran, `docker compose build` | kit's lint tier does not cover Dockerfiles |
 
@@ -895,7 +895,7 @@ with Redis; the file count cannot.
 drives the Redis path through a JavaScript transcription of GCRA_LUA.
 `src/middleware/rateLimitRedisLive.test.ts` runs the actual script against a real
 `redis-server`, and it is environment-gated, so without the `redis` job it skips
-and the run is green without having run it. The job sets `GUARD_REDIS_REQUIRED`,
+and the run is green without having run it. The job sets `GATEWAY_REDIS_REQUIRED`,
 which turns "no Redis" from a skip into a failure, and a second step parses the
 summary and fails on `0 pass` or any skip — `bun test` exits 0 on a fully skipped
 file, so a green step is not by itself evidence that the tier ran.
@@ -904,7 +904,7 @@ To run it locally:
 
 ```sh
 docker run -d --rm -p 6379:6379 redis:7.4.1-alpine
-GUARD_REDIS_URL=redis://127.0.0.1:6379 GUARD_REDIS_REQUIRED=true \
+GATEWAY_REDIS_URL=redis://127.0.0.1:6379 GATEWAY_REDIS_REQUIRED=true \
   bun test src/middleware/rateLimitRedisLive.test.ts
 ```
 
@@ -927,7 +927,7 @@ the source with the packet that replaces them.
   past what it can hold. `RouteTable` is a plain object so that the swap is a
   populate rather than a rewrite.
 - **An upstream learns who the caller is; it still cannot learn what the caller
-  may do.** Guard now mints a short-lived signed assertion on a private route
+  may do.** Gateway now mints a short-lived signed assertion on a private route
   that declared claims — see [A private upstream learns who is
   calling](#a-private-upstream-learns-who-is-calling) — and that assertion says
   *who*, from *this* route, signed by *this* gateway, *minutes* ago. It says
@@ -935,16 +935,16 @@ the source with the packet that replaces them.
   upstream's own database, which is where it belongs. **The verifying half is not
   built anywhere**: no service in this repository reads `X-Cafaye-Principal`, so
   an assertion configured today is minted, and dropped. MD19 asked for both halves
-  at once and this is guard's; the reader is `pantry`'s, and it is what
+  at once and this is gateway's; the reader is `pantry`'s, and it is what
   `pantry.current_publisher_id()` needs before a publisher can write.
-- **guard does not publish its assertion key over HTTP.** The public JWK is
+- **gateway does not publish its assertion key over HTTP.** The public JWK is
   available from the minter (`publicJwk()`), so wiring a
   `/.well-known/jwks.json` is small — and it is deliberately not done here. It
   would add a route to the public edge of the gateway: an operation in
   `openapi/v1.yaml`, six `registeredAt` anchors in `account_scope.yml`, and a
   `surface.minimum` change this packet has no standing to make, all for something
   no *caller* needs. Upstreams are already configured out of band — they need
-  guard's `token` the same way — so the key travels the road the `token` does.
+  gateway's `token` the same way — so the key travels the road the `token` does.
   Serving it becomes worth it when more than one service needs it, or when keys
   rotate.
 - **A leaked assertion is bounded but not revocable.** It is useless on any other
@@ -958,7 +958,7 @@ the source with the packet that replaces them.
   path nobody called, and a probe per service is health-checking, which is its
   own packet with its own cost to state. Today a service that is down shows up as
   a `503` on the paths that use it and in the log, and nowhere else.
-- **A per-prefix rate-limit allowance.** Routed paths spend `guard-api`, the same
+- **A per-prefix rate-limit allowance.** Routed paths spend `gateway-api`, the same
   budget as the rest of `/v1/`. A prefix-specific number is not expressible today
   because the limit table is code and the prefixes are configuration, and a table
   that is half configuration and half code is one where lowering a number is
@@ -972,7 +972,7 @@ the source with the packet that replaces them.
   reason no longer applies to it and the header is still there — which is the safe
   direction and still wrong for a catalog read that is meant to be cacheable at
   the edge. Making it per entry is the packet, and it needs a decision about
-  what guard will vouch for in a shared cache.
+  what gateway will vouch for in a shared cache.
 - **The live Redis tier does not run inside the image.** `docker build --target
   test` has no `redis-server` and no way to reach one. Measured on Docker 29.4.0,
   because the reason is not the obvious one: `--network=host` is *accepted*, and a
@@ -1009,17 +1009,17 @@ the source with the packet that replaces them.
   deployment behind a load balancer authenticates intermittently. `ApiKeyStore` is
   the seam; `TODO(guard-07)`. Deliberately absent rather than written wrongly.
 - **No endpoint issues a key.** `createApiKeyAuth` can mint and revoke one, and a
-  key authenticates on any route a token does, but nothing in guard *hands* one
+  key authenticates on any route a token does, but nothing in gateway *hands* one
   out: issuing a credential is a control-plane action that wants an authenticated
-  account, an audit trail and a rate limit of its own (`guard-api-keys` is already
+  account, an audit trail and a rate limit of its own (`gateway-api-keys` is already
   in the table for it), and that route is not one this packet was asked to invent.
   What is missing is the caller, not the capability.
 - **A trustworthy client key still needs an edge proxy.** The address key is only
-  as good as `TRUSTED_PROXIES`, and at the default of `0` guard keys on the socket
+  as good as `TRUSTED_PROXIES`, and at the default of `0` gateway keys on the socket
   peer — so every caller behind one NAT shares one bucket. The old behaviour,
   keying on the first `X-Forwarded-For` hop, was worse: the caller chose it. Both
   are honest now; neither is a substitute for a proxy that overwrites the header.
-- **Token lifetime.** guard verifies `exp` and `nbf` but enforces no ceiling on
+- **Token lifetime.** gateway verifies `exp` and `nbf` but enforces no ceiling on
   how long a token may live. core's conventions cap access tokens at 15 minutes;
   whether the edge enforces that or trusts identity to mint short-lived ones is
   a later decision.
@@ -1036,10 +1036,10 @@ the source with the packet that replaces them.
   thing to get right for the same protection.
 - **OIDC at the edge.** No redirect flow, no authorization-code exchange, no
   `/.well-known` discovery for a browser. A browser signs in with an email and a
-  password through guard today; the OIDC packets replace that with a redirect to
+  password through gateway today; the OIDC packets replace that with a redirect to
   identity, at which point the CSRF state parameter is identity's to issue and
-  guard's to check.
-- **Password rules, lockout and enumeration** are identity's, not guard's. guard
+  gateway's to check.
+- **Password rules, lockout and enumeration** are identity's, not gateway's. gateway
   forwards the body untouched and maps what comes back: a `423` with its
   `Retry-After`, a `401` with one fixed sentence. Rate limiting is the only
   brute-force control at the edge, and on `/auth/*` it keys on the client address
@@ -1068,8 +1068,8 @@ src/middleware/rateLimitRedis.ts   GCRA in Redis, one Lua script, plus RESP2
 src/middleware/apiKey.ts     API keys: issue, authenticate, revoke
 src/middleware/assert.ts     configuration checks, one RangeError each
 src/routes/table.ts         which prefix goes where, validated, and the resolver
-src/routes/assertion.ts     the principal assertion: guard's own signed statement of the caller
-src/routes/proxy.ts         the pass-through: rebuild, attach guard's credentials, translate
+src/routes/assertion.ts     the principal assertion: gateway's own signed statement of the caller
+src/routes/proxy.ts         the pass-through: rebuild, attach gateway's credentials, translate
 src/bff/auth.ts              the /auth surface: identity calls, the cookie, the origin gate
 src/bff/session.ts           SessionStore + the in-memory v0 implementation
 test/fakeIdentity.ts         a stand-in for identity's auth API (never shipped)
@@ -1083,7 +1083,7 @@ test/dockerStage.test.ts     the test stage's file set held to the repository's
 openapi/v1.yaml              the HTTP contract, and the open decisions in its header
 bin/prime                    the gate
 Dockerfile                   oven/bun slim, multi-stage; `docker build --target test` runs the suite in the image
-docker-compose.yml          guard's OVERRIDE: its own service, its own port, and nothing kit already ships
+docker-compose.yml          gateway's OVERRIDE: its own service, its own port, and nothing kit already ships
 kit.ref                     the pinned kit commit this repository's stack is fetched at
 ```
 
@@ -1094,6 +1094,6 @@ Conventions live in [AGENTS.md](AGENTS.md); changes are recorded in
 
 MIT. See [LICENSE](LICENSE). `package.json` declares the same thing.
 
-guard is the public edge every request enters through, so a consumer's first
-contact with the fleet's licensing is guard's. MIT is what keeps adding it a
+gateway is the public edge every request enters through, so a consumer's first
+contact with the fleet's licensing is gateway's. MIT is what keeps adding it a
 decision about dependencies rather than about obligations.

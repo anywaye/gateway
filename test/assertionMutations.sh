@@ -154,7 +154,7 @@ mutate \
 # Property 4 — minimal claims. The mutation turns the declared set into the whole
 # token, which is the one outcome the field exists to prevent. Note what it also
 # breaks: `principal.claims` carries the caller's own `iss` and `aud`, so a
-# wildcard spread placed AFTER the envelope overwrites guard's audience too. That
+# wildcard spread placed AFTER the envelope overwrites gateway's audience too. That
 # is not a second finding, it is the measurement of why the envelope is spread
 # first — the mutation report showed it before anyone argued for the ordering.
 # ---------------------------------------------------------------------------

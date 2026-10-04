@@ -1,11 +1,11 @@
 # AGENTS.md
 
-Conventions for `guard`, the cafaye public gateway. Read this before changing
+Conventions for `gateway`, the cafaye public gateway. Read this before changing
 anything; the house rules in `moon/PLAN.md` §1 and §3 apply on top of it.
 
 ## What this repository is
 
-`guard`, TypeScript on Bun >= 1.3, one HTTP process. It is the only door into a
+`gateway`, TypeScript on Bun >= 1.3, one HTTP process. It is the only door into a
 cafaye deployment: it authenticates callers, limits what they can ask for, and
 (forwards requests) to the service that owns the work. The contracts are owned by
 `cafaye/core`; the manifest in `cafaye.yml` is how the other tools find this
@@ -32,7 +32,7 @@ src/middleware/rateLimitRedis.ts   GCRA in Redis, one Lua script, plus RESP2
 src/middleware/apiKey.ts     API keys — issue, authenticate, revoke
 src/middleware/assert.ts     configuration checks, one RangeError each
 src/routes/table.ts         which prefix goes where — validated, and the resolver
-src/routes/proxy.ts         the pass-through: rebuild the path, attach guard's credential
+src/routes/proxy.ts         the pass-through: rebuild the path, attach gateway's credential
 src/bff/auth.ts         the /auth surface — identity calls, the cookie, the origin gate
 src/bff/session.ts      SessionStore + the in-memory v0 implementation
 test/fakeIdentity.ts    a stand-in for identity's auth API; the image never gets it
@@ -104,12 +104,21 @@ to fix something that is fine. `401` means "this token is not acceptable";
 **Stubs stay honest, and say so in their own file.** A stub must never grow a
 token parse that *looks* like verification: a half-check is worse than an
 obvious stub, because a caller will believe a token was checked when nothing was.
-Every stub carries a `TODO(guard-0N)` naming the packet that replaces it, and the
+Every stub carries a `TODO(gateway-0N)` naming the packet that replaces it, and the
 README lists it as not built. A packet that is not written yet is absent, not a
 fake that looks finished.
 
+**A packet id that names a dispatched packet is history, and history keeps its
+name.** `gateway-0N` above is a template for a packet that does not exist yet, so
+it follows the service's name. A `TODO(guard-06)` in the source names
+`logs/briefs/guard-06.txt`, which is on disk under that name and was dispatched
+under it, so rewriting the id breaks the only link from the code to the brief
+that produced it. The two forms differ because they mean different things, and a
+sweep that cannot tell them apart either corrupts history or points the next
+packet at the old name.
+
 **A refresh on the hot path needs a reason and a budget.** The JWKS cache is the
-only reason guard talks to identity at all, and it is bounded twice: a cached set
+only reason gateway talks to identity at all, and it is bounded twice: a cached set
 is reused for its TTL, and a `kid` that is not in it buys **one** forced refresh
 per cache window. A rule a caller can trigger per request is an amplifier aimed
 at a dependency, not a fallback. Claim that budget **before** the fetch, not
@@ -129,7 +138,7 @@ builtin, not a dependency — and a new filter there has to answer "is this an
 address". Rejecting everything is the same defect pointing the other way: it
 silently merges every client behind one proxy into one bucket.
 
-**A dependency answering 5xx is not an outage guard can be quiet about.**
+**A dependency answering 5xx is not an outage gateway can be quiet about.**
 `call()` logs when the *transport* fails, which is the rare half. An identity
 that is up and returning 500 — a broken deploy, an OOM, a panic — reached
 `unusable()` with no log line at all, so every login in a deployment failed with
@@ -155,7 +164,7 @@ middleware fails open, and the limiter is silently off in the deployment that ha
 one.
 
 **Cross-tenant is absence, and absence is not just a status code.** A resource the
-caller cannot see does not exist, and guard says the same thing it says when the
+caller cannot see does not exist, and gateway says the same thing it says when the
 resource does not exist. A `403` is a confirmation: it tells the caller the thing
 is real and belongs to somebody else, which is a smaller leak than the data and a
 perfectly good way to walk the platform. This holds *below* the wire too, which is
@@ -163,7 +172,7 @@ the half that is easy to forget — `ApiKeyStore.revoke` on another account's ke
 a no-op with no error and no return value, because a distinguishable failure is the
 same oracle one layer down.
 
-The two `403`s guard writes are correct and are not tenancy: `requireScope` is a
+The two `403`s gateway writes are correct and are not tenancy: `requireScope` is a
 capability failure (the token authenticated and lacks a scope — a fact about the
 caller, which they already know) and `requireSameOrigin` is about the request.
 Neither names a resource, so neither can confirm one exists. The line is drawn in
@@ -205,7 +214,7 @@ pacing itself at exactly its allowance holds a constant remaining, and a
 countdown would promise burst room the limiter then refuses.
 
 **A counter store that cannot answer fails OPEN.** The cost is named in the source
-and the README: for as long as it is unreachable, guard applies no limit. Failing
+and the README: for as long as it is unreachable, gateway applies no limit. Failing
 closed would hand a Redis outage to every caller as a 429. The `RateLimit-*`
 headers are left off rather than guessed at, and the store is a readiness probe —
 which is what makes the gap visible instead of silent.
@@ -220,14 +229,14 @@ The one exception is *absent*: an app built with no `rateLimit` option runs
 unlimited, which is the honest v0 default, and an app built with no `jwt` option
 serves probes only.
 
-**A credential crossing to a service is guard's to choose.** The caller's inbound
+**A credential crossing to a service is gateway's to choose.** The caller's inbound
 `Authorization` is never forwarded past the edge, and neither is their `Cookie`:
-if a caller can set an arbitrary `Authorization` and have it reach pantry, guard
+if a caller can set an arbitrary `Authorization` and have it reach pantry, gateway
 is a confused deputy and the caller authenticates to the edge before choosing who
 they are behind it. `src/routes/proxy.ts` enforces it as an outbound header
 *allowlist*, so a header nobody thought of cannot become a smuggling channel,
 and a table entry with no token sends no `Authorization` at all — which is a
-different thing from one guard invented. `GET /auth/me` holds the same line for
+different thing from one gateway invented. `GET /auth/me` holds the same line for
 identity by taking the stored token from the session. A future route that
 genuinely needs a caller's own bearer downstream has to say so, name its scope
 check, and be argued for in review; it is not a default to be widened into.
@@ -268,10 +277,10 @@ to do with the code. Run it once per clone before the first gate.
 
 **An environment-gated tier that skips is a green run that verified nothing.**
 `rateLimitRedisLive.test.ts` needs a real `redis-server`, so it skips when
-`GUARD_REDIS_URL` is unset — and `bun test` exits 0 on a fully skipped file. Two
+`GATEWAY_REDIS_URL` is unset — and `bun test` exits 0 on a fully skipped file. Two
 mechanisms stop that from reading as a pass, and a new gated tier needs both:
 
-- `GUARD_REDIS_REQUIRED=true` makes the tier throw at module load when the URL is
+- `GATEWAY_REDIS_REQUIRED=true` makes the tier throw at module load when the URL is
   unset, rather than skip.
 - The `redis` job parses the summary and fails on `0 pass` or on any skip.
 
@@ -316,10 +325,10 @@ are the ones that were wrong in its first draft:
 the isolation packet, each caught by the named test; the transcript is in
 `REPORT-guard-11-isolation.md`. **Any new guard here gets a planted divergence
 before it is believed**, and if it hangs or passes on a broken source that is a
-finding about the guard, not about the source.
+finding about the gateway, not about the source.
 
 **CI runs `bin/prime`, not a CI-only variant.** kit's `bun` job runs the same
-*steps* from kit's copy of the conventions, and the `prime` job runs guard's own
+*steps* from kit's copy of the conventions, and the `prime` job runs gateway's own
 command, so the two cannot drift into disagreeing about what the gate is. The
 `git diff --exit-code -- bun.lock` that follows it is the check that survives a
 future edit dropping `--frozen-lockfile`: a plain `bun install` resolves a
@@ -374,6 +383,6 @@ to infer them:
   `courier` both carry theirs as recorded decisions, and the next reader needs to
   know it was a choice.
 
-Where guard and `core/docs/openapi-conventions.md` genuinely disagree, record it
-as a `> DECISION NEEDED (guard-NN)` in the **document's header** and keep going.
-Do not pick a side silently, and do not describe the route guard ought to have.
+Where gateway and `core/docs/openapi-conventions.md` genuinely disagree, record it
+as a `> DECISION NEEDED (gateway-NN)` in the **document's header** and keep going.
+Do not pick a side silently, and do not describe the route gateway ought to have.

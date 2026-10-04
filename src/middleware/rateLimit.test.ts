@@ -28,7 +28,7 @@ function app(options: {
     store: options.store ?? memoryRateLimitStore(),
     trustedProxies: options.trustedProxies ?? 0,
     now: options.now ?? (() => 0),
-    policy: () => "guard-api",
+    policy: () => "gateway-api",
     // The exemption `index.ts` uses: a probe is an orchestrator asking whether
     // the process is alive, and a throttled probe gets the process restarted.
     exempt: (path) => path === "/healthz",
@@ -176,7 +176,7 @@ describe("atomicity under a burst", () => {
     // The store's charset check is a backstop, and tripping it is not a loud
     // failure: the store throws, the middleware fails open, and the limiter is
     // off in the deployment that has one. So the key has to be safe before it
-    // gets there, for identities guard does not choose.
+    // gets there, for identities gateway does not choose.
     const commands = sharedRedis({ keys: new Map() });
     const store = redisRateLimitStore({ commands });
     const hostile = [
@@ -191,7 +191,7 @@ describe("atomicity under a burst", () => {
     ];
 
     for (const identity of hostile) {
-      const bucket = `${"guard-api"}:${digestOf(identity)}`;
+      const bucket = `${"gateway-api"}:${digestOf(identity)}`;
       expect(() => store.keyFor(bucket)).not.toThrow();
     }
   });
@@ -230,14 +230,14 @@ describe("RateLimit-* headers", () => {
     // draft-ietf-httpapi-ratelimit-headers §3: a List of Items, each a String
     // naming the policy, with `q` for the quota and `w` for the window in
     // seconds.
-    expect(res.headers.get("RateLimit-Policy")).toBe('"guard-api";q=3;w=30');
+    expect(res.headers.get("RateLimit-Policy")).toBe('"gateway-api";q=3;w=30');
 
     // §4: the same policy named, `r` for the quota available and `t` for the
     // *effective window* — the seconds within which that quota may be used
     // (§4.1.2). One request of three has bought back one interval, so the
     // remaining two last one interval and not the whole thirty seconds; the
     // draft's own B.1.3 example shows `t` counting down the same way.
-    expect(res.headers.get("RateLimit")).toBe('"guard-api";r=2;t=10');
+    expect(res.headers.get("RateLimit")).toBe('"gateway-api";r=2;t=10');
   });
 
   test("the widely-deployed RateLimit-Limit/-Remaining/-Reset trio is still sent", async () => {
@@ -287,7 +287,7 @@ describe("RateLimit-* headers", () => {
     expect(blocked.headers.get("RateLimit-Limit")).toBe("1");
     expect(blocked.headers.get("RateLimit-Remaining")).toBe("0");
     expect(Number(blocked.headers.get("RateLimit-Reset"))).toBe(WINDOW_MS / 1000);
-    expect(blocked.headers.get("RateLimit")).toBe('"guard-api";r=0;t=60');
+    expect(blocked.headers.get("RateLimit")).toBe('"gateway-api";r=0;t=60');
   });
 
   test("a 429 says how long to wait, in whole seconds", async () => {
@@ -345,7 +345,7 @@ describe("key derivation, through the middleware", () => {
       store,
       trustedProxies: 0,
       now: () => 0,
-      policy: () => "guard-api",
+      policy: () => "gateway-api",
     };
 
     const tokenApp = withJwt(rateLimit(options), "acc-42");
@@ -366,7 +366,7 @@ describe("key derivation, through the middleware", () => {
   });
 
   test("two accounts never share an allowance", async () => {
-    const options = { limit: 1, windowMs: WINDOW_MS, store: memoryRateLimitStore(), trustedProxies: 0, now: () => 0, policy: () => "guard-api" };
+    const options = { limit: 1, windowMs: WINDOW_MS, store: memoryRateLimitStore(), trustedProxies: 0, now: () => 0, policy: () => "gateway-api" };
 
     const a = withJwt(rateLimit(options), "acc-1");
     const b = withJwt(rateLimit(options), "acc-2");
@@ -378,7 +378,7 @@ describe("key derivation, through the middleware", () => {
 
   test("a key alone is limited under its own id, not under the address", async () => {
     const store = memoryRateLimitStore();
-    const options = { limit: 2, windowMs: WINDOW_MS, store, trustedProxies: 0, now: () => 0, policy: () => "guard-api" };
+    const options = { limit: 2, windowMs: WINDOW_MS, store, trustedProxies: 0, now: () => 0, policy: () => "gateway-api" };
     const a = new Hono<AuthEnv>();
     a.use("*", (c, next) => {
       // Stands in for the API-key gate: the store turns a presented secret into
@@ -458,7 +458,7 @@ describe("per-route limits", () => {
     a.use("*", async (c, next) => {
       const pathname = new URL(c.req.url).pathname;
       const auth = pathname.startsWith("/auth/");
-      const policy = auth ? "guard-auth" : "guard-api";
+      const policy = auth ? "gateway-auth" : "gateway-api";
       policies.set(policy, (policies.get(policy) ?? 0) + 1);
       return rateLimit({
         limit: auth ? 2 : 5,
@@ -500,8 +500,8 @@ describe("per-route limits", () => {
     // here there is one limiter and the numbers come from `resolve`.
     const store = memoryRateLimitStore();
     const table = new Map([
-      ["guard-auth-login", { limit: 2, windowMs: WINDOW_MS }],
-      ["guard-api", { limit: 5, windowMs: WINDOW_MS }],
+      ["gateway-auth-login", { limit: 2, windowMs: WINDOW_MS }],
+      ["gateway-api", { limit: 5, windowMs: WINDOW_MS }],
     ]);
     const a = new Hono<AuthEnv>();
     a.use(
@@ -512,7 +512,7 @@ describe("per-route limits", () => {
         store,
         trustedProxies: 0,
         now: () => 0,
-        policy: (c) => (new URL(c.req.url).pathname === "/auth/login" ? "guard-auth-login" : "guard-api"),
+        policy: (c) => (new URL(c.req.url).pathname === "/auth/login" ? "gateway-auth-login" : "gateway-api"),
         resolve: (name) => table.get(name) ?? null,
       }),
     );
@@ -615,7 +615,7 @@ describe("construction", () => {
 
     const res = await a.request("/");
 
-    // The name is validated, not escaped: a policy is guard's configuration, and
+    // The name is validated, not escaped: a policy is gateway's configuration, and
     // a configured one that cannot be serialised is a startup-shaped mistake.
     expect(res.status).not.toBe(200);
   });

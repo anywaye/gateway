@@ -31,10 +31,10 @@ describe("the limit table", () => {
 describe("resolveLimit — one assertion per shipped entry", () => {
   const table = DEFAULT_LIMIT_TABLE;
 
-  test("/auth/login is the strictest thing guard serves", () => {
+  test("/auth/login is the strictest thing gateway serves", () => {
     const limit = resolveLimit(table, "/auth/login");
 
-    expect(limit.policy).toBe("guard-auth-login");
+    expect(limit.policy).toBe("gateway-auth-login");
     expect(limit.limit).toBe(10);
     expect(limit.windowMs).toBe(60_000);
   });
@@ -42,7 +42,7 @@ describe("resolveLimit — one assertion per shipped entry", () => {
   test("/auth/register is strict in its own right, not the login budget", () => {
     const limit = resolveLimit(table, "/auth/register");
 
-    expect(limit.policy).toBe("guard-auth-register");
+    expect(limit.policy).toBe("gateway-auth-register");
     expect(limit.limit).toBe(5);
   });
 
@@ -54,19 +54,19 @@ describe("resolveLimit — one assertion per shipped entry", () => {
   });
 
   test("/auth/logout has its own bucket", () => {
-    expect(resolveLimit(table, "/auth/logout").policy).toBe("guard-auth-logout");
+    expect(resolveLimit(table, "/auth/logout").policy).toBe("gateway-auth-logout");
   });
 
   test("any other /auth route falls back to the auth-adjacent default", () => {
     const limit = resolveLimit(table, "/auth/me");
 
-    expect(limit.policy).toBe("guard-auth");
+    expect(limit.policy).toBe("gateway-auth");
   });
 
   test("/v1 uses the general API allowance", () => {
     const limit = resolveLimit(table, "/v1/me");
 
-    expect(limit.policy).toBe("guard-api");
+    expect(limit.policy).toBe("gateway-api");
     expect(limit.limit).toBe(600);
     expect(limit.windowMs).toBe(60_000);
   });
@@ -74,7 +74,7 @@ describe("resolveLimit — one assertion per shipped entry", () => {
   test("/v1/api-keys is its own, tighter surface", () => {
     const limit = resolveLimit(table, "/v1/api-keys");
 
-    expect(limit.policy).toBe("guard-api-keys");
+    expect(limit.policy).toBe("gateway-api-keys");
   });
 
   test("anything unrecognised falls back to the default", () => {

@@ -7,7 +7,7 @@
 
 `bin/prime` was never missing — it exists, it is what AGENTS.md tells a
 developer to run, and CI runs it verbatim. What was missing was any statement of
-what it is *worth*, which is the whole subject of this packet: guard was one of
+what it is *worth*, which is the whole subject of this packet: gateway was one of
 seven services with no `gate.yml`, so a developer could run `bin/prime`, see
 green, and learn nothing — replacing the gate with `exit 0` would have left this
 repository green. This packet writes the declaration against core's published
@@ -38,7 +38,7 @@ packet assumed.
 `mise.toml` carries `[tools]` (bun 1.3.12, node 22.12.0) and `[env]`, and **no
 `[tasks]` table**. `mise tasks` in a clean worktree prints nothing at all.
 
-Every one of the six existing adopters declares `gate.miseTask: prime`. guard
+Every one of the six existing adopters declares `gate.miseTask: prime`. gateway
 cannot: naming a task the repository does not have is `gate.task-missing`, a
 **failure**. The honest declaration of a repository with no task is no task, and
 omitting `miseTask` produces no finding at all — `check_mise_task` only reports
@@ -49,11 +49,11 @@ omitting `miseTask` produces no finding at all — `check_mise_task` only report
 declaration prettier, but it changes how the repository is driven and would make
 `gate.miseTask` true going forward while every historical claim in the file
 stayed false. This packet is one repository's *declaration*; adding a task
-runner is a different decision, and it belongs to whoever owns guard's developer
+runner is a different decision, and it belongs to whoever owns gateway's developer
 workflow. Flagged for the manager.
 
 The cost of the omission is small and worth stating: `gate-check` will not be
-able to cross-check guard's task against its entrypoint, because there is no
+able to cross-check gateway's task against its entrypoint, because there is no
 task. The entrypoint itself is still checked — it must exist and be executable.
 
 ## 2. What was measured, before anything was declared
@@ -66,7 +66,7 @@ a time throughout).
 |---|---|---|---|---|
 | `bin/prime`, cold (no `node_modules`) | **428** | **14** | 0 | 442 across 19 files |
 | `bin/prime`, warm | 428 | 14 | 0 | 442 across 19 files |
-| `bun test` with `GUARD_REDIS_URL` set | **442** | **0** | 0 | 442 across 19 files |
+| `bun test` with `GATEWAY_REDIS_URL` set | **442** | **0** | 0 | 442 across 19 files |
 | `bun test src/middleware/rateLimitRedisLive.test.ts`, no Redis | 0 | **14** | 0 | 14 across 1 file |
 | same file, real `redis-server` on 127.0.0.1:6399 | **14** | 0 | 0 | 14 across 1 file |
 
@@ -80,7 +80,7 @@ on a loaded machine.
 
 ### Finding 2 — `bin/prime` never runs the live Redis tier
 
-**`bin/prime` does not set `GUARD_REDIS_URL`, so the live Redis tier is skipped
+**`bin/prime` does not set `GATEWAY_REDIS_URL`, so the live Redis tier is skipped
 on every developer run and on CI's `prime` job.** The 14 tests that execute
 `GCRA_LUA` against a real server have never run inside `bin/prime` — and the
 whole reason `rateLimitRedisLive.test.ts` exists is that every other test
@@ -90,13 +90,13 @@ itself is covered by review and by nothing else.
 This is not a defect in the gate. It is a **named limit**, and the brief asks
 for it by name:
 
-> **Environment variable: `GUARD_REDIS_URL`.** Unset ⇒ the 14-test live Redis
-> tier skips. `GUARD_REDIS_REQUIRED=true` converts that skip into a
+> **Environment variable: `GATEWAY_REDIS_URL`.** Unset ⇒ the 14-test live Redis
+> tier skips. `GATEWAY_REDIS_REQUIRED=true` converts that skip into a
 > module-load throw. Only the `redis` CI job sets both, so **CI is the only
 > place the tier is ever forced.**
 
 The three pre-existing mechanisms that already police this are unaffected and
-still do the work they were built for: `GUARD_REDIS_REQUIRED`, the `redis` job's
+still do the work they were built for: `GATEWAY_REDIS_REQUIRED`, the `redis` job's
 summary parse (fails on `0 pass` or any skip), and `test/noSkips.test.ts`, which
 fails on any `skip` outside a one-entry allowlist. I added nothing to them —
 they are already correct, and adding a fourth would be motion.
@@ -188,13 +188,13 @@ honest way to make a gate red without changing what the suite verifies.
 ## 5. The residue: what CI checks that `bin/prime` does not
 
 The declaration makes `gate.command` and `ci.invokes` agree, and they do. But
-`check_ci` reads one workflow's `run:` bodies and nothing else, and guard's CI
+`check_ci` reads one workflow's `run:` bodies and nothing else, and gateway's CI
 runs **three** things the local gate does not:
 
 | CI job | what it checks | in `bin/prime`? |
 |---|---|---|
 | `ci` (kit reusable) | install + typecheck + test, from **kit's copy** of the conventions | same *steps*, different command |
-| `redis` | the live tier, forced via `GUARD_REDIS_REQUIRED` | **no** — Finding 2 |
+| `redis` | the live tier, forced via `GATEWAY_REDIS_REQUIRED` | **no** — Finding 2 |
 | `manifest` | `cafaye.yml` against core's frozen schema | **no** |
 | `image` | hadolint, `docker build --target test`, and the image's test-file set vs `find` | **no** — and it is the check that catches a test file the image does not copy |
 
@@ -213,7 +213,7 @@ here is the deliverable.
 
 ## 6. What this format could not express
 
-`minimum` is a **lower** bound. guard's real risk is the skip count going *up*
+`minimum` is a **lower** bound. gateway's real risk is the skip count going *up*
 — 14 → 428 is what deleting the live tier's tests, or converting them to
 `test.skip`, would look like — and a lower bound cannot catch an increase. So
 **this declaration cannot notice a tier that skipped when it should have run**,
@@ -251,7 +251,7 @@ shut down.
 
 ## 8. Open for the manager
 
-1. **`mise run prime` does not exist in guard.** The one place this repository
+1. **`mise run prime` does not exist in gateway.** The one place this repository
    does not match the other six adopters. Adding `[tasks.prime]` to
    `mise.toml` and then `miseTask: prime` to `gate.yml` would align it, in that
    order, in one commit. I left it alone deliberately — see §1.
@@ -261,5 +261,5 @@ shut down.
    and by no developer. Whether `bin/prime` should *detect* a local
    `redis-server` and run the tier when one is present is a workflow decision,
    not a declaration decision.
-3. **The skip ceiling is inexpressible in this format** (§6). Affects guard and
+3. **The skip ceiling is inexpressible in this format** (§6). Affects gateway and
    muse identically.

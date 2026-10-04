@@ -1,9 +1,9 @@
-# gate.yml — how guard is gated, declared rather than guessed.
+# gate.yml — how gateway is gated, declared rather than guessed.
 #
 # WHY THIS FILE EXISTS. The cafaye standard for declaring a gate lives in
 # `cafaye/core`: `schemas/gate.schema.json` is the format,
 # `harness/gate_check.py` is the checker, and `docs/gate.md` is the reasoning.
-# guard is adopting it, not inventing it. The short version: across fifteen
+# gateway is adopting it, not inventing it. The short version: across fifteen
 # repositories "run the gate" had five different spellings, and every one of
 # them was found by a human getting it wrong. A gate that is discovered by
 # failure is a gate that was never declared.
@@ -17,7 +17,7 @@
 # gating.
 #
 # MEASURED, NOT GUESSED. Every number and every pattern here came from running
-# this repository's gate on guard at 97d83e9, on a saturated 8-core host
+# this repository's gate on gateway at 97d83e9, on a saturated 8-core host
 # (bun 1.3.12, mise 2026.8.4, macOS arm64):
 #
 #   * the developer-facing command is `bin/prime`, and it is ALSO the CI
@@ -29,7 +29,7 @@
 #          0 fail
 #         Ran 442 tests across 19 files. [9.70s]
 #   * the 14 skips are `src/middleware/rateLimitRedisLive.test.ts` and nothing
-#     else. Measured by running that file alone with no `GUARD_REDIS_URL`:
+#     else. Measured by running that file alone with no `GATEWAY_REDIS_URL`:
 #     `0 pass / 14 skip`, i.e. the whole file and nothing else.
 #   * with a real redis-server (throwaway, on 127.0.0.1:6399) the same command
 #     prints `442 pass / 0 skip`. So 442 is the total and 428 is what a run
@@ -54,7 +54,7 @@
 # rather than set to `prime`: naming a task this repository does not have is
 # `gate.task-missing`, a FAILURE, and the honest declaration of a repository
 # with no task is no task. See REPORT-guard-09-gate.md — this is the one place
-# guard does not match the fleet's shape, and it is recorded rather than
+# gateway does not match the fleet's shape, and it is recorded rather than
 # papered over by inventing a task nobody runs.
 #
 # ------------------------------------------------------------------------------
@@ -91,7 +91,7 @@
 # without changing what the suite verifies.
 # ------------------------------------------------------------------------------
 version: 1
-name: guard
+name: gateway
 
 gate:
   # The command a person or a tool runs, as an argv and never a shell string, so
@@ -109,7 +109,7 @@ gate:
   # repository that has a mise config but no `[tasks]` correctly: it reports
   # nothing, because there is no task to disagree with. Adding
   # `miseTask: prime` would be `gate.task-missing` and a red run over a
-  # repository that is fine. If guard ever grows `[tasks.prime]` in mise.toml,
+  # repository that is fine. If gateway ever grows `[tasks.prime]` in mise.toml,
   # this line is the one to add, in the same commit — and `check_mise_task`
   # will then hold the task's `run` string to `entrypoint` below.
   #
@@ -150,7 +150,7 @@ gate:
       # quietly lost six tests is `gate.floor`, which is a failure.
       #
       # 540 is the number for a run with NO Redis, which is what `bin/prime`
-      # does: it never sets `GUARD_REDIS_URL`, so the live tier is always
+      # does: it never sets `GATEWAY_REDIS_URL`, so the live tier is always
       # skipped here. A run WITH Redis prints 555 and clears this floor by 20.
       # The floor is set from the smaller of the two on purpose — a
       # declaration that only holds when an environment variable happens to be
@@ -243,15 +243,15 @@ gate:
       # printed its summary" from "the gate completed".
       match: '^== prime ok \(bun '
     #
-    # NOT ASSERTED HERE, BECAUSE THE FORMAT CANNOT EXPRESS IT, and guard is the
+    # NOT ASSERTED HERE, BECAUSE THE FORMAT CANNOT EXPRESS IT, and gateway is the
     # repository where that matters most. The suite legitimately skips 15 tests
-    # when `GUARD_REDIS_URL` is unset, so no floor on the skip line is
+    # when `GATEWAY_REDIS_URL` is unset, so no floor on the skip line is
     # honest — `minimum` is a LOWER bound, and the failure guard cares about is
     # the skip count going UP (15 → 540, which is what deleting the tier's
     # tests, or converting them to `test.skip`, would look like). A lower bound
     # cannot catch an increase. So the skip count is stated here in prose and
     # enforced in the three places that CAN see it, all pre-existing:
-    #   * `GUARD_REDIS_REQUIRED=true` turns "no Redis" from a skip into a
+    #   * `GATEWAY_REDIS_REQUIRED=true` turns "no Redis" from a skip into a
     #     module-load throw, asserted by the tier itself;
     #   * the `redis` CI job parses the summary and fails on `0 pass` or on any
     #     skip, so the tier is forced there and nowhere else;
@@ -325,10 +325,10 @@ external:
   #     defect to fix rather than a threshold to raise.
   #   * no Redis, and this one is worth reading twice. The live tier
   #     (`src/middleware/rateLimitRedisLive.test.ts`, 15 tests) needs a real
-  #     `redis-server`, and it is gated on `GUARD_REDIS_URL`. It is NOT a
+  #     `redis-server`, and it is gated on `GATEWAY_REDIS_URL`. It is NOT a
   #     requirement of THIS gate: `bin/prime` never sets that variable, so the
   #     tier skips by design and the gate is green. Only the `redis` CI job
-  #     sets `GUARD_REDIS_URL` and `GUARD_REDIS_REQUIRED` and forces it.
+  #     sets `GATEWAY_REDIS_URL` and `GATEWAY_REDIS_REQUIRED` and forces it.
   #     Declaring it as a requirement would be over-claiming a dependency the
   #     gate does not have, and would make `selfContained: false` assert
   #     something false. It is named in the proof block above with the three
@@ -351,7 +351,7 @@ ci:
   # workflow's `run:` bodies and nothing else: the `ci` job calls kit's
   # reusable workflow, which runs install, typecheck and test from kit's own
   # copy of the conventions — the same STEPS, reached by a different command,
-  # and the reason guard keeps a `prime` job at all. The `redis`, `manifest`
+  # and the reason gateway keeps a `prime` job at all. The `redis`, `manifest`
   # and `image` jobs are also outside what this block can see, and all three
   # check things `bin/prime` does not. That residue is the finding, and
   # REPORT-guard-09-gate.md is where it is written down; a declaration that

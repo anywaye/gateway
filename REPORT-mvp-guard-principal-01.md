@@ -1,8 +1,8 @@
 # REPORT — mvp-guard-principal-01
 
 **What an upstream can now learn that it could not before.** A `ROUTE_TABLE`
-entry that declares `principal: ["sub", "github_id"]` now causes guard to send
-that upstream a header, `X-Cafaye-Principal`, carrying a compact JWS that guard
+entry that declares `principal: ["sub", "github_id"]` now causes gateway to send
+that upstream a header, `X-Cafaye-Principal`, carrying a compact JWS that gateway
 signs with its own key over the declared claims and binds to that upstream's base
 URL origin. `POST /v1/pantry/services` arrives at pantry carrying
 `{"sub": "…", "github_id": "583454", "iss": …, "aud": "http://pantry:8080",
@@ -15,7 +15,7 @@ is where it belongs. Two further limits, both named in the README's *Not built
 yet* rather than left to be discovered:
 
 - **No service reads the header.** Not pantry, not identity, nothing in this
-  repository. MD19 asked for both halves written at once; this is guard's half and
+  repository. MD19 asked for both halves written at once; this is gateway's half and
   the verifying half is `pantry`'s, which is the next packet. An assertion
   configured today is minted, forwarded, and dropped — which means the honest
   status of this work is *"the mechanism is proven, nothing consumes it yet."*
@@ -30,7 +30,7 @@ yet* rather than left to be discovered:
 
 `pantry/openapi/v1.yaml` declares **six operations and every one is `get`**. Nobody
 can publish to the registry. The database half is built and merged (`00009`); the
-blocker is that guard physically cannot tell pantry who is calling.
+blocker is that gateway physically cannot tell pantry who is calling.
 
 `src/routes/proxy.ts:96` (at `5a0e9d5`):
 
@@ -45,8 +45,8 @@ a service credential, not a delegation, and no header here asserts who the calle
 was."*
 
 **This is a fact, not a bug, and it is load-bearing.** Forwarding a caller's
-`Authorization` would make guard a confused deputy: the caller authenticates *to
-guard* and then chooses who they are *downstream*. The packet's authority, MD19,
+`Authorization` would make gateway a confused deputy: the caller authenticates *to
+gateway* and then chooses who they are *downstream*. The packet's authority, MD19,
 keeps that rule and rules around it rather than through it.
 
 What was missing was not the rule. It was that `src/index.ts:158-165` puts
@@ -71,12 +71,12 @@ ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
 
 ### The decisions the packet asked me to own
 
-**The signing key's source — guard's own, configured as a file path.**
+**The signing key's source — gateway's own, configured as a file path.**
 The packet said to reuse the JWKS machinery "rather than inventing a second one
 if you can". I reused the *library and the shape* and not the key, because a JWKS
 is public keys by definition and cannot sign. Reusing identity's private key would
 be the dangerous answer: a key that can sign is a key that can mint anything
-identity can mint. So guard holds its own RS256 key, `ASSERTION_SIGNING_KEY_FILE`,
+identity can mint. So gateway holds its own RS256 key, `ASSERTION_SIGNING_KEY_FILE`,
 a path to a PKCS#8 PEM.
 
 *Why a path and not the PEM in a variable:* an environment value appears in
@@ -89,18 +89,18 @@ async, and awaiting it would have made a bad key a 503 on every proxied request,
 the one configuration mistake the repo's rules forbid. **There is no third case.**
 
 *`kid` defaults to the RFC 7638 thumbprint.* Two deployments both calling their
-key `guard-1` is a key set in which an upstream silently verifies against the
+key `gateway-1` is a key set in which an upstream silently verifies against the
 wrong deployment's key. A thumbprint cannot collide. An explicit
 `ASSERTION_SIGNING_KEY_ID` is still accepted for an operator publishing a key set
-by hand, and the trade is stated in the source: a hand-published id is one guard
+by hand, and the trade is stated in the source: a hand-published id is one gateway
 cannot check, which is why it is not the default.
 
 **Claim names — declared per upstream, read from the token.** The table says which
-claims an upstream needs; guard copies those *from the caller's verified token*,
+claims an upstream needs; gateway copies those *from the caller's verified token*,
 not from its typed `Principal`. So `scope` crosses as the space-separated string
-identity signed rather than the array guard parsed it into, and `github_id` —
-which is not a field on `Principal` at all — crosses without guard being taught
-its name. guard is a signer here, not a translator: reshaping a claim would make
+identity signed rather than the array gateway parsed it into, and `github_id` —
+which is not a field on `Principal` at all — crosses without gateway being taught
+its name. gateway is a signer here, not a translator: reshaping a claim would make
 the assertion a *different* claim from the one identity verified.
 
 *A name the token does not carry is omitted, not invented and not refused.* This
@@ -121,7 +121,7 @@ feature additive: no declaration, no header.
 ### Why MD19's first property is enforced three times, on purpose
 
 Property 1 — never on a public route — is refused at boot (`routeTable`) and again
-at the send site (`proxy.ts:assertionFor`), with `assertion.ts` spreading guard's
+at the send site (`proxy.ts:assertionFor`), with `assertion.ts` spreading gateway's
 envelope *before* the declared claims so a declared `aud` could not overwrite it
 even if the reserved-name check were removed.
 
@@ -172,8 +172,8 @@ property of the feature rather than of the default.
 
 Mutation 4 (`...principal.claims`) did not only fail the minimal-claims
 assertion — the failure payload showed `iss: "http://127.0.0.1:52773"` and
-`aud: "guard-test"`, i.e. **the caller's own `iss` and `aud` had overwritten
-guard's envelope**. The mutation is therefore the measurement of why the envelope
+`aud: "gateway-test"`, i.e. **the caller's own `iss` and `aud` had overwritten
+gateway's envelope**. The mutation is therefore the measurement of why the envelope
 is spread first, arrived at before anyone made the argument for the ordering. It is
 recorded in the harness's own header for the next reader.
 
@@ -212,7 +212,7 @@ bites.
 Every one of the 23 new tests is in the new file; no existing test was edited,
 weakened or removed. The 15 skips are unchanged and are all
 `src/middleware/rateLimitRedisLive.test.ts` — the one declared entry in
-`test/noSkips.test.ts`'s allowlist, environment-gated on `GUARD_REDIS_URL`.
+`test/noSkips.test.ts`'s allowlist, environment-gated on `GATEWAY_REDIS_URL`.
 
 **Nothing was skipped.** No shard, no `--no-live`, no opt-out. The one tier this
 machine cannot run is the live Redis tier, and it was already skipping before this
@@ -262,13 +262,13 @@ would add a route to the **public edge of the gateway**: a new operation in
 directions), six `registeredAt` anchors in `account_scope.yml`, and a
 `surface.minimum` change this packet has no standing to make — all of it for
 something no *caller* needs. Upstreams are already configured out of band; they
-receive guard's `token` the same way. The key travels the road the `token` does.
+receive gateway's `token` the same way. The key travels the road the `token` does.
 This is also why `surface.minimum` stays 7.
 
 **No claim beyond what an upstream declared.** MD19 asked for "publisher id and
 the scopes the upstream is declared to need", and the more general form — "which
 claims a given upstream gets" — is what I built, because `github_id` is not a
-field guard knows and teaching it one claim name would be worse than not knowing
+field gateway knows and teaching it one claim name would be worse than not knowing
 any. The generality is one string array.
 
 **No wildcard.** `"*"` is a refusal to boot. It is the one entry that would turn
@@ -282,7 +282,7 @@ that opted into it and be silently unenforced everywhere else. A binding that is
 MD19's word is "upstream", and the origin is what satisfies it, checkable by any
 JWT verifier that has never heard of cafaye.
 
-**Nothing outside `guard` was touched.** `pantry`, `identity`, `site` and `core`
+**Nothing outside `gateway` was touched.** `pantry`, `identity`, `site` and `core`
 are untouched; `worker/guard-v1-me-01` was not merged, branched from, or built
 from — the worktree is on `master` (`5a0e9d5`) as the brief's trap section
 required, verified before a line was written. No containers, images or volumes
@@ -293,12 +293,12 @@ were created or started; this packet is Node and runs no Docker at all.
 1. **The brief's floor (531) does not reproduce; the real figure is 540**, from two
    independent measurements — §5. Worth correcting wherever it is quoted from.
 2. **`exportJWK` on a private `KeyObject` returns the private key.** This is a
-   jose 6.2.12 behaviour, not a guard bug, and it is the kind of thing any future
+   jose 6.2.12 behaviour, not a gateway bug, and it is the kind of thing any future
    cafaye component publishing a key set will get wrong the same way. The fix and
    the tripwire are here; the *finding* belongs to whoever writes the next one.
 3. **A pre-existing documented `account-scope.undeclared` for `GET /v1/me`** —
    already written up in `account_scope.yml` and in
-   `REPORT-identity-account-scope-01.md §6.7`, and `core`'s to fix, not guard's.
+   `REPORT-identity-account-scope-01.md §6.7`, and `core`'s to fix, not gateway's.
    Named here so the `account-scope-check` exit-1 is not mistaken for something
    this packet introduced.
 4. **A proxied `2xx` carries no `RateLimit-*` headers**, because `relay` builds a
@@ -320,7 +320,7 @@ were created or started; this packet is Node and runs no Docker at all.
 ## 8. What I would do next
 
 1. **`pantry`'s verifying half** — read `X-Cafaye-Principal`, verify against
-   guard's key, and expose `current_publisher_id()` from it. Until that lands this
+   gateway's key, and expose `current_publisher_id()` from it. Until that lands this
    packet's output is dropped on the floor, and MD19's "both halves written"
    stands at one.
 2. **The publisher write surface** (`openapi/v1.yaml` operations, router, the two

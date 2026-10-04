@@ -30,7 +30,7 @@
 //     route asks is "everything under here";
 //   * a base URL carrying a path would put the caller's path somewhere nobody
 //     is serving it — the same rule `parseIdentityUrl` applies to identity;
-//   * `/v1/me` is guard's own route, registered before the pass-through, so a
+//   * `/v1/me` is gateway's own route, registered before the pass-through, so a
 //     table claiming it describes a route that can never run;
 //   * a token with a line break in it is header injection through configuration
 //     rather than through a request, which is not a smaller problem;
@@ -38,14 +38,14 @@
 //     carries a `token`, are both refusals for the same reason: a security field
 //     an operator half-configured must not resolve to anything at all. See
 //     `checkPublic`.
-//   * a claim name that is not a claim name, one of the claims guard owns
+//   * a claim name that is not a claim name, one of the claims gateway owns
 //     (`iss`, `aud`, `exp`…), and a `public` entry that also declares
 //     `principal` — see `checkPrincipal` for why the last one is the sharpest
 //     rule in the file.
 import { assertNonEmptyString } from "../middleware/assert";
 import { RESERVED_CLAIMS } from "./assertion";
 
-/** One upstream, and the credential guard attaches when it calls. */
+/** One upstream, and the credential gateway attaches when it calls. */
 export type RouteTarget = {
   /**
    * The service's base URL: http(s), no path, no query, no fragment and no
@@ -57,7 +57,7 @@ export type RouteTarget = {
    */
   baseUrl: string;
   /**
-   * The credential guard presents to this service, as a bearer token.
+   * The credential gateway presents to this service, as a bearer token.
    *
    * Optional, and its absence is meaningful: a service that authenticates
    * nothing (pantry today) is reached with no `Authorization` header at all,
@@ -89,7 +89,7 @@ export type RouteTarget = {
   public?: boolean;
   /**
    * The claims this upstream is declared to need, and therefore the only claims
-   * guard will assert about the caller when it calls.
+   * gateway will assert about the caller when it calls.
    *
    * Optional, and absent means **no assertion is minted at all** — not "an
    * assertion with no claims", which would be a token whose only content is which
@@ -98,15 +98,15 @@ export type RouteTarget = {
    * it never agreed to hold.
    *
    * The names are claim names on the caller's verified token, read from the token
-   * rather than from guard's typed principal, so `scope` crosses as the string
-   * identity signed and `github_id` — which is not a field guard knows — crosses
-   * without guard being taught its name. A name the token does not carry is
+   * rather than from gateway's typed principal, so `scope` crosses as the string
+   * identity signed and `github_id` — which is not a field gateway knows — crosses
+   * without gateway being taught its name. A name the token does not carry is
    * omitted, never invented and never refused: a publisher whose token carries no
    * `github_id` has to reach pantry as *no publisher record*, which is the
    * refusal MD19 wants, rather than as a token that says something untrue.
    *
    * Two values are refused rather than honoured, both in `checkPrincipal`: a name
-   * guard owns (`iss`, `aud`, `exp`…), and an empty list. And a `public` entry
+   * gateway owns (`iss`, `aud`, `exp`…), and an empty list. And a `public` entry
    * that declares this field refuses to boot at all — see `routeTable`.
    */
   principal?: string[];
@@ -153,8 +153,8 @@ export type ResolvedRoute = {
  */
 export const ROUTE_MOUNT = "/v1/*";
 
-/** The one path under the mount that guard itself serves. */
-const GUARD_OWNED = "/v1/me";
+/** The one path under the mount that gateway itself serves. */
+const GATEWAY_OWNED = "/v1/me";
 
 /**
  * A table, validated.
@@ -189,7 +189,7 @@ export function routeTable(table: RouteTable): RouteTable {
     // The contradiction, refused rather than resolved. Both resolutions are
     // wrong in a way an operator cannot see from the running service: honouring
     // `public` hands an anonymous caller an upstream that may be authenticating
-    // guard's calls, and honouring `token` quietly answers 401 to a route the
+    // gateway's calls, and honouring `token` quietly answers 401 to a route the
     // table says is open. What is certain is that nobody reading this table can
     // say which of the two was meant, so it does not boot and the message names
     // both ways out.
@@ -197,11 +197,11 @@ export function routeTable(table: RouteTable): RouteTable {
       throw new RangeError(
         `routeTable: ${key} is declared public AND carries an upstream token, which are two different ` +
           `credentials answering two different questions. "public" is about the CALLER: the prefix is mounted ` +
-          `with no caller credential required. "token" is guard's own credential to the SERVICE, attached on ` +
+          `with no caller credential required. "token" is gateway's own credential to the SERVICE, attached on ` +
           `every call it makes. An entry carrying both is an operator who has not decided which of the two they ` +
           `meant, and choosing here would either hand an anonymous caller a credential-protected upstream or ` +
           `silently require a credential the table says is not required. Drop "token" if the route is meant to be ` +
-          `caller-anonymous and the service takes nothing from guard; drop "public" if the caller must present a ` +
+          `caller-anonymous and the service takes nothing from gateway; drop "public" if the caller must present a ` +
           `credential.`,
       );
     }
@@ -270,7 +270,7 @@ export function isPublicRoute(table: RouteTable, path: string): boolean {
  * mount by sharing a name with an old one.
  *
  * A prefix of exactly `/v1` claims everything under the API surface, including
- * guard's own `/v1/me`. That is allowed, and `/v1/me` is still served by guard:
+ * gateway's own `/v1/me`. That is allowed, and `/v1/me` is still served by gateway:
  * it is registered before the pass-through, so Hono answers it first and the
  * mount never runs. `checkPrefix` refuses the prefix that *is* `/v1/me`,
  * because a table entry that can never fire is a claim, not a configuration.
@@ -342,9 +342,9 @@ function checkPrefix(prefix: string): string {
         `silently forwards nothing.`,
     );
   }
-  if (prefix === GUARD_OWNED) {
+  if (prefix === GATEWAY_OWNED) {
     throw new RangeError(
-      `routeTable: ${GUARD_OWNED} is guard's own route and is served before the pass-through, so a ` +
+      `routeTable: ${GATEWAY_OWNED} is gateway's own route and is served before the pass-through, so a ` +
         `table claiming it describes a route that can never run.`,
     );
   }
@@ -473,9 +473,9 @@ function checkPublic(prefix: string, value: unknown): boolean | undefined {
  *     content is which gateway minted it, which asserts nothing and costs a
  *     signature on every request. An operator who means the first should be able
  *     to type the first.
- *   * **A name guard owns.** `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` are the
+ *   * **A name gateway owns.** `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` are the
  *     envelope, and honouring one would produce a token whose audience or
- *     lifetime the operator chose rather than guard — which is a way to mint an
+ *     lifetime the operator chose rather than gateway — which is a way to mint an
  *     assertion that verifies for a route it was never minted for.
  *     `RESERVED_CLAIMS` is imported from `assertion.ts` rather than written out
  *     here so the two halves cannot drift: a name refused at one end and honoured
@@ -550,11 +550,11 @@ function checkClaimName(prefix: string, value: unknown): string {
   }
   if (RESERVED_CLAIMS.includes(value)) {
     throw new RangeError(
-      `routeTable: ${prefix} principal may not name "${value}", which is guard's own and not the caller's. ` +
+      `routeTable: ${prefix} principal may not name "${value}", which is gateway's own and not the caller's. ` +
         `The issuer, the audience that binds the assertion to this upstream, the lifetime and the correlation id ` +
-        `are set by guard from the route it is calling; an entry that chose them would be minting an assertion ` +
+        `are set by gateway from the route it is calling; an entry that chose them would be minting an assertion ` +
         `that verifies for a route it was never minted for. Declare the caller's own claims instead — "sub", ` +
-        `"account_id", "github_id" — and guard will bind and date it.`,
+        `"account_id", "github_id" — and gateway will bind and date it.`,
     );
   }
 

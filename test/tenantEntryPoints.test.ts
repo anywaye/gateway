@@ -8,9 +8,9 @@
 // routes Hono registered and the signatures `src/store.rs` declared — so a new
 // entry point that forgot its tenant predicate was a new name and failed here.
 //
-// guard has the same problem in a smaller, stranger shape. It holds no account's
+// gateway has the same problem in a smaller, stranger shape. It holds no account's
 // rows: there is no `assets` table and no query that could drop
-// `and account_id = $2`. What guard holds is **state keyed by account** — a
+// `and account_id = $2`. What gateway holds is **state keyed by account** — a
 // rate-limit bucket, a set of API-key records, a browser session — and the ways
 // to *name* an account, which are the ways a boundary can be crossed:
 //
@@ -164,7 +164,7 @@ const ENTRY_POINTS: EntryPoint[] = [
  *   update — the caller changes an account's state
  *   delete — the caller's change removes it
  *
- * `write` is deliberately absent: guard issues no key on any route, so there is
+ * `write` is deliberately absent: gateway issues no key on any route, so there is
  * no request that *creates* account-scoped state for a caller to be refused.
  * That is a real gap in the surface and the README says so — "No endpoint issues
  * a key" — rather than a gap in this table.
@@ -194,7 +194,7 @@ function registeredRoutes(): string[] {
   // serves probes only. Construction validates the issuer and fetches nothing,
   // so this opens no socket — the JWKS is fetched on the first request, and this
   // file makes none.
-  const app = createApp({ jwt: { issuer: "https://identity.example", audience: "guard" } });
+  const app = createApp({ jwt: { issuer: "https://identity.example", audience: "gateway" } });
   return [...new Set(app.routes.map((route) => `${route.method} ${route.path}`))].sort();
 }
 
@@ -235,7 +235,7 @@ function accountScopedStoreMethods(): string[] {
  * Every `status: 403` in production source, and where it is.
  *
  * Read rather than declared, because the claim being made is "the only 403s
- * guard writes are a capability and an origin" and a 403 added anywhere else is
+ * gateway writes are a capability and an origin" and a 403 added anywhere else is
  * exactly the finding this packet is for.
  */
 function forbiddenSites(): string[] {

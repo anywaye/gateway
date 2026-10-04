@@ -13,7 +13,7 @@ instruction built on it turned out to be the substantive half of this packet.
 | Suite | Pass | Fail | **Skip** |
 | --- | --- | --- | --- |
 | `bin/prime` (no Redis — what CI's `prime` job runs) | **430** | 0 | **14** |
-| `bin/prime` with `GUARD_REDIS_URL` set | **444** | 0 | **0** |
+| `bin/prime` with `GATEWAY_REDIS_URL` set | **444** | 0 | **0** |
 | `core` contract checker (`cafaye-contract --core ../core .`) | **0 violations** | — | 1 warning |
 | `core` gate checker (`gate-check`) | **0 failures** | — | 2 warnings |
 | `gate-check --prove` (runs the declared gate) | **green** | — | 2 warnings |
@@ -24,8 +24,8 @@ instruction built on it turned out to be the substantive half of this packet.
 **Pass and skip are separate counts above, as required.** The 14 skips are
 `src/middleware/rateLimitRedisLive.test.ts` and nothing else — unchanged by this
 packet, and I re-measured them rather than inheriting the number. The environment
-variable that exercises them is `GUARD_REDIS_URL`; with it set and
-`GUARD_REDIS_REQUIRED=true` the tier is **14 pass / 0 skip**, measured against a
+variable that exercises them is `GATEWAY_REDIS_URL`; with it set and
+`GATEWAY_REDIS_REQUIRED=true` the tier is **14 pass / 0 skip**, measured against a
 real `redis-server` (v8.6.0, throwaway on 127.0.0.1:6399, since shut down).
 
 The 430 vs 428 difference from `gate.yml`'s header is this packet's two new
@@ -44,7 +44,7 @@ core/VERSION          0.2.0
 core git tag          v0.2.0
 ```
 
-`core/harness/bin/cafaye-contract --core ../core .` against guard, **before**:
+`core/harness/bin/cafaye-contract --core ../core .` against gateway, **before**:
 
 ```
 FAIL core.constraint-unmet cafaye.yml: core: core publishes 0.2.0 and this
@@ -69,10 +69,10 @@ core's manifest schema **fetched from the published URL** (not a local copy), so
 
 ---
 
-## 2. The event claim: did not reproduce. guard has no event surface at all
+## 2. The event claim: did not reproduce. gateway has no event surface at all
 
-> *brief: "guard's cafaye.yml publishes no events under the names core's catalog
-> lists — verify what guard actually publishes/consumes and whether the 0.2
+> *brief: "gateway's cafaye.yml publishes no events under the names core's catalog
+> lists — verify what gateway actually publishes/consumes and whether the 0.2
 > grammar and catalog accept it."*
 
 I checked the source rather than the manifest, because a manifest can only state
@@ -85,14 +85,14 @@ test/jwksServer.ts:108   publish(...next: TestKey[]) {        # rotating test ke
 ```
 
 Those are the only hits and they are a **key set**, not a message bus. There is
-no publisher, no subscriber, no outbox and no bus client anywhere in guard.
+no publisher, no subscriber, no outbox and no bus client anywhere in gateway.
 
-So the real shape is: guard publishes **no** events and consumes **no** events.
+So the real shape is: gateway publishes **no** events and consumes **no** events.
 `consumes: []` is accurate rather than empty-by-omission, `exposes.events` is
 correctly absent, and the 0.2 grammar and catalog accept an empty event surface —
 which is what a gateway that terminates auth and answers requests should look
 like. **No finding here, and nothing to fix.** The brief's phrasing pointed at a
-contract violation; the measurement says guard has no contract on that axis at
+contract violation; the measurement says gateway has no contract on that axis at
 all.
 
 ---
@@ -123,16 +123,16 @@ $ (scratch copy) cafaye-contract --core ../core .     # with exposes.api added
 | `openapi.idempotency-key` | 3 | `registerUser`, `createSession`, `deleteSession` take no `Idempotency-Key` |
 
 **I did not declare `exposes.api`, and here is the reasoning rather than the
-omission.** Declaring it is not a manifest edit; it is publishing guard's HTTP
+omission.** Declaring it is not a manifest edit; it is publishing gateway's HTTP
 surface as a contract, and each of the three families needs a different thing I
 do not own:
 
 1. **The paths are a breaking API change to a live gateway.** Moving
    `/healthz` to `/v1/healthz` renames the endpoint every orchestrator and probe
-   in the fleet hardcodes. `guard`'s own `AGENTS.md` fixes the probe split, and
+   in the fleet hardcodes. `gateway`'s own `AGENTS.md` fixes the probe split, and
    `openapi/v1.yaml` is held to the router **in both directions** by
    `test/openapiDocument.test.ts` — so editing the document without changing
-   router turns guard's own gate red, and changing the router is a spec decision
+   router turns gateway's own gate red, and changing the router is a spec decision
    the manifest already reserves for the manager ("specs are manager-owned").
 2. **The `500` envelope is an open decision this repository recorded itself.** It
    is "open decision 5" in the document's own header, and it needs a change in
@@ -146,7 +146,7 @@ The checker is **green** — exit 0 — and the warning's own text says it "does
 change the exit code". Turning a green-with-an-honest-warning into a red 17 is
 not an improvement, and the alternative (declaring it and leaving 17 red) is
 worse. **The 17 are measured, recorded here, and left for the packet that owns
-guard's HTTP contract.**
+gateway's HTTP contract.**
 
 ### 3.1 One of the 17 is a core bug, reported rather than worked around
 
@@ -168,23 +168,23 @@ pantry     FAIL openapi.paths-are-versioned  /healthz, /readyz     (2 violations
 
 **`pantry`'s *only* two violations in the entire fleet are these two paths.**
 A fully-conforming service fails core's rule for having health and readiness
-probes — the two endpoints every cafaye service has, and the two guard's
+probes — the two endpoints every cafaye service has, and the two gateway's
 `AGENTS.md` describes as deliberate and load-bearing.
 
-**This is a core-side gap, and it is not guard's to fix.** Renaming guard's
+**This is a core-side gap, and it is not gateway's to fix.** Renaming gateway's
 probes under `/v1` to satisfy it would be the workaround the brief forbids: it
 would break a working fleet convention to satisfy a rule that has not considered
 the convention. The fix belongs in core — an exemption for the two probe paths,
 and a line in `openapi-conventions.md` saying which paths are exempt and why.
 Until then, **no service in this fleet with probes can declare `exposes.api`
 cleanly**, which is the second reason the warning is the right state to be in
-for guard today.
+for gateway today.
 
 ---
 
 ## 4. The toolchain lesson: reproduced, then fixed, then red-proved
 
-The brief: *"if guard's gate fails on a wrong-toolchain ruby/node/bun picking up
+The brief: *"if gateway's gate fails on a wrong-toolchain ruby/node/bun picking up
 the system binary, make the gate FAIL LOUDLY naming the pin, not red-herring on
 module errors."*
 
@@ -283,11 +283,11 @@ agreement**.
 
 ## 7. For the manager
 
-1. **The bump is the whole of the version finding, and it is green.** guard now
+1. **The bump is the whole of the version finding, and it is green.** gateway now
    declares what it compiles against. Nothing else in this packet was needed to
    satisfy `core.constraint-unmet`.
 2. **The `openapi.not-declared` warning is a decision for you, not a task.** §3
-   has the measured 17. My recommendation is that guard's next packet own the
+   has the measured 17. My recommendation is that gateway's next packet own the
    HTTP contract (it is the only thing that can move `/healthz` and the `500`
    envelope), and that it do so *with* `exposes.api` declared, not before.
 3. **One core bug, for core's queue:** `openapi.paths-are-versioned` has no

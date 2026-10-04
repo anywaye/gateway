@@ -30,7 +30,7 @@
 // TODO(guard-07): the in-memory store here is per process and is what the tests
 // use. A multi-instance deployment needs one shared store behind this same
 // `ApiKeyStore`, the way `RateLimitStore` has two — and the same packet carries
-// the session store, so "guard's per-process state moves to Redis" is one piece
+// the session store, so "gateway's per-process state moves to Redis" is one piece
 // of work. It is deliberately not written yet rather than written wrongly: a key
 // issued on one replica and invisible on the next one is a credential that fails
 // at random.
@@ -43,7 +43,7 @@ import type { AuthEnv, Principal } from "./jwt";
 // eventually disagree about a scheme.
 import { hasApiKeyScheme } from "./limitKey";
 
-/** What guard hands back when it issues a key. The only time `key` exists. */
+/** What gateway hands back when it issues a key. The only time `key` exists. */
 export type IssuedApiKey = {
   /** The secret. Shown once and never recoverable afterwards. */
   key: string;
@@ -285,7 +285,7 @@ export function createApiKeyAuth(options: ApiKeyAuthOptions): ApiKeyAuth {
     } catch (error) {
       // The store being down is not the caller's fault, and a 401 would send
       // them to rotate a credential that is fine. The reason goes to the log.
-      console.error("guard: could not read the api key store", error);
+      console.error("gateway: could not read the api key store", error);
       return { ok: false, refusal: unavailable() };
     }
 
@@ -334,8 +334,8 @@ export function createApiKeyAuth(options: ApiKeyAuthOptions): ApiKeyAuth {
         // A key whose hash is not stored is a key the caller was told about and
         // cannot use, so this has to be a failure rather than a success with a
         // dangling secret.
-        console.error("guard: could not store a newly issued api key", error);
-        throw new Error("guard: the api key store rejected a new key");
+        console.error("gateway: could not store a newly issued api key", error);
+        throw new Error("gateway: the api key store rejected a new key");
       }
 
       return { key: made.key, prefix: made.prefix, id };

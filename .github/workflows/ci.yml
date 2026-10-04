@@ -1,5 +1,5 @@
 ---
-# The CI path for guard.
+# The CI path for gateway.
 #
 # The shared half is kit's reusable workflow: one `uses:` line, and a fix to the
 # toolchain or the linter reaches this repository on its next run without a PR
@@ -12,7 +12,7 @@
 # red. That is stated rather than worked around: a workflow quietly rewritten to
 # a path that resolves is a workflow nobody reviewed.
 #
-# The jobs below it are guard's, and each one is here because kit cannot own it.
+# The jobs below it are gateway's, and each one is here because kit cannot own it.
 # kit holds conventions; these reach into this repository's own shape.
 #
 # No secrets, no cafaye service is contacted, nothing is published. Release work
@@ -76,7 +76,7 @@ jobs:
             || { echo "bin/prime moved bun.lock — the gate is no longer frozen"; exit 1; }
 
   # ------------------------------------------------------------- the live tier
-  # guard's Redis backend is the one part of the suite that a transcription
+  # gateway's Redis backend is the one part of the suite that a transcription
   # cannot stand in for: `rateLimitRedis.test.ts` runs a JavaScript copy of
   # GCRA_LUA, so the script itself has never been executed by any test in this
   # repository. That tier is environment-gated on a real redis-server, so without
@@ -85,10 +85,10 @@ jobs:
   # It is a separate job, and a separate service, because kit's bun job has no
   # way to start Redis and must not grow one: a reusable workflow that brought up
   # a datastore would be a reusable workflow that decides what every service in
-  # the org needs. guard's counter store is guard's dependency.
+  # the org needs. gateway's counter store is gateway's dependency.
   #
-  # `GUARD_REDIS_REQUIRED=true` is the load-bearing part. The tier skips when
-  # GUARD_REDIS_URL is unset, and a skip is a green run that verified nothing —
+  # `GATEWAY_REDIS_REQUIRED=true` is the load-bearing part. The tier skips when
+  # GATEWAY_REDIS_URL is unset, and a skip is a green run that verified nothing —
   # the failure this packet exists to prevent. Setting the required flag turns
   # "no Redis" from a skip into a failure, so this job cannot pass without having
   # executed the script.
@@ -118,8 +118,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: the live tier runs
         env:
-          GUARD_REDIS_URL: redis://127.0.0.1:6379
-          GUARD_REDIS_REQUIRED: "true"
+          GATEWAY_REDIS_URL: redis://127.0.0.1:6379
+          GATEWAY_REDIS_REQUIRED: "true"
         run: bun test src/middleware/rateLimitRedisLive.test.ts
       - name: the live tier reported passes, not skips
         # `bun test` exits 0 on a fully skipped file, so a green step above is
@@ -128,8 +128,8 @@ jobs:
         # skipped. It is the difference between a checkmark and a claim, and
         # PLAN.md §1 is explicit that a skipped test proves nothing.
         env:
-          GUARD_REDIS_URL: redis://127.0.0.1:6379
-          GUARD_REDIS_REQUIRED: "true"
+          GATEWAY_REDIS_URL: redis://127.0.0.1:6379
+          GATEWAY_REDIS_REQUIRED: "true"
         run: |
           summary="$(bun test src/middleware/rateLimitRedisLive.test.ts 2>&1)"
           echo "$summary"
@@ -179,8 +179,8 @@ jobs:
           PY
 
   # --------------------------------------------------------------------- image
-  # guard ships a Dockerfile, and a Dockerfile that does not build ships
-  # unverified. kit's lint tier does not cover Dockerfiles, so this is guard's.
+  # gateway ships a Dockerfile, and a Dockerfile that does not build ships
+  # unverified. kit's lint tier does not cover Dockerfiles, so this is gateway's.
   # It runs two independent things, and the second is not a third test run:
   # `docker build --target test` executes the suite inside the image, which is a
   # different tree from the one the host ran in.
@@ -192,7 +192,7 @@ jobs:
       - name: the Dockerfile is lint-clean
         # Not skipped, and not left to review. kit-04 found seven Dockerfiles
         # receiving no lint at all, and hadolint is the obvious candidate — so
-        # this job is what makes guard's one of the linted rather than one of the
+        # this job is what makes gateway's one of the linted rather than one of the
         # seven.
         run: |
           docker run --rm -i \
@@ -203,7 +203,7 @@ jobs:
         # `docker compose build` builds the runtime target only, so it does not
         # execute the test stage — buildkit skips a stage the target does not
         # depend on. Naming the target is the whole point.
-        run: docker build --target test --tag cafaye-guard:test .
+        run: docker build --target test --tag cafaye-gateway:test .
       - name: the image ran the repository's tests, not a subset of them
         # The step above is a green build, and a green build is a claim about a
         # file set nobody in this job has read. `docker build --target test`
@@ -215,7 +215,7 @@ jobs:
         # `test/dockerStage.test.ts` holds the COPY list to the repository and
         # fails the build locally when they disagree. This step is the other
         # half, and it is the half that cannot be argued with: the suite emits
-        # every test file it actually discovered (the `GUARD_IMAGE_TEST` lines),
+        # every test file it actually discovered (the `GATEWAY_IMAGE_TEST` lines),
         # and this compares that set against what `find` says the repository
         # has. It reads the built image rather than the Dockerfile, so it also
         # catches a `.dockerignore` rule that drops a directory out of a
@@ -227,9 +227,9 @@ jobs:
         # run that has Redis; the file count cannot.
         run: |
           set -o pipefail
-          docker run --rm --entrypoint bun cafaye-guard:test test 2>&1 | tee /tmp/in-image.log >/dev/null
+          docker run --rm --entrypoint bun cafaye-gateway:test test 2>&1 | tee /tmp/in-image.log >/dev/null
           grep -E '^ *[0-9]+ (pass|skip|fail)$|^Ran [0-9]+ tests' /tmp/in-image.log || true
-          in_image="$(sed -n 's/^GUARD_IMAGE_TEST //p' /tmp/in-image.log | sort -u)"
+          in_image="$(sed -n 's/^GATEWAY_IMAGE_TEST //p' /tmp/in-image.log | sort -u)"
           repository="$(find . -name '*.test.ts' -not -path './node_modules/*' -not -path './.git/*' \
             | sed 's|^\./||' | sort -u)"
           if [ -z "$in_image" ]; then

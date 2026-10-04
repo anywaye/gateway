@@ -4,14 +4,14 @@
 //
 //   1. WHAT GOES OUT. Where the request goes, which of the caller's headers
 //      cross, and — the security content of the routing packet — that the
-//      credential reaching a service is guard's own and never the caller's.
+//      credential reaching a service is gateway's own and never the caller's.
 //   2. WHAT COMES BACK. That a failure from behind the edge is translated, and
 //      that nothing about the service's address, version or stack reaches the
 //      caller.
 //
 // Nothing here opens a socket: the upstream is an injected `fetch` that records
 // what it was handed. That is the same seam `bff/auth.ts` uses and for the same
-// reason — the claims are about what guard *sends*, and a listening server would
+// reason — the claims are about what gateway *sends*, and a listening server would
 // only add the network's opinions to both sides.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createApp } from "../index";
@@ -20,7 +20,7 @@ import { routeTable, type RouteTable } from "./table";
 import { SESSION_COOKIE } from "../bff/auth";
 import { signToken, startJwksServer, testKey, type JwksServer, type TestKey } from "../../test/jwksServer";
 
-const AUDIENCE = "guard-test";
+const AUDIENCE = "gateway-test";
 const ACCOUNT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
 /** One service, with the credential a deployment would configure for it. */
@@ -162,7 +162,7 @@ describe("the destination is configuration, never the request", () => {
     expect(upstream.calls[0]?.url).toBe("http://pantry.test:8080/items");
   });
 
-  test("a path nothing claims is guard's own 404, and no service is contacted", async () => {
+  test("a path nothing claims is gateway's own 404, and no service is contacted", async () => {
     const app = gateway(TABLE, upstream);
 
     for (const path of ["/v1/unknown", "/v1/pantryx/items", "/v1alpha/items", "/v1"]) {
@@ -177,12 +177,12 @@ describe("the destination is configuration, never the request", () => {
     // Two halves, because the defence is two halves.
     //
     // WHATWG URL parsing resolves `.`, `..` and their percent-encoded spellings
-    // (`%2e%2e`) *before* guard sees the path, so `..` cannot survive to be
+    // (`%2e%2e`) *before* gateway sees the path, so `..` cannot survive to be
     // concatenated into an upstream URL. What it can do is climb — and climbing
     // out of the API surface reaches nothing at all, because the mount is
     // `/v1/*` and there is no table entry for `/admin`.
     //
-    // The spellings that DO survive the parser are the ones guard refuses: a
+    // The spellings that DO survive the parser are the ones gateway refuses: a
     // doubled slash, an encoded separator and a broken escape are not paths it
     // will rebuild, and each is a 404 with no service contacted.
     const app = gateway({ ...TABLE, "/v1/billing": { baseUrl: "http://billing.test" } }, upstream);
@@ -206,7 +206,7 @@ describe("the destination is configuration, never the request", () => {
     // The complement, and the reason the case above is a control rather than a
     // blanket refusal: `%2e%2e` is `..` to the URL parser, so this resolves to
     // `/v1/billing/items` and is served by the entry that claims it. The claim is
-    // that the *table* decides, not that guard refuses everything with a dot in
+    // that the *table* decides, not that gateway refuses everything with a dot in
     // it — a proxy that refused those would be a proxy nobody could route with.
     const app = gateway({ ...TABLE, "/v1/billing": { baseUrl: "http://billing.test" } }, upstream);
 
@@ -222,7 +222,7 @@ describe("the destination is configuration, never the request", () => {
   test("a double-encoded dot segment is forwarded as a literal name, re-encoded", async () => {
     // `%252e%252e` decodes once to `%2e%2e` — a name, not a segment — and is
     // re-encoded on the way out. A service that decodes its path twice could
-    // still be walked, but that is the service's own parser and guard has handed
+    // still be walked, but that is the service's own parser and gateway has handed
     // it one segment rather than a path it assembled.
     await gateway(TABLE, upstream).request("/v1/pantry/%252e%252e/admin", {
       headers: { authorization: `Bearer ${await token()}` },
@@ -259,7 +259,7 @@ describe("the destination is configuration, never the request", () => {
 
     expect(upstream.calls[0]?.method).toBe("POST");
     expect(upstream.calls[0]?.body).toBe(`{"name":"oats"}`);
-    // A GET with a body is a request a service has to make sense of, and guard
+    // A GET with a body is a request a service has to make sense of, and gateway
     // would be the one that put it there.
     expect(upstream.calls[1]?.method).toBe("GET");
     expect(upstream.calls[1]?.body).toBe("");
@@ -268,17 +268,17 @@ describe("the destination is configuration, never the request", () => {
 
 // ------------------------------------------------- the credential, and who picks it
 
-describe("the credential on a routed request is guard's", () => {
+describe("the credential on a routed request is gateway's", () => {
   let upstream: ReturnType<typeof recorder>;
 
   beforeEach(() => {
     upstream = recorder();
   });
-  test("a caller's Authorization does not reach the service, and guard's does", async () => {
+  test("a caller's Authorization does not reach the service, and gateway's does", async () => {
     // THE security claim of the routing packet, and the reason it is a test
-    // rather than a comment: guard verifies the caller's token and then presents
+    // rather than a comment: gateway verifies the caller's token and then presents
     // its own. A caller who can set an arbitrary `Authorization` and have it
-    // arrive at pantry has turned guard into a deputy that authenticates them to
+    // arrive at pantry has turned gateway into a deputy that authenticates them to
     // the edge and lets them choose who they are behind it.
     const caller = `Bearer ${await token()}`;
 
@@ -297,7 +297,7 @@ describe("the credential on a routed request is guard's", () => {
 
   test("the caller's Authorization does not reach a service with no configured token either", async () => {
     // The other half, and the one a "just forward it" implementation gets wrong
-    // first: with no token configured, guard sends *no* Authorization header.
+    // first: with no token configured, gateway sends *no* Authorization header.
     // Absence and substitution are different, and only one of them is safe.
     const res = await gateway(TABLE, upstream).request("/v1/quiet/items", {
       headers: { authorization: `Bearer ${await token()}` },
@@ -352,7 +352,7 @@ describe("the credential on a routed request is guard's", () => {
     expect(upstream.calls).toHaveLength(0);
   });
 
-  test("guard's own `/v1/me` is served by guard and reaches no service", async () => {
+  test("gateway's own `/v1/me` is served by gateway and reaches no service", async () => {
     // The mount order, read off the behaviour. `/v1/me` is registered before the
     // pass-through, so Hono answers it first — and the table in this file claims
     // `/v1`, so a mount registered above it would proxy the platform's only
@@ -373,7 +373,7 @@ describe("the credential on a routed request is guard's", () => {
 
 // --------------------------------------------------------------- what comes back
 
-describe("a failure behind the edge is guard's to translate", () => {
+describe("a failure behind the edge is gateway's to translate", () => {
   let upstream: ReturnType<typeof recorder>;
 
   beforeEach(() => {
@@ -563,7 +563,7 @@ describe("a routed call is bounded in time and counted by the limiter", () => {
     const app = createApp({
       routes: TABLE,
       proxy: { fetch: upstream.fetch },
-      rateLimit: { limits: { default: { limit: 2, windowMs: 60_000, policy: "guard-api" }, routes: {} } },
+      rateLimit: { limits: { default: { limit: 2, windowMs: 60_000, policy: "gateway-api" }, routes: {} } },
       jwt: { issuer: identity.issuer, audience: AUDIENCE },
     });
     const bearer = `Bearer ${await token()}`;

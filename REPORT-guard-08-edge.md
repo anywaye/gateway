@@ -21,8 +21,8 @@ The packet is right that a gate without Redis verifies nothing, so:
 redis-server --port 6399 --daemonize yes --save '' --appendonly no \
   --dir ~/.local/state/guard-08-redis --pidfile ~/.local/state/guard-08-redis/redis.pid
 redis-cli -p 6399 ping          # -> PONG
-export GUARD_REDIS_URL=redis://127.0.0.1:6399
-export GUARD_REDIS_REQUIRED=true
+export GATEWAY_REDIS_URL=redis://127.0.0.1:6399
+export GATEWAY_REDIS_REQUIRED=true
 ```
 
 Evidence the tier is real and not skipped:
@@ -36,7 +36,7 @@ $ bun test src/middleware/rateLimitRedisLive.test.ts
 14 pass, 0 skip. And nothing was left behind on the server:
 
 ```
-$ redis-cli -p 6399 --scan --pattern 'guard:rl:*' | wc -l   ->  0
+$ redis-cli -p 6399 --scan --pattern 'gateway:rl:*' | wc -l   ->  0
 $ redis-cli -p 6399 --scan --pattern 'live-*'     | wc -l   ->  0
 ```
 
@@ -65,8 +65,8 @@ The packet calls out the zsh trap explicitly, and it is a real one: after
 ```sh
 mise x -- bash -c '
 set -o pipefail
-export GUARD_REDIS_URL=redis://127.0.0.1:6399
-export GUARD_REDIS_REQUIRED=true
+export GATEWAY_REDIS_URL=redis://127.0.0.1:6399
+export GATEWAY_REDIS_REQUIRED=true
 ./bin/prime 2>&1 | tail -12
 echo "GATE_EXIT=${PIPESTATUS[0]}"
 '
@@ -86,12 +86,12 @@ GATE_EXIT=0
 `pipefail` alone would give the pipeline's status but `[0]` is what the packet
 asks for and is unambiguous.
 
-### `GUARD_REDIS_REQUIRED` is still load-bearing
+### `GATEWAY_REDIS_REQUIRED` is still load-bearing
 
 Confirmed by removing the URL while keeping the requirement:
 
 ```
-$ GUARD_REDIS_REQUIRED=true bun test src/middleware/rateLimitRedisLive.test.ts
+$ GATEWAY_REDIS_REQUIRED=true bun test src/middleware/rateLimitRedisLive.test.ts
  0 pass
  1 fail
  1 error
@@ -372,7 +372,7 @@ $ bun test src/middleware/limitKey.test.ts src/middleware/rateLimit.test.ts
 try {
   return await within(send(...), timeoutMs, ...);
 } catch (error) {
-  console.error("guard: identity call failed", error);
+  console.error("gateway: identity call failed", error);
   return null;
 }
 ```
@@ -383,7 +383,7 @@ like — does not throw. The response arrives, matches none of the documented
 statuses, and the handler falls through to `unusable()`, which returned a
 `Problem` and nothing else.
 
-So the browser got a `503` and guard's log said nothing at all. `unreachable()`
+So the browser got a `503` and gateway's log said nothing at all. `unreachable()`
 carries this in its own comment — *"The URL and the status that produced it are
 in the log either way"* — and `unusable()` exists as a **separate** 503
 precisely so an operator can tell "identity is down" from "identity answered with
@@ -426,7 +426,7 @@ function unusable(target: string, status: number, body?: unknown): Problem {
     : typeof body === "object" ? "a JSON document"
     : typeof body;
 
-  console.error(`guard: identity ${target} answered ${status} (${shape}), which this contract does not cover`);
+  console.error(`gateway: identity ${target} answered ${status} (${shape}), which this contract does not cover`);
   return { status: 503, code: "unavailable", detail: "the authentication service answered with something unusable" };
 }
 ```
@@ -441,7 +441,7 @@ asserts both halves: `identity.test` and `500` are present; `hunter2` and
 The gate output showed a line I did not expect:
 
 ```
-guard: identity http://identity.test:8080/v1/me answered 200 (a JSON document), which this contract does not cover
+gateway: identity http://identity.test:8080/v1/me answered 200 (a JSON document), which this contract does not cover
 ```
 
 Two flaws in my first version:
@@ -508,7 +508,7 @@ the auth gate`, plus `a traversal out of /v1 does not land on a route outside th
 gate`, which asserts a traversal can never reach `/auth/login` and mint a
 session cookie.
 
-**CRLF and header injection: clean, and the reason is the runtime, not guard.**
+**CRLF and header injection: clean, and the reason is the runtime, not gateway.**
 Bun refuses to *construct* a request whose header value carries a line break:
 
 ```
@@ -518,7 +518,7 @@ X-Injected: yes'
 
 so the bytes never arrive. I assert the refusal itself rather than a filter,
 because asserting a filter that does not exist is how a test becomes a claim
-about nothing. The guard-side half is also asserted: `X-Forwarded-For` becomes a
+about nothing. The gateway-side half is also asserted: `X-Forwarded-For` becomes a
 SHA-256 digest inside a bucket name and never reaches a response header.
 
 **Body size: already covered and correct.** `readBounded` enforces 4 KiB at the
@@ -526,7 +526,7 @@ SHA-256 digest inside a bucket name and never reaches a response header.
 how much of the process one request holds, and a lying `Content-Length` does not
 help.
 
-**Header size:** not guard's to enforce; `Bun.serve` owns it. Noted rather than
+**Header size:** not gateway's to enforce; `Bun.serve` owns it. Noted rather than
 claimed.
 
 ### 3. SSRF and open-proxy: **clean**
@@ -553,11 +553,11 @@ reading it:
   operator configuration, validated at construction. No request header or query
   parameter reaches it.
 
-There is no route, header or query parameter in guard that reaches an outbound
+There is no route, header or query parameter in gateway that reaches an outbound
 fetch at all. That is the structural answer, and the tests exist so it stays
 true.
 
-### 5. What guard does on failure: **clean after Defect 3**
+### 5. What gateway does on failure: **clean after Defect 3**
 
 Before this packet, a throwing handler was already covered
 (`a throwing handler is a flat JSON 500 and leaks nothing to the caller`). I
@@ -570,7 +570,7 @@ status but never the body.
 ### 1. Token verification — algorithm pinning, key confusion, unknown `kid`, clock skew
 
 **Clean, and already well covered.** muse-06 closed `alg: none` and the
-HMAC-verified-against-the-RSA-public-key break in muse; guard was not carrying
+HMAC-verified-against-the-RSA-public-key break in muse; gateway was not carrying
 either, and I checked rather than assumed:
 
 - The protected header is read **before any key is fetched**
@@ -594,7 +594,7 @@ either, and I checked rather than assumed:
   internals.
 
 One thing I checked and want to be honest about: **clock skew.** jose's default
-`clockTolerance` is zero, so guard is strict rather than lenient here. That is
+`clockTolerance` is zero, so gateway is strict rather than lenient here. That is
 the safe direction for a security decision — a token that expired 1 second ago is
 refused — and the packet asks for "a stated tolerance that is not zero-by-accident
 and not an hour-by-drift". Zero is currently **unstated**, which I am flagging
@@ -637,7 +637,7 @@ key.
 The tripwire is worth calling out because the packet asks for it directly. It
 reads the suite's own source and fails on any `skip`, `skipIf`, `todo` or `only`
 outside a one-entry allowlist — because the two mechanisms that protect the Redis
-tier (`GUARD_REDIS_REQUIRED` and the CI job's `0 pass` check) protect **one
+tier (`GATEWAY_REDIS_REQUIRED` and the CI job's `0 pass` check) protect **one
 file**, and a second gated tier added tomorrow would arrive with neither. I
 verified the tripwire actually fires rather than trusting a green run:
 
@@ -667,7 +667,7 @@ detect itself is a detector that has to be quietly switched off.
 | Redis tier actually ran | 14 pass, 0 skip; provision and evidence above. |
 | No dependency added | `node:net` is a **runtime builtin**, same category as the existing `node:crypto`. `package.json` and `bun.lock` are byte-identical — `bun install --frozen-lockfile` passes and the `git diff --exit-code -- bun.lock` that CI runs has nothing to see. |
 | `ci.yml` unchanged | Untouched. |
-| Nothing crossed a service boundary | Defects 1–3 are all in guard's own source. No `identity`, `muse` or `core` file was read for a fix or modified. |
+| Nothing crossed a service boundary | Defects 1–3 are all in gateway's own source. No `identity`, `muse` or `core` file was read for a fix or modified. |
 | No test skipped, deleted or pending | 0 skip, asserted by the new tripwire. |
 | No force-push | Not used; the branch is built by ordinary commits on top of `fa84fb7`. |
 
@@ -675,7 +675,7 @@ detect itself is a detector that has to be quietly switched off.
 
 I did **not** add a JWKS `clockTolerance`. jose's default is zero, so a token one
 second expired is refused. The packet asks for "a stated tolerance that is not
-zero-by-accident and not an hour-by-drift", and the honest position is that guard
+zero-by-accident and not an hour-by-drift", and the honest position is that gateway
 currently has no *stated* tolerance at all — it inherits jose's. Widening it is a
 deployment decision whose failure mode is a fleet-wide outage on clock drift, and
 it belongs to the packet that owns the identity contract. Recorded rather than

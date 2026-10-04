@@ -1,7 +1,7 @@
 // Reading a Dockerfile well enough to ask whether it copies what the suite needs.
 //
 // The check built on this is `dockerStage.test.ts`; this module is the part of it
-// that has to be right for that check to mean anything. It lives in guard's own
+// that has to be right for that check to mean anything. It lives in gateway's own
 // `test/` rather than in a shared helper, so the next service with a test stage
 // copies one file and reads it.
 //
@@ -37,7 +37,7 @@
 // built image is the authority on what a build put in it. This reader is the fast
 // half, and it runs before anyone builds anything.
 //
-// ## For kit, not just guard
+// ## For kit, not just gateway
 //
 // The reader is language-agnostic — it knows stages, `COPY` and `.`, and nothing
 // about Bun — so the same two files drop into any of kit's Dockerfile templates.
@@ -91,7 +91,7 @@ export function parseStages(dockerfile: string): Record<string, Stage> {
   const close = (): void => {
     // Reaching the first `FROM` with instructions already collected is the
     // pre-stage: an `ARG` that sets the base image or a build argument, and in
-    // guard's Dockerfile it is where the Bun pin lives.
+    // gateway's Dockerfile it is where the Bun pin lives.
     if (name === null) {
       if (instructions.length > 0) stages[PRE_STAGE] = { base: "", instructions };
     } else {

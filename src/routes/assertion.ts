@@ -1,4 +1,4 @@
-// The principal assertion: guard's own signature over who the caller is, sent to
+// The principal assertion: gateway's own signature over who the caller is, sent to
 // one upstream and to nothing else.
 //
 // ## THE GAP THIS EXISTS TO CLOSE, AND WHY IT IS A FACT RATHER THAN A BUG
@@ -9,7 +9,7 @@
 // not a delegation, and no header here asserts who the caller was."*
 //
 // That rule is correct and load-bearing — forwarding the caller's `Authorization`
-// would make guard a confused deputy — and it is exactly why a publisher write
+// would make gateway a confused deputy — and it is exactly why a publisher write
 // cannot work: pantry's RLS predicates compare against
 // `pantry.current_publisher_id()`, and the request arrives with nothing to
 // compare. The caller is not missing. `src/index.ts` resolved it to a principal
@@ -35,7 +35,7 @@
 // refactor.
 //
 //   1. The caller's token was minted for a *different audience*. Forwarding it
-//      makes guard a credential relay for a token issued to something else, and
+//      makes gateway a credential relay for a token issued to something else, and
 //      the upstream has no way to narrow what it accepts.
 //   2. The claim set would be the caller's whole JWT. MD19's fourth property is
 //      *minimal claims* — what the upstream is declared to need, not the JWT —
@@ -44,14 +44,14 @@
 //
 // ## THE SIGNING KEY, AND WHY IT IS NOT THE JWKS ONE
 //
-// guard already validates RS256 against identity's published JWKS, and the reuse
+// gateway already validates RS256 against identity's published JWKS, and the reuse
 // actually available is the *library and the shape*, not the key: a JWKS is
 // public keys by definition and cannot sign. Inventing a second key store would
 // have been the easy mistake; reusing identity's would have been the dangerous
 // one, because a key that can sign is a key that can mint anything identity can
 // mint.
 //
-// So guard holds **its own** RS256 key, configured as a file path rather than an
+// So gateway holds **its own** RS256 key, configured as a file path rather than an
 // environment value — a private key in an environment variable turns up in
 // `docker inspect`, in `/proc/<pid>/environ` and in any crash dump, and this
 // repository already refuses a base URL carrying a password for exactly the
@@ -63,10 +63,10 @@
 // a new operation in `openapi/v1.yaml`, six `registeredAt` anchors to move in
 // `account_scope.yml`, and a `surface.minimum` this packet has no standing to
 // move — all of it for something no *caller* needs. The upstream is already
-// configured out of band (it needs guard's `token` the same way), so the key
+// configured out of band (it needs gateway's `token` the same way), so the key
 // travels the same road the `token` already travels. MD19 asks for both halves to
 // be written; the verifying half is the next packet's job in pantry, and this is
-// the half guard owes it.
+// the half gateway owes it.
 //
 // ## BOUND TO THE UPSTREAM, AND WHY THE AUDIENCE IS AN ORIGIN
 //
@@ -84,13 +84,13 @@
 //
 // ## MINIMAL CLAIMS, AND WHY THE TABLE DECLARES THEM
 //
-// A route entry names the claims its upstream is declared to need, and guard
+// A route entry names the claims its upstream is declared to need, and gateway
 // asserts those and nothing else:
 //
 //     ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
 //                                      "principal":["sub","github_id"]}}'
 //
-// Two properties follow from the table saying it rather than guard guessing it.
+// Two properties follow from the table saying it rather than gateway guessing it.
 //
 //   * An upstream that declares nothing gets **no assertion at all**. That is the
 //     honest reading of "declared": a service that has not said what it needs has
@@ -103,10 +103,10 @@
 //     has to reach pantry as a missing `github_id` for that to happen.
 //
 // The claims are copied **as the verified token carried them**, read from
-// `principal.claims` rather than from guard's typed `Principal`. So `scope` stays
-// the space-separated string identity signed rather than becoming the array guard
+// `principal.claims` rather than from gateway's typed `Principal`. So `scope` stays
+// the space-separated string identity signed rather than becoming the array gateway
 // parsed it into, and `github_id` — which is not a field on `Principal` at all —
-// crosses without guard having to be taught its name. guard is a signer here, not
+// crosses without gateway having to be taught its name. gateway is a signer here, not
 // a translator: reshaping a claim would make the assertion a *different* claim
 // from the one identity verified, which is a second thing to get right for no
 // gain.
@@ -126,8 +126,8 @@ import type { Principal } from "../middleware/jwt";
  */
 export const ASSERTION_HEADER = "x-cafaye-principal";
 
-/** The issuer guard asserts when nothing is configured: an origin, like identity's. */
-export const DEFAULT_ASSERTION_ISSUER = "https://guard.localhost";
+/** The issuer gateway asserts when nothing is configured: an origin, like identity's. */
+export const DEFAULT_ASSERTION_ISSUER = "https://gateway.localhost";
 
 /**
  * How long an assertion is good for, and how long it may be configured to be.
@@ -143,7 +143,7 @@ export const DEFAULT_ASSERTION_TTL_MS = 120_000;
 export const MAX_ASSERTION_TTL_MS = 600_000;
 
 /**
- * Claims guard owns, and which an entry naming one is refused for.
+ * Claims gateway owns, and which an entry naming one is refused for.
  *
  * These are the envelope: the audience that binds the assertion to an upstream,
  * the lifetime that keeps it short-lived, and the issuer that says which gateway
@@ -158,7 +158,7 @@ export const MAX_ASSERTION_TTL_MS = 600_000;
  */
 export const RESERVED_CLAIMS: readonly string[] = ["iss", "aud", "exp", "nbf", "iat", "jti"];
 
-/** A guard signing key: the pair, and the id upstreams select it by. */
+/** A gateway signing key: the pair, and the id upstreams select it by. */
 export type AssertionKey = {
   /**
    * The `kid`, or empty for "derive it from the key" — see `readAssertionKey`.
@@ -260,9 +260,9 @@ export function createAssertionMinter(options: AssertionOptions): AssertionMinte
 }
 
 /**
- * The claim set: guard's envelope, then the declared claims that exist.
+ * The claim set: gateway's envelope, then the declared claims that exist.
  *
- * `nbf` is deliberately absent. guard is the signer and the audience is one hop
+ * `nbf` is deliberately absent. gateway is the signer and the audience is one hop
  * away, so a `not-before` on a token minted microseconds ago buys a skew window
  * nobody configured and refuses nothing — an upstream that enforces it rejects a
  * token it should have accepted.
@@ -338,11 +338,11 @@ function jti(): string {
  *
  * `keyId` is optional and the default is the RFC 7638 thumbprint of the public
  * key. That is not cosmetic: an operator-invented `kid` that two deployments both
- * call `guard-1` is a key set in which an upstream silently verifies against the
+ * call `gateway-1` is a key set in which an upstream silently verifies against the
  * wrong deployment's key, and a thumbprint cannot collide across keys. An
  * explicit id is still accepted, for an operator who wants a short stable name in
  * a key set they publish by hand — and the trade is that a hand-published id is
- * one guard cannot check, which is the whole reason it is not the default.
+ * one gateway cannot check, which is the whole reason it is not the default.
  */
 export function readAssertionKey(pem: string, keyId?: string): AssertionKey {
   const privateKey = createPrivateKey(pem);
@@ -371,7 +371,7 @@ export function readAssertionKey(pem: string, keyId?: string): AssertionKey {
  * Measured in this repository, not assumed: `exportJWK` given a Node **private**
  * `KeyObject` returns `kty, n, e, d, p, q, dp, dq, qi` — the whole private key,
  * RSA primes included. The first draft of this function exported the private key
- * it had been handed, which would have handed every upstream guard's signing key
+ * it had been handed, which would have handed every upstream gateway's signing key
  * along with the public half, and the key id would still have been correct
  * because RFC 7638 hashes only `e`, `kty` and `n`. So nothing about the token set
  * would have looked wrong.

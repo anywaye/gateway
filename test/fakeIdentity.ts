@@ -9,7 +9,7 @@
  * that reached the real identity would be testing nothing at all.
  *
  * Every call is recorded, including the Authorization header, because the claims
- * this suite makes about guard — "the browser's cookie is never identity's
+ * this suite makes about gateway — "the browser's cookie is never identity's
  * token", "logout revokes the token the store is holding" — are only true if
  * something checks what actually went out on the wire.
  */
@@ -21,9 +21,9 @@ export type RecordedCall = {
   path: string;
   /** The bearer token presented, or null. The subject of most assertions. */
   token: string | null;
-  /** The request body exactly as guard forwarded it, or null. */
+  /** The request body exactly as gateway forwarded it, or null. */
   body: string | null;
-  /** The full URL, so a test can assert guard builds it from IDENTITY_URL. */
+  /** The full URL, so a test can assert gateway builds it from IDENTITY_URL. */
   url: string;
 };
 
@@ -56,7 +56,7 @@ export type FakeIdentity = {
 /**
  * An identity that 404s every path until a test says otherwise.
  *
- * There is no base URL to configure: guard decides where identity lives, and a
+ * There is no base URL to configure: gateway decides where identity lives, and a
  * double that pretended to have an opinion about it could disagree with the
  * options a test is actually asserting.
  */

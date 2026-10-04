@@ -1,8 +1,8 @@
 // The browser-facing half of the gateway: a BFF.
 //
-// A browser talks to guard and to nothing else. It never holds identity's token,
+// A browser talks to gateway and to nothing else. It never holds identity's token,
 // never sees identity's endpoints, and never gets to choose a credential: it
-// holds a session id out of a `__Host-` cookie that guard minted, and guard
+// holds a session id out of a `__Host-` cookie that gateway minted, and gateway
 // swaps that id for the token when a request needs one. A token in a page is a
 // token a cross-site script can read; a session id in an HttpOnly cookie is not.
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -26,9 +26,9 @@ export const DEFAULT_IDENTITY_URL = "http://localhost:8080";
 const DEFAULT_IDENTITY_TIMEOUT_MS = 5_000;
 
 /**
- * The most of a request body guard will hold: an address and a password, and
+ * The most of a request body gateway will hold: an address and a password, and
  * the same 4 KiB identity caps its own bodies at. A registration is well under
- * 1 KB; the rest is room for encoding and for a client that sends a field guard
+ * 1 KB; the rest is room for encoding and for a client that sends a field gateway
  * will not forward.
  */
 const MAX_BODY_BYTES = 4 << 10;
@@ -43,7 +43,7 @@ const IDENTITY = {
 
 /**
  * `fetch`, injectable so the suite never opens a socket. A test double for the
- * dependency beats a listening port: the assertions here are about what guard
+ * dependency beats a listening port: the assertions here are about what gateway
  * sends and what it does with the answer, and a real server would only add the
  * network's opinions to both.
  */
@@ -52,7 +52,7 @@ export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Pro
 export type BffOptions = {
   /**
    * identity's base URL, http(s) and with no path. The four routes above are
-   * appended by guard, which is why this is not `IDENTITY_ISSUER`: the issuer is
+   * appended by gateway, which is why this is not `IDENTITY_ISSUER`: the issuer is
    * the https origin tokens are *verified* against, and this is the service
    * address sessions are *requested* from.
    */
@@ -108,7 +108,7 @@ export function createBffAuth(options: BffOptions): BffAuth {
     } catch (error) {
       // The URL, the status and the socket error are the platform's to know.
       // An anonymous browser is not.
-      console.error("guard: identity call failed", error);
+      console.error("gateway: identity call failed", error);
       return null;
     }
   }
@@ -145,7 +145,7 @@ export function createBffAuth(options: BffOptions): BffAuth {
 
     // Anything else — a 200, a 500, a body that is not a user — is identity
     // saying something this contract does not cover, and guessing at it would
-    // be guard inventing an account.
+    // be gateway inventing an account.
     return problem(c, unusable(`${identityUrl}${IDENTITY.register}`, response.status));
   };
 
@@ -287,7 +287,7 @@ export function identityProbe(options: BffOptions): Probe {
       );
       return response.ok ? "ok" : "unavailable";
     } catch (error) {
-      console.error("guard: identity probe failed", error);
+      console.error("gateway: identity probe failed", error);
       return "unavailable";
     }
   };
@@ -337,7 +337,7 @@ function loginRefusal(c: Context, response: Response, target: string): Response 
 }
 
 /**
- * The caller's body: bytes guard did not touch, as a JSON object, within the cap
+ * The caller's body: bytes gateway did not touch, as a JSON object, within the cap
  * — or null when it is not one of those three things.
  *
  * Only "is this an object" is decided here. Whether an address is deliverable
@@ -371,7 +371,7 @@ const TOO_LARGE = Symbol("body too large");
  * `text()` is the whole body in memory: an unauthenticated caller would then
  * choose how much of this process a single request holds. identity caps its own
  * bodies at 4 KiB, so a request that big is one identity would refuse to read
- * anyway — and refusing it here means guard never held it either.
+ * anyway — and refusing it here means gateway never held it either.
  *
  * A `Content-Length` over the limit is answered from the header alone, so the
  * common case costs no read at all.
@@ -455,7 +455,7 @@ function sessionOf(document: unknown): { token: string; expiresAt: number } | nu
 /**
  * identity's per-field failures, kept only if they are shaped like core's.
  *
- * identity is a trusted dependency, but this array is data guard renders into a
+ * identity is a trusted dependency, but this array is data gateway renders into a
  * page, and a field name is not a place to accept an arbitrary document.
  */
 function fieldErrorsOf(document: unknown): FieldError[] | undefined {
@@ -489,7 +489,7 @@ function isFieldError(value: unknown): value is FieldError {
  *
  *   `Origin`          the fallback for an agent that sends no fetch metadata.
  *                     Compared by host, not by origin: a TLS-terminating proxy
- *                     rewrites the scheme guard sees while the browser's header
+ *                     rewrites the scheme gateway sees while the browser's header
  *                     still says https, and comparing it would 403 every real
  *                     browser. The host is the one the browser addressed the
  *                     request to, and a cross-site requester cannot choose it.
@@ -589,7 +589,7 @@ function unreachable(): Problem {
 }
 
 /**
- * "identity answered with something guard cannot use", and it is written down.
+ * "identity answered with something gateway cannot use", and it is written down.
  *
  * The reason this takes the call's method, path and status rather than nothing
  * is that the alternative was a silent failure. `call()` only logs when the
@@ -624,7 +624,7 @@ function unusable(target: string, status: number, body?: unknown): Problem {
           ? "a JSON document"
           : typeof body;
 
-  console.error(`guard: identity ${target} answered ${status} (${shape}), which this contract does not cover`);
+  console.error(`gateway: identity ${target} answered ${status} (${shape}), which this contract does not cover`);
 
   return { status: 503, code: "unavailable", detail: "the authentication service answered with something unusable" };
 }

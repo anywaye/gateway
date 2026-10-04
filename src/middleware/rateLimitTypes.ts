@@ -1,4 +1,4 @@
-// The contract every rate-limit backend owes guard.
+// The contract every rate-limit backend owes gateway.
 //
 // Split out from `rateLimitStore.ts` so `rateLimitRedis.ts` can depend on the
 // types without pulling in the in-memory implementation, and so the trait is a

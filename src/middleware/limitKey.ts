@@ -81,7 +81,7 @@ export function keySourceOf(c: Context<AuthEnv>, trustedProxies: number): KeySou
 
 export type KeyVariables = AuthEnv["Variables"];
 
-/** What stands in for an address guard could not establish. */
+/** What stands in for an address gateway could not establish. */
 const UNKNOWN = "unknown";
 
 /**
@@ -89,14 +89,14 @@ const UNKNOWN = "unknown";
  *
  * `X-Forwarded-For` is a list the *caller* can write, and the caller can write
  * as much of it as they like. So the number that matters is how many proxies the
- * operator says stand in front of guard, and the entry is read from the RIGHT of
+ * operator says stand in front of gateway, and the entry is read from the RIGHT of
  * the chain: everything to the left of the trusted run is whatever the caller
  * felt like sending. `TRUSTED_PROXIES=2` means two proxies appended to the
  * header, and the address is the second entry from the end — the last one that
  * arrived from something the operator vouches for.
  *
  * With `trustedProxies` at zero the header is not read at all and the answer is
- * the socket peer. That is the honest default: a guard directly exposed to the
+ * the socket peer. That is the honest default: a gateway directly exposed to the
  * internet has no forwarding chain to believe, and believing one anyway is how a
  * caller walks around the limiter by sending a new address per request.
  *
@@ -134,7 +134,7 @@ function forwardedChain(c: Context): string[] {
 /**
  * The socket peer, when the server exposes it.
  *
- * `c.env` is the Bun `Server` when guard is served by `Bun.serve` and undefined
+ * `c.env` is the Bun `Server` when gateway is served by `Bun.serve` and undefined
  * under `app.request()`, which is why a test sees `unknown` here rather than an
  * address: there is no socket, and inventing one would be a fabricated identity.
  */

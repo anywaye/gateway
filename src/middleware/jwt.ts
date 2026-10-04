@@ -8,7 +8,7 @@ import type { MiddlewareHandler } from "hono";
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify, type JWK, type JWTPayload } from "jose";
 import { problem, type Problem } from "../problem";
 
-/** The issuer guard falls back to when nothing is configured. */
+/** The issuer gateway falls back to when nothing is configured. */
 export const DEFAULT_IDENTITY_ISSUER = "https://identity.localhost";
 
 /** Where identity publishes its keys. Fixed, and appended to the issuer. */
@@ -103,7 +103,7 @@ type Header = { ok: true; kid: string } | { ok: false; refusal: Problem };
 export function createJwtVerifier(options: JwtOptions): JwtVerifier {
   const issuer = parseIssuer(options.issuer);
   const audience = parseText(options.audience, "audience");
-  // A path here is allowed: an operator who points guard at a key set somewhere
+  // A path here is allowed: an operator who points gateway at a key set somewhere
   // other than the issuer's own well-known path means it.
   const jwksUrl = options.jwksUrl ? parseHttpUrl(options.jwksUrl, "jwksUrl").href : `${issuer}${JWKS_PATH}`;
   const ttlMs = options.jwksCacheTtlMs ?? DEFAULT_JWKS_CACHE_TTL_MS;
@@ -192,7 +192,7 @@ export function createJwtVerifier(options: JwtOptions): JwtVerifier {
     } catch (error) {
       // identity being down is not the caller's fault, and a 401 would tell
       // them to fix a credential that was fine. The reason goes to the log.
-      console.error("guard: could not fetch the JWKS", error);
+      console.error("gateway: could not fetch the JWKS", error);
       return { refusal: unavailable() };
     }
 
@@ -212,7 +212,7 @@ export function createJwtVerifier(options: JwtOptions): JwtVerifier {
         try {
           set = await load(false);
         } catch (error) {
-          console.error("guard: could not refresh the JWKS", error);
+          console.error("gateway: could not refresh the JWKS", error);
           return { refusal: unavailable() };
         }
       }
@@ -266,7 +266,7 @@ export function createJwtVerifier(options: JwtOptions): JwtVerifier {
           return problem(c, {
             status: 403,
             code: "forbidden",
-            // The scope that is missing is guard's own configuration and is safe
+            // The scope that is missing is gateway's own configuration and is safe
             // to name. The scopes the caller does hold are not echoed back.
             detail: `token is missing the ${required} scope`,
           });
@@ -283,7 +283,7 @@ export function createJwtVerifier(options: JwtOptions): JwtVerifier {
  *
  * This runs before any key is fetched: the algorithm and the key id are
  * attacker-controlled, and an `alg: none` or HS256 token must not be able to
- * make guard call identity. It also means a malformed token costs no network.
+ * make gateway call identity. It also means a malformed token costs no network.
  */
 function decodeHeader(token: string): Header {
   let header: { alg?: unknown; kid?: unknown };

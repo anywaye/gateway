@@ -12,7 +12,7 @@ import {
   type TestKey,
 } from "../../test/jwksServer";
 
-const AUDIENCE = "guard-test";
+const AUDIENCE = "gateway-test";
 
 let identity: JwksServer;
 /** Published by default. */
@@ -313,9 +313,9 @@ describe("requireJwt — refuses everything the contract says to refuse", () => 
   }
 });
 
-describe("requireJwt — the algorithm is guard's decision, not the token's", () => {
+describe("requireJwt — the algorithm is gateway's decision, not the token's", () => {
   test("a rejected algorithm header is refused before any key is fetched", async () => {
-    // An attacker who can pick the header must not be able to make guard call
+    // An attacker who can pick the header must not be able to make gateway call
     // identity: one request, one signature to check, no network.
     const res = await app().request(
       "/private/thing",
@@ -397,7 +397,7 @@ describe("the JWKS cache", () => {
 
 describe("key rotation", () => {
   test("an unknown kid forces one refresh, and the new key then verifies", async () => {
-    // identity has rotated to key-2 while guard's cache holds key-1. This is
+    // identity has rotated to key-2 while gateway's cache holds key-1. This is
     // the only reason a JWKS refresh is allowed on the hot path.
     const gateway = app();
     const stale = await gateway.request("/private/thing", bearer(await validToken()));
@@ -524,7 +524,7 @@ describe("when identity cannot be reached", () => {
   });
 
   test("503 when the JWKS endpoint answers with something that is not a key set", async () => {
-    // An intercepting proxy answering 200 is a shape guard must survive.
+    // An intercepting proxy answering 200 is a shape gateway must survive.
     identity.serveGarbage();
 
     const res = await app().request("/private/thing", bearer(await validToken()));

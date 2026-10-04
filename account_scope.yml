@@ -1,17 +1,17 @@
 version: 1
-service: guard
+service: gateway
 
-# account_scope.yml — every entry point `guard` mounts, and which of them can
+# account_scope.yml — every entry point `gateway` mounts, and which of them can
 # reach another account's data.
 #
 # Checked by cafaye/core's contract harness:
 #
 #     /Users/kaka/Code/any/moon/cafaye/core/harness/bin/account-scope-check .
 #
-# `guard` holds NO customer rows: `kit/reports/tenant-adapter-ts-01/subject-audit.sh`
+# `gateway` holds NO customer rows: `kit/reports/tenant-adapter-ts-01/subject-audit.sh`
 # sweeps every TypeScript service in the fleet for a driver import, a driver
 # declaration and a `.sql` file and finds none in any of them. What it DOES hold
-# is the caller's identity: guard verifies the bearer token, puts the principal on
+# is the caller's identity: gateway verifies the bearer token, puts the principal on
 # the request context, keys the rate limiter by the account in it, and forwards.
 #
 # So this file is not empty and it is not all-false either: one route DOES resolve
@@ -35,7 +35,7 @@ surface:
   # 7 registrations in that file. The assertion packet added NO registration —
   # it did not need one, and an added route is what would have forced this
   # `minimum` to move. See `principal` in `src/routes/table.ts`: the public half
-  # of guard's assertion key is exposed through the minter rather than at
+  # of gateway's assertion key is exposed through the minter rather than at
   # `/.well-known/jwks.json`, precisely so this file does not change.
   minimum: 7
   accountKey: account_id

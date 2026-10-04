@@ -51,7 +51,7 @@ import { ROUTE_MOUNT, type RouteTable } from "./table";
 import type { AuthEnv } from "../middleware/jwt";
 import { signToken, startJwksServer, testKey, type JwksServer, type TestKey } from "../../test/jwksServer";
 
-const AUDIENCE = "guard-test";
+const AUDIENCE = "gateway-test";
 const CALLER = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const PUBLISHER = "583454";
 
@@ -98,7 +98,7 @@ let identity: JwksServer;
 let identityKey: TestKey;
 
 /**
- * guard's OWN signing key, as the configuration path produces it.
+ * gateway's OWN signing key, as the configuration path produces it.
  *
  * Generated with Node rather than with `testKey` so the bytes go through the same
  * `createPrivateKey` path a real PEM takes, which is the thing that makes a
@@ -113,14 +113,14 @@ const signingPem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKe
 const signingKey = readAssertionKey(signingPem);
 
 /**
- * guard's key set, which is the only thing that may verify an assertion.
+ * gateway's key set, which is the only thing that may verify an assertion.
  *
  * Derived from the same PEM the gateway signs with rather than generated beside
  * it: two key pairs that happen to look alike are how a fixture ends up proving
  * nothing, because a token signed by one and verified against the other fails for
  * a reason the assertion has nothing to do with.
  */
-let guardKeys: ReturnType<typeof createLocalJWKSet>;
+let gatewayKeys: ReturnType<typeof createLocalJWKSet>;
 
 beforeAll(async () => {
   identityKey = await testKey("identity-key");
@@ -128,7 +128,7 @@ beforeAll(async () => {
 
   const bare = await exportJWK(createPublicKey(createPublicKey(signingPem).export({ type: "spki", format: "pem" })) as never);
   const kid = await calculateJwkThumbprint(bare as never, "sha256");
-  guardKeys = createLocalJWKSet({ keys: [{ ...bare, kid, alg: "RS256", use: "sig" }] });
+  gatewayKeys = createLocalJWKSet({ keys: [{ ...bare, kid, alg: "RS256", use: "sig" }] });
 });
 
 afterAll(() => identity.stop());
@@ -184,7 +184,7 @@ describe("a public route carries no assertion", () => {
     // The whole header set, not just the one header under test. `/v1/catalog` is
     // a `public` entry, so it cannot carry a `token` (the table refuses the
     // combination), the caller sent no `accept`, and therefore an empty set is
-    // the honest expectation — a `public` route crosses with *nothing* guard
+    // the honest expectation — a `public` route crosses with *nothing* gateway
     // invented. Enumerating is what makes this an assertion about the absence of
     // every header rather than about one name.
     expect([...upstream.calls[0]!.headers.keys()]).toEqual([]);
@@ -334,16 +334,16 @@ describe("the assertion is not the caller's token, byte for byte", () => {
     // second property exists to stop.
     expect(sent).not.toBe(secret);
     expect(`Bearer ${sent}`).not.toBe(secret);
-    // And it is a JWT guard signed, not one identity signed.
+    // And it is a JWT gateway signed, not one identity signed.
     expect(decodeProtectedHeader(sent!).alg).toBe("RS256");
     expect(decodeProtectedHeader(sent!).kid).not.toBe(identityKey.kid);
     expect(await res.text()).not.toContain(secret);
   });
 
-  test("it does not verify against identity's key set, only against guard's", async () => {
+  test("it does not verify against identity's key set, only against gateway's", async () => {
     // The stronger reading of the same property, and the one that would catch a
     // future "let's just re-use the JWKS we already have" edit — which is the
-    // tempting wrong answer, because guard already holds that machinery.
+    // tempting wrong answer, because gateway already holds that machinery.
     //
     // It is deliberately two assertions. A token that verifies under *neither* key
     // set would pass "not the caller's token" and fail every real use, so the
@@ -356,7 +356,7 @@ describe("the assertion is not the caller's token, byte for byte", () => {
 
     const sent = asserted(upstream)!;
     const theirs = createLocalJWKSet({ keys: [identityKey.jwk] });
-    const ours = guardKeys;
+    const ours = gatewayKeys;
 
     await expect(jwtVerify(sent, theirs, { audience: "http://pantry.test:8080" })).rejects.toThrow();
     await expect(jwtVerify(sent, ours, { audience: "http://pantry.test:8080" })).resolves.toBeDefined();
@@ -397,7 +397,7 @@ describe("it does not verify for a different upstream, or after expiry", () => {
     });
 
     const sent = asserted(upstream)!;
-    const keys = guardKeys;
+    const keys = gatewayKeys;
 
     // Positive first, so a refusal below is evidence about the audience rather
     // than about a token that does not verify at all.
@@ -429,7 +429,7 @@ describe("it does not verify for a different upstream, or after expiry", () => {
     const forOther = asserted(upstream, 1)!;
 
     expect(forOther).not.toBe(forPantry);
-    const keys = guardKeys;
+    const keys = gatewayKeys;
     await expect(jwtVerify(forPantry, keys, { audience: "http://other.test:9090" })).rejects.toThrow();
     await expect(jwtVerify(forOther, keys, { audience: "http://other.test:9090" })).resolves.toBeDefined();
     // And the service credential is still what `authorization` carries — two
@@ -449,7 +449,7 @@ describe("it does not verify for a different upstream, or after expiry", () => {
 
     await app.request("/v1/pantry/services", { headers: { authorization: `Bearer ${await callerToken()}` } });
     const sent = asserted(upstream)!;
-    const keys = guardKeys;
+    const keys = gatewayKeys;
 
     const verdict = { issuer: undefined, audience: "http://pantry.test:8080" } as const;
     // One second past `exp`. jose compares against `exp` exclusive, so a token is
@@ -498,7 +498,7 @@ describe("the assertion carries the declared claims and nothing else", () => {
       headers: { authorization: `Bearer ${await callerToken()}` },
     });
 
-    const { payload } = await jwtVerify(asserted(upstream)!, guardKeys, {
+    const { payload } = await jwtVerify(asserted(upstream)!, gatewayKeys, {
       audience: "http://pantry.test:8080",
     });
 
@@ -514,7 +514,7 @@ describe("the assertion carries the declared claims and nothing else", () => {
     // quietly stopped being minimal.
     expect(payload).not.toHaveProperty("account_id");
     expect(payload).not.toHaveProperty("scope");
-    // And the envelope is guard's: an upstream knows who minted it, when, and for
+    // And the envelope is gateway's: an upstream knows who minted it, when, and for
     // how long.
     expect(Object.keys(payload).sort()).toEqual(["aud", "exp", "github_id", "iat", "iss", "jti", "sub"]);
   });
@@ -531,7 +531,7 @@ describe("the assertion carries the declared claims and nothing else", () => {
       headers: { authorization: `Bearer ${await callerToken({ github_id: undefined })}` },
     });
 
-    const { payload } = await jwtVerify(asserted(upstream)!, guardKeys, {
+    const { payload } = await jwtVerify(asserted(upstream)!, gatewayKeys, {
       audience: "http://pantry.test:8080",
     });
 
@@ -583,7 +583,7 @@ describe("the assertion carries the declared claims and nothing else", () => {
   test("a reserved claim name is refused, so an entry cannot mint its own audience", async () => {
     // The check that keeps property 3 from being operator-defeatable: an entry
     // naming `aud` would be choosing which upstream its assertion verifies for,
-    // which is the one thing guard must decide. And the envelope spread in
+    // which is the one thing gateway must decide. And the envelope spread in
     // `assertion.ts` is the second gate on the same property, so removing this
     // refusal does not make the audience writable — it makes the *configuration*
     // silently wrong instead.
@@ -665,14 +665,14 @@ describe("the published key set is the public half and nothing else", () => {
 
   test("the key id defaults to the public key's thumbprint, and an explicit one is kept", async () => {
     // The default cannot be a constant, and it cannot be an operator-invented
-    // string: two deployments both calling their key `guard-1` is a key set in
+    // string: two deployments both calling their key `gateway-1` is a key set in
     // which an upstream verifies against the wrong deployment's key, silently.
     // A thumbprint cannot collide across keys.
     const derived = await createAssertionMinter({ key: signingKey }).publicJwk();
-    const named = await createAssertionMinter({ key: readAssertionKey(signingPem, "guard-one") }).publicJwk();
+    const named = await createAssertionMinter({ key: readAssertionKey(signingPem, "gateway-one") }).publicJwk();
 
     expect(derived.kid).not.toBe(named.kid);
-    expect(named.kid).toBe("guard-one");
+    expect(named.kid).toBe("gateway-one");
     // It is a JWK thumbprint and not a hex digest of something else: 43 base64url
     // characters, no padding.
     expect(derived.kid).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -702,7 +702,7 @@ describe("an anonymous caller to a private route still gets 401", () => {
   test("and a token that does not verify is refused before the signer is reached", async () => {
     // Ordering, stated as an outcome. The bearer gate is registered before the
     // pass-through, so a forged token never produces a mint — and an assertion is
-    // guard's signature, so one arriving from a caller rather than from a verified
+    // gateway's signature, so one arriving from a caller rather than from a verified
     // principal would be the whole confused-deputy problem in one header.
     const upstream = recorder();
 

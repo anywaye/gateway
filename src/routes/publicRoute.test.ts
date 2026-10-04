@@ -41,7 +41,7 @@ import { DEFAULT_LIMIT_TABLE } from "../middleware/limits";
 import { strictTable } from "../../test/limitTable";
 import { signToken, startJwksServer, testKey, type JwksServer, type TestKey } from "../../test/jwksServer";
 
-const AUDIENCE = "guard-test";
+const AUDIENCE = "gateway-test";
 const ACCOUNT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 
 /**
@@ -194,9 +194,9 @@ describe("a non-public entry still answers an anonymous caller with 401", () => 
     expect(upstream.calls[0]?.url).toBe("http://billing.test:8080/invoices");
   });
 
-  test("guard's own route is untouched, and the whole `/v1/*` surface is not opened", async () => {
+  test("gateway's own route is untouched, and the whole `/v1/*` surface is not opened", async () => {
     // The claim "one entry, by name". `/v1/me` is registered before the
-    // pass-through and is served by guard whatever the table says, and an
+    // pass-through and is served by gateway whatever the table says, and an
     // unrouted path under `/v1/` is a 401 rather than a pass-through.
     const upstream = recorder();
     const app = gateway(upstream);
@@ -243,7 +243,7 @@ describe("a public route is still rate limited", () => {
     expect(upstream.calls).toHaveLength(2);
   });
 
-  test("the public prefix spends the `guard-api` budget it shares with the rest of `/v1/`", async () => {
+  test("the public prefix spends the `gateway-api` budget it shares with the rest of `/v1/`", async () => {
     // "Rate limiting does not change" is the packet's own words, and a per-route
     // allowance for a public prefix would be the quiet way to change it.
     //
@@ -282,9 +282,9 @@ describe("a public route is still rate limited", () => {
     const refused = await app.request("/v1/catalog/items");
     expect(refused.status).toBe(429);
     // q is 2 and the name is the shipped one, which together say "the public
-    // prefix is inside `guard-api`" rather than "there is a public allowance".
+    // prefix is inside `gateway-api`" rather than "there is a public allowance".
     expect(refused.headers.get("ratelimit-policy")).toBe(`"${shipped.policy}";q=2;w=${shipped.windowMs / 1000}`);
-    expect(shipped.policy).toBe("guard-api");
+    expect(shipped.policy).toBe("gateway-api");
     expect(upstream.calls).toHaveLength(2);
   });
 
@@ -325,7 +325,7 @@ describe("a public entry does not leak the upstream credential", () => {
 
   test("a private entry's token does not come back to the caller either", async () => {
     // The flag is additive, so the pre-existing rule has to still hold on the
-    // entry that does have a credential: guard attaches it, and the caller never
+    // entry that does have a credential: gateway attaches it, and the caller never
     // learns it. Asserted on the response, not on the absence of an error.
     const upstream = recorder();
 
