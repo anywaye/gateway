@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cafaye/gateway/internal/api"
+	"github.com/cafaye/gateway/internal/auth"
 )
 
 // The pass-through, and the security properties it exists to hold.
@@ -867,7 +868,7 @@ func TestAnAssertionSigningFailureIsGatewayOwns503AndTheServiceIsNotAsked(t *tes
 		// The gate is configured so there IS a principal to assert about; without it
 		// the pass-through has nothing to mint from and correctly sends nothing.
 		Authenticate: func(*http.Request) (*Principal, error) {
-			return &Principal{Sub: "user-1", Claims: map[string]any{"sub": "user-1"}}, nil
+			return &Principal{Sub: "user-1", Claims: auth.ClaimsFrom(map[string]any{"sub": "user-1"})}, nil
 		},
 	})
 	if err != nil {

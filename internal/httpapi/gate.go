@@ -1,11 +1,11 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
 	"github.com/cafaye/gateway/internal/api"
+	"github.com/cafaye/gateway/internal/auth"
 )
 
 // The credential gate, and the one seam the pass-through needs from it.
@@ -16,9 +16,10 @@ import (
 // whether there is a **verified principal** to assert anything about, and whether
 // the route it is about is one an anonymous caller may reach. Both are answers,
 // and neither is a verification. `Authenticate` is the seam verification plugs
-// into, and it is **nil in every configuration this packet can build** — there is
-// no verifier in this repository, and `internal/equivalence` compares the Go
-// gateway against a reference configured with no `jwt` for exactly that reason.
+// into, and it is nil whenever no verifier is configured — which is the shape
+// `internal/equivalence` compares the Go gateway against a reference configured
+// with no `jwt` in, for exactly that reason. A configured `Options.Verifier` fills
+// it; see `New` and `authentication`.
 //
 // ## WHY THE 401 LIVES HERE AND NOT IN THE PACKET THAT PORTED THE VERIFIER
 //
@@ -31,10 +32,11 @@ import (
 // caller to a private route gets 401, and the upstream is never contacted" a
 // property of the wiring rather than of a handler three files down.
 //
-// When the packet that ports RS256 verification arrives it fills in `Authenticate`
-// and nothing else changes: the refusal, the detail string, the status and the
-// envelope are already the reference's, and the equivalence comparison for the 401
-// already runs.
+// When the packet that ports RS256 verification arrived it filled in
+// `Authenticate` and nothing else changed: the refusal, the detail string, the
+// status and the envelope were already the reference's, and the equivalence
+// comparison for the 401 already ran. That is what happened; this file did not
+// change to accommodate it, which is the only evidence the seam was the right shape.
 
 // Authenticate is the credential gate's contract: it establishes who a caller is,
 // or that it cannot.
@@ -56,17 +58,36 @@ type Authenticate func(*http.Request) (*Principal, error)
 // principal on a request — which is the whole point: a `context.WithValue` with a
 // string key is forgeable by anything that imports `context`, and the assertion
 // would then be a signed statement about a caller the gate never verified.
-type principalKey struct{}
-
 // withPrincipal returns a request carrying a verified principal.
+//
+// IT DELEGATES rather than keeping a key of its own, and that used to be
+// different: this file had an unexported `principalKey{}` and wrote the principal
+// under it. That was correct while `Authenticate` had no implementation — the gate
+// and the reader were the only two parties. It stopped being correct when the
+// verifier arrived, because `Require` writes the principal under `auth`'s key, and
+// a pass-through gate that could not see it would verify a token the contract's own
+// routes had already verified, or assert about a caller it had not itself checked.
+//
+// One key, reached through `auth.WithPrincipal`, and `PrincipalOf` is the read. The
+// local key type is gone, which is the point: nothing outside `internal/auth` can
+// write a principal at all any more, and that was always the property — the comment
+// above `principalKey` said a string key would be forgeable by anything importing
+// `context`, and this is the same argument with one fewer key to get wrong.
 func withPrincipal(r *http.Request, principal Principal) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), principalKey{}, principal))
+	return auth.WithPrincipal(r, &principal)
 }
 
 // PrincipalFrom is the verified principal on a request, if there is one.
+//
+// By value rather than by pointer, because the reader is `proxy.go`'s
+// `assertionFor`, which copies a principal into an `AssertionSubject` and must not
+// be able to hand the caller a pointer it could write through.
 func PrincipalFrom(r *http.Request) (Principal, bool) {
-	principal, ok := r.Context().Value(principalKey{}).(Principal)
-	return principal, ok
+	principal := auth.PrincipalOf(r)
+	if principal == nil {
+		return Principal{}, false
+	}
+	return *principal, true
 }
 
 // credentialGate answers 401 for a caller it cannot authenticate, and lets every

@@ -1,31 +1,45 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/cafaye/gateway/internal/auth"
+	"github.com/cafaye/gateway/internal/ratelimit"
 )
 
 // Config is everything `cmd/gateway` needs to serve, as read from the
-// environment: the handler's own configuration, and the address to reach it on.
+// environment: the handler's own configuration, the address to reach it on, and
+// the closer the counter store owns.
 //
-// The two are one value because there is exactly one reader, and splitting them
-// would mean either two readers or a second argument the caller has to thread.
-// They are separate fields because they are separate facts: `Options` is what
-// the gateway serves, `Addr` is how the process is reached, and a test holds
-// that they do not get mixed.
+// # WHY THE CLOSER IS HERE
+//
+// The JWKS cache holds no socket of its own — `net/http` pools them and the process
+// exiting is what discards them. The Redis connection DOES hold one, and
+// `cmd/gateway` must close it on the way out rather than leaking it into a test
+// binary or a graceful restart. So `Config` carries a `Close`, the closers are
+// registered in the one function that knows a subsystem exists, and `Close` is
+// nil-safe so a caller holding a `Config` by value never has to ask whether the
+// field is set.
 type Config struct {
 	// What to build the handler from.
 	Options Options
 
 	// `host:port`, already validated. An empty port would be an unspecified one,
-	// which `cmd/gateway` refuses rather than passing on — see `portFromEnv`.
+	// which `portFromEnv` refuses rather than passing on.
 	Addr string
+
+	// Close releases whatever the configured subsystems hold. Nil means nothing
+	// needs closing, which is the v0 shape.
+	Close func()
 }
 
-// RuntimeOptions builds the configuration from the environment, and with
-// `env.go` it is the only function in this module that reads one.
+// RuntimeOptions builds the configuration from the environment, and with `env.go`
+// it is the only function in this module that reads one.
 //
 // The property is `guard/AGENTS.md`'s and the reason it is worth a function of
 // its own rather than three lines in `cmd/gateway`: *"Configuration arrives as
@@ -36,37 +50,63 @@ type Config struct {
 // with different probe sets — so the property is load-bearing here rather than
 // decorative.
 //
-// # WHAT THIS READS IN THIS PACKET: FIVE VARIABLES, and four of them are the pass-through.
+// # WHAT THIS READS, AND NOT ONE MORE
 //
-// `PORT`, `ROUTE_TABLE`, `ASSERTION_SIGNING_KEY_FILE`, `ASSERTION_TTL_MS` and
-// `ASSERTION_ISSUER` — the last three read only when the first of them is set.
-// Everything else `src/index.ts` reads belongs to a subsystem this packet does not
-// port: `IDENTITY_*` and the JWKS cache to the verifier, `RATE_LIMIT_*` and
-// `TRUSTED_PROXIES` to the limiter, `REDIS_*` to the counter store. Reading them
-// now would be configuration for endpoints that do not exist, and a variable an
-// operator sets that changes nothing is worse than one they cannot set:
-// `IDENTITY_ISSUER` in a compose file would look configured and configure a 404.
+//	PORT                    the listening address
+//	ROUTE_TABLE             the pass-through's table, as one JSON object
+//	ASSERTION_SIGNING_KEY_FILE   the principal minter's key, a path not a PEM
+//	ASSERTION_SIGNING_KEY_ID     the `kid` upstreams select it by
+//	ASSERTION_ISSUER             who minted the assertion
+//	ASSERTION_TTL_MS             how long the assertion is good for
+//	IDENTITY_ISSUER          the expected `iss`, and the base the JWKS path hangs off
+//	GATEWAY_CLIENT_ID        the `aud` every token must be addressed to
+//	IDENTITY_JWKS_URL        an explicit key set, when identity publishes it elsewhere
+//	IDENTITY_JWKS_TTL_MS     how long a fetched key set is reused
+//	RATE_LIMIT_REQUESTS      quota per window
+//	RATE_LIMIT_WINDOW_MS     the window's length
+//	TRUSTED_PROXIES          how much of `X-Forwarded-For` may be believed
+//	REDIS_URL                where buckets are counted, when there is more than one replica
 //
-// So the reader is five variables long and says what comes next, rather than being
-// a table of placeholders. `TestTheRuntimeReaderReadsNoOtherVariable` holds that: it
-// reads this file's own source and fails if a variable outside this set appears in
-// it, so the next packet that adds one adds the assertion with it.
+// The count is the assertion `TestTheRuntimeReaderReadsExactlyTheseVariables`
+// holds, and it is the assertion that makes this function safe to extend: a
+// variable an operator sets that changes nothing is worse than one they cannot
+// set — `IDENTITY_ISSUER` in a compose file would look configured and configure a
+// 404. The next packet that adds a subsystem adds its variables here AND to that
+// test, or the test fails and the packet explains which one.
 //
-// # WHY ROUTING IS WIRED HERE RATHER THAN LEFT UNREACHABLE
-//
-// The first version of this packet left `RuntimeOptions` reading `PORT` alone, which
-// meant `cmd/gateway` served a gateway with **no route table**: the pass-through was
-// there, tested and mutation-proved, and no deployment could reach it. The honest
-// shape of "not yet wired" is a gateway that says so; the dishonest shape is one
-// that accepts a `ROUTE_TABLE` nobody has told it about.
+// There is no `REDIS_PREFIX`: `NewRedisStore` takes a sub-namespace and the
+// reference's `runtimeOptions` never passes one, so reading one would be a
+// variable that configures a thing the reference cannot configure, which is the
+// exact failure this reader exists to prevent. The argument is still there for two
+// gateways sharing one Redis, and it is reached by a caller that builds the store
+// directly.
 //
 // # EMPTY IS UNSET
 //
 // An empty or whitespace-only variable counts as unset, because that is what an
 // unset variable looks like in a compose file. `PORT=` must not be "listen on port
-// zero", which is a different thing and a strange one, and `ROUTE_TABLE=` must not be
+// zero", which is a different thing and a strange one; `ROUTE_TABLE=` must not be
 // "a table with nothing in it" — that is a refusal to boot with a reason, and an
-// operator who wrote it meant to configure something.
+// operator who wrote it meant to configure something; and `IDENTITY_ISSUER=` must
+// not be a malformed issuer rather than an absent one.
+//
+// # THE VERIFIER IS BUILT UNCONDITIONALLY, LIKE THE REFERENCE'S
+//
+// `runtimeOptions` in `src/index.ts` always passes `jwt:` — there is no "unset
+// issuer" state there, because the default is a real issuer. So the Go reader does
+// the same: a gateway started by `cmd/gateway` always verifies tokens, always
+// fetches a key set, and always rate-limits. The shape with none of that is
+// `New(Options{})`, which is what `internal/equivalence`'s `bare` scenario builds
+// and which is the honest v0 gateway.
+//
+// # `ROUTE_TABLE` IS THE ONE THING NOT EVERY CONFIGURATION GETS
+//
+// A table is a routing decision, and the deployments that have not made one are
+// the reason `ROUTE_TABLE` is optional. Everything else above has a default worth
+// having. A gateway with no table answers 404 for everything, which is exactly
+// what `src/index.ts` does when it is handed no `routes`, and it is not a
+// degraded mode: it is a gateway whose operator has not told it where anything
+// goes yet.
 func RuntimeOptions(env Env) (Config, error) {
 	port, err := portFromEnv(env)
 	if err != nil {
@@ -83,35 +123,102 @@ func RuntimeOptions(env Env) (Config, error) {
 		return Config{}, err
 	}
 
-	// No probes are registered here. In the reference, `runtimeOptions` registers
-	// `identity` unconditionally and `redis` when `REDIS_URL` is set — because
-	// both subsystems exist there. Neither does here, so a gateway started by
-	// `cmd/gateway` answers `{"deps":{}}`, which is the document's own words for
-	// "an app built with no probes at all". The first packet that ports the
-	// verifier registers `identity` in this function and nowhere else.
-	//
-	// And no `Authenticate` is set: the verifier does not exist in this packet, so
-	// a gateway started from the environment has NO credential gate and relays an
-	// anonymous request to a private route — which is exactly what `createApp({routes})`
-	// does in the reference, and exactly what `gatedUpstream` compares. The packet
-	// that ports RS256 sets it here and nowhere else.
+	// THE JWKS URL IS RESOLVED HERE, ONCE, and handed to both the verifier and the
+	// readiness probe. That is the whole reason this function is a function: the
+	// probe has to ask the same URL the verifier fetches, and resolving it twice
+	// would be two places where an operator's `IDENTITY_JWKS_URL` could be applied
+	// to one and not the other — a `/readyz` reporting `identity: ok` for a key set
+	// no request will ever use.
+	issuer := orDefault(env("IDENTITY_ISSUER"), auth.DefaultIdentityIssuer)
+	jwksURL := orDefault(env("IDENTITY_JWKS_URL"), issuer+auth.JWKSPath)
+
+	ttl, err := durationFromEnv(env, "IDENTITY_JWKS_TTL_MS", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	verifier, err := auth.New(auth.Options{
+		Issuer:       issuer,
+		Audience:     orDefault(env("GATEWAY_CLIENT_ID"), defaultClientID),
+		JWKSURL:      jwksURL,
+		JWKSCacheTTL: ttl,
+	})
+	if err != nil {
+		return Config{}, err
+	}
+
+	store, redis, closer, err := counterStore(env)
+	if err != nil {
+		return Config{}, err
+	}
+
+	limit, err := intFromEnv(env, "RATE_LIMIT_REQUESTS", ratelimit.DefaultLimit, 1)
+	if err != nil {
+		return Config{}, err
+	}
+	window, err := durationFromEnv(env, "RATE_LIMIT_WINDOW_MS", ratelimit.DefaultWindow)
+	if err != nil {
+		return Config{}, err
+	}
+	proxies, err := intFromEnv(env, "TRUSTED_PROXIES", 0, 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	limiter, err := ratelimit.NewLimiter(ratelimit.Options{
+		Limit:          limit,
+		Window:         window,
+		Store:          store,
+		TrustedProxies: proxies,
+		Exempt:         isProbePath,
+	}, RateLimitRefuser)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
-		Options: Options{Routes: routes, Assert: assertion},
-		Addr:    ":" + strconv.Itoa(port),
+		Options: Options{
+			// THE ORDER IS THE ANSWER. `/readyz` renders `deps` in registration order
+			// because `Options.Probes` is a slice, and the order an operator reads is
+			// identity then redis. A map would sort them — and `redis` sorts BEFORE
+			// `identity` — so `internal/equivalence` would fail on bytes neither side
+			// chose. The substrate's `probeTimeout` made the same point about a sorted
+			// fixture rendering identically either way.
+			Probes:   probeList(jwksURL, redis),
+			Verifier: verifier,
+			Limiter:  limiter,
+			Routes:   routes,
+			Assert:   assertion,
+		},
+		Addr:  ":" + strconv.Itoa(port),
+		Close: closer,
 	}, nil
+}
+
+// CloseResources is idempotent and safe on a zero `Config`, which is why it is a
+// method and not a bare field read at the call site.
+func (c Config) CloseResources() {
+	if c.Close != nil {
+		c.Close()
+	}
 }
 
 // defaultPort is what an unset `PORT` means, and it is `src/index.ts`'s number.
 const defaultPort = "8080"
 
+// defaultClientID is the audience gateway accepts when nothing says otherwise:
+// gateway itself. `DEFAULT_CLIENT_ID` in `src/index.ts`.
+const defaultClientID = "gateway"
+
 // portFromEnv reads `PORT`, or reports the default.
 //
 // A non-numeric or out-of-range port is a refusal to boot rather than a silent
-// fallback to 8080: a gateway that listened somewhere other than where its
-// operator asked is a gateway that is up and unreachable, and the symptom of that
-// is a health check failing against nothing. `strings.TrimSpace` is not used here
-// — see `env.go`'s `trimSpace` for why, and for the empty-is-unset rule this
-// shares with the reference.
+// fallback to 8080: a gateway that listened somewhere other than where its operator
+// asked is a gateway that is up and unreachable, and the symptom of that is a health
+// check failing against nothing.
+//
+// `strings.TrimSpace` is not used here — see `env.go`'s `trimSpace` for why, and for
+// the empty-is-unset rule this shares with the reference.
 func portFromEnv(env Env) (int, error) {
 	raw := trimSpace(env("PORT"))
 	if raw == "" {
@@ -129,8 +236,8 @@ func portFromEnv(env Env) (int, error) {
 		}
 	}
 
-	// `0` parses, so it needs its own refusal rather than being caught by the
-	// range check above. There is no sense in which it is a listening port.
+	// `0` parses, so it needs its own refusal rather than being caught by the range
+	// check above. There is no sense in which it is a listening port.
 	if port == 0 {
 		return 0, fmt.Errorf("%w: PORT must be a whole number between 1 and 65535, got %q — 0 is not a port a process listens on", ErrNotConfigured, raw)
 	}
@@ -144,9 +251,9 @@ func badPort(raw string) error {
 	return fmt.Errorf("%w: PORT must be a whole number between 1 and 65535, got %q", ErrNotConfigured, raw)
 }
 
-// mustAtoi is for the one literal this file parses. A constant that does not
-// parse is a defect in this file rather than a deployment problem, so it panics
-// where it is written instead of returning a wrong port.
+// mustAtoi is for the one literal this module parses. A constant that does not parse
+// is a defect in this file rather than a deployment problem, so it panics where it is
+// written instead of returning a wrong port.
 func mustAtoi(digits string) int {
 	value := 0
 	for _, r := range digits {
@@ -216,6 +323,12 @@ func routesFromEnv(env Env) (RouteTable, error) {
 // every other field here follows — and so is a file that exists and is not a key.
 // There is no third case: a key discovered to be wrong on the first proxied request
 // would be the one configuration mistake here that reads as a 503 on every request.
+//
+// The four are read here rather than by the verifier's packet because the minter is
+// the pass-through's, not the verifier's: it answers a question about the CALLER
+// that a route declares it needs, and a gateway that verified tokens but minted no
+// assertions would forward the identity claims in the token itself — handing an
+// upstream a token it is meant never to see.
 func assertionFromEnv(env Env) (*AssertionMinter, error) {
 	path := trimSpace(env("ASSERTION_SIGNING_KEY_FILE"))
 	if path == "" {
@@ -263,4 +376,209 @@ func assertionTTLFromEnv(env Env) (time.Duration, error) {
 	}
 
 	return time.Duration(milliseconds) * time.Millisecond, nil
+}
+
+// probeList is the registered probes, in the order `/readyz` renders them.
+//
+// `redis` is a `Commands` and nil means "no Redis was configured", so the decision
+// and the probe come from the same fact — a probe list that claimed a Redis no store
+// is using would report `redis: unavailable` for a limiter that is counting in
+// memory, which is a readiness endpoint lying about a healthy deployment.
+func probeList(jwksURL string, redis ratelimit.Commands) []NamedProbe {
+	probes := []NamedProbe{{Name: "identity", Probe: keySetProbe(jwksURL)}}
+	if redis != nil {
+		probes = append(probes, NamedProbe{Name: "redis", Probe: redisProbe(redis)})
+	}
+	return probes
+}
+
+// counterStore is where buckets are counted, or the in-memory one.
+//
+// A `REDIS_URL` is the operator saying there is more than one replica, and the
+// counter has to be shared or the limit is multiplied by the replica count. Without
+// one the in-memory store is the honest answer for a single instance, and it says so
+// in its own source and in the README.
+//
+// It returns the store, the transport for the readiness probe, and the closer. Three
+// values rather than one object because `Store` deliberately has no `Close` and no
+// `Ping` on its interface: closing and pinging are transport concerns, and
+// `Commands` is where the socket is. Nothing else in the repository constructs a
+// Redis store, so there is exactly one caller and exactly one closer.
+func counterStore(env Env) (ratelimit.Store, ratelimit.Commands, func(), error) {
+	url := trimSpace(env("REDIS_URL"))
+	if url == "" {
+		store, err := ratelimit.NewMemoryStore(0)
+		return store, nil, nil, err
+	}
+
+	redis, err := ratelimit.NewLazyRedis(ratelimit.RedisConnectionOptions{URL: url})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// The empty prefix, deliberately: `runtimeOptions` in the reference passes
+	// `prefix: redis.prefix` where `redis.prefix` is a compile-time constant, so the
+	// runtime configuration carries no prefix at all.
+	store, err := ratelimit.NewRedisStore(redis, "")
+	if err != nil {
+		// The lazy connection opened nothing, so there is nothing to close on this
+		// path — and saying so is why the closer is registered AFTER the store builds
+		// rather than before.
+		return nil, nil, nil, err
+	}
+	return store, redis, func() { _ = redis.Close() }, nil
+}
+
+// keySetProbe asks identity whether it can be reached at all.
+//
+// It is the readiness endpoint's whole claim about identity. A `HEAD` would be
+// cheaper and would prove less: an endpoint that answers `200` to a `HEAD` with a
+// login page is the exact failure `isKeySet` in `internal/auth` exists to catch, and
+// a readiness probe that cannot see it reports `identity: ok` for an identity every
+// request will get a `503` from.
+//
+// # IT DOES NOT SHARE THE VERIFIER'S CACHE
+//
+// A probe that read the cache would report what gateway last saw rather than what
+// identity is publishing now, and the difference between those two is a rotated key
+// — which is the one thing a readiness endpoint should notice. It costs one request
+// per `/readyz` call and that is the price of the probe meaning something.
+//
+// # THE CLIENT IS BUILT ONCE PER PROBE, NOT PER CALL
+//
+// `probeTimeout` is the inner bound and `runProbe`'s deadline is the outer one, so
+// this function's two bounds are the reason a hung identity cannot hang `/readyz`
+// twice over. A client per call would be a client per readiness check, which is a
+// connection pool gateway did not ask for.
+func keySetProbe(url string) Probe {
+	client := &http.Client{Timeout: probeTimeout}
+
+	return func(ctx context.Context) error {
+		// The inner bound, because a client with no timeout at all is a probe that can
+		// hang on a socket even after the outer select has given up — and the goroutine
+		// `runProbe` leaked is the cost that is already being paid.
+		ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+		defer cancel()
+
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("identity: the JWKS URL is not requestable: %w", err)
+		}
+
+		response, err := client.Do(request)
+		if err != nil {
+			// The host, the port and the reason go to the log and nowhere else:
+			// `runProbe` turns any error into `unavailable` and no part of this message
+			// reaches a response body.
+			return fmt.Errorf("identity: the JWKS did not answer: %w", err)
+		}
+		defer response.Body.Close()
+
+		if response.StatusCode < 200 || response.StatusCode > 299 {
+			return fmt.Errorf("identity: the JWKS answered %d", response.StatusCode)
+		}
+		return nil
+	}
+}
+
+// redisProbe is `PING`, and it is the whole Redis readiness check.
+//
+// `PING` rather than a script evaluation because the probe's question is "is there a
+// Redis there", and the limiter's own failure mode is fail-OPEN: a Redis that is
+// answering is the condition under which the limit is actually being applied, and
+// the operator who needs to know that is the one watching `/readyz`.
+func redisProbe(commands ratelimit.Commands) Probe {
+	return func(ctx context.Context) error {
+		answered, err := commands.Ping(ctx)
+		if err != nil {
+			return fmt.Errorf("redis: PING did not answer: %w", err)
+		}
+		if !answered {
+			return fmt.Errorf("redis: PING answered something that is not PONG")
+		}
+		return nil
+	}
+}
+
+// isProbePath is the limiter's exemption, and it is `ProbePaths` rather than a second
+// list — a second list is a list that goes stale, and `ProbePaths` is already held to
+// `openapi/v1.yaml` by `TestTheTwoProbeOperationsAreTheOnesWithNo429`.
+func isProbePath(path string) bool {
+	_, exempt := ProbePaths[path]
+	return exempt
+}
+
+// orDefault is `env.X?.trim() || DEFAULT`, and the `||` is why it is here rather than
+// `trimSpace(x)` followed by a zero check: an empty string and a whitespace-only one
+// are the same answer in the reference and they are the same answer here.
+func orDefault(value, fallback string) string {
+	if trimmed := trimSpace(value); trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
+// intFromEnv reads a whole number with a floor, and refuses anything else.
+//
+// `RATE_LIMIT_REQUESTS=0` has to be a refusal to boot rather than a surprise on the
+// first request of the week, and `TRUSTED_PROXIES=-1` has to be a refusal to boot
+// rather than a silent "treat it as zero": a negative count read as zero means keying
+// on the socket peer, which is safe, and an operator who typed `-1` did not mean that.
+func intFromEnv(env Env, name string, fallback, floor int) (int, error) {
+	raw := trimSpace(env(name))
+	if raw == "" {
+		return fallback, nil
+	}
+
+	// Bounded by a `1e9` ceiling rather than an overflow check: a gateway refusing to
+	// boot on a number nobody could rate-limit with is a better answer than one that
+	// wraps into a small positive number.
+	value := 0
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return 0, badNumber(name, raw, floor)
+		}
+		value = value*10 + int(r-'0')
+		if value > 1_000_000_000 {
+			return 0, badNumber(name, raw, floor)
+		}
+	}
+	if value < floor {
+		return 0, badNumber(name, raw, floor)
+	}
+	return value, nil
+}
+
+// durationFromEnv reads a count of MILLISECONDS into a `time.Duration`, or the
+// fallback.
+//
+// Milliseconds because that is the unit `IDENTITY_JWKS_TTL_MS` and
+// `RATE_LIMIT_WINDOW_MS` use, and because a Go duration written into an environment
+// variable is a number with an implied unit nobody can read out of a compose file.
+//
+// The fallback is a `time.Duration` and not a millisecond count, which is the one
+// asymmetry with the reference's `wholeNumber(env.X, DEFAULT.windowMs, …)`: the Go
+// default is written where it is declared as a duration, so a reader comparing the two
+// files sees the same number in two different types rather than two different numbers
+// in one type. That is the trade, and it is a trade — the alternative is a fallback
+// written in milliseconds in a file where every other duration is written as one.
+func durationFromEnv(env Env, name string, fallback time.Duration) (time.Duration, error) {
+	milliseconds, err := intFromEnv(env, name, -1, 0)
+	if err != nil {
+		return 0, err
+	}
+	if milliseconds < 0 {
+		return fallback, nil
+	}
+	return time.Duration(milliseconds) * time.Millisecond, nil
+}
+
+// badNumber is one error for every unreadable number, so the four call sites above say
+// the same thing and there is one sentence to change. It names the variable and
+// nothing the operator did not type: no suggestion, no range, no example.
+func badNumber(name, raw string, floor int) error {
+	if floor == 0 {
+		return fmt.Errorf("%w: %s must be a whole number >= 0, got %q", ErrNotConfigured, name, raw)
+	}
+	return fmt.Errorf("%w: %s must be a whole number >= %d, got %q", ErrNotConfigured, name, floor, raw)
 }
