@@ -214,12 +214,43 @@ export function createApp(options: AppOptions = {}): Hono<AuthEnv> {
   // it is the price of a public catalog read; it is documented in the README
   // rather than designed around, because the alternative is a credential every
   // anonymous visitor has to be handed.
+  //
+  // THE BODY BELOW IS THREE STATEMENTS AND NOT FOUR, AND THE FOURTH ONE WAS A
+  // BLANK LINE. That is not tidiness; it is `account_scope.yml`'s `me` row, and
+  // losing it costs this file its only account-scoped entry point.
+  //
+  // core's checker verifies `me` by reading the `app.use` mounts registered ABOVE
+  // the row's own line and looking for `accountFrom.via` on the mount's line or
+  // within `HANDLER_WINDOW` (3) lines below it — the middleware BODY is on the
+  // lines after the `app.use(`, so a window of zero would read every gate as
+  // mounting nothing. MD19's public-prefix exception added a fourth statement to
+  // this body, `jwt.requireJwt` fell to line 223, and `chain_gate` stopped seeing
+  // it. Measured, same rows either side, one blank line:
+  //
+  //   with the blank line:  FAIL account-scope.scoping-bypassed: me: registered
+  //                         at src/index.ts:247, which does not go through
+  //                         requireJwt
+  //   without it:           OK, 1 account-scoped, 0 failures
+  //
+  // So the body has no blank line in it and `jwt.requireJwt` sits on the last line
+  // the window reads. THE MARGIN IS ZERO and that is the shape of the risk: a
+  // fourth guard on this mount puts the call one line out of reach, `me` goes
+  // red, and a reader who does not know about the window reads a correctly gated
+  // route as an ungated one. `account-scope.scoping-bypassed` firing here is
+  // loud and correct — the alternative, mounting the body by a bare symbol so the
+  // window has nothing to read, turns the check off rather than satisfying it.
+  //
+  // IT IS A WEAKNESS IN CORE, NOT A PROPERTY OF THIS GATE, and it belongs there:
+  // a bounded window is the right idea (an unbounded one would find the
+  // middleware for some other route further down and call a bypass covered), and
+  // three lines is simply too few for a gate with two exceptions in front of the
+  // call. REPORT-gateway-account-scope-ratchet-01.md §5 records it as a
+  // recommendation rather than working around it silently.
   const jwt = options.jwt ? createJwtVerifier(options.jwt) : null;
   if (jwt) {
     app.use("/v1/*", async (c, next) => {
       if (c.get("principal")) return next();
       if (routes !== null && isPublicRoute(routes, new URL(c.req.url).pathname)) return next();
-
       return jwt.requireJwt(c, next);
     });
   }
