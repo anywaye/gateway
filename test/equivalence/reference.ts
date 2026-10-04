@@ -15,23 +15,28 @@
 //
 // `src/index.ts` only listens under `import.meta.main`, and its `runtimeOptions`
 // reads a configuration out of the environment that registers an identity and,
-// with `REDIS_URL`, a Redis — neither of which this packet ports. Comparing
-// against that would compare the Go gateway with a configuration it cannot be
-// built in, and every difference would be about the missing subsystems rather
-// than about the substrate.
+// with `REDIS_URL`, a Redis — neither of which the routing scenarios need.
+// Comparing against that would compare the Go gateway with a configuration it
+// cannot be built in, and every difference would be about the missing subsystems
+// rather than about the substrate.
 //
 // So this file names the configurations explicitly, in one place, and both sides
 // are built from the same list. A scenario added here is a scenario the Go side
-// has to have an answer for; `bin/equivalence`'s runner refuses a scenario the
-// Go side does not know, which is what keeps the two halves of this comparison
-// from drifting apart into two lists that each look complete.
+// has to have an answer for; the runner refuses a scenario the Go side does not
+// know, which is what keeps the two halves of this comparison from drifting apart
+// into two lists that each look complete.
 //
-// ## IT IS NOT A TEST FILE
+// ## THE UPSTREAM, AND WHY IT IS AN ENVIRONMENT VARIABLE
 //
-// Deliberately not `*.test.ts`: `bun test` must not try to run it, and
-// `test/dockerStage.test.ts` counts the repository's test files and holds the
-// image's COPY list to that count. A file named `*.test.ts` here would change a
-// number that means something.
+// `GATEWAY_EQUIVALENCE_UPSTREAM` names a recording service the runner started. Both
+// sides are pointed at the SAME process, so "the same request reached the same
+// upstream" is a comparison rather than two inferences — which is the only way to
+// compare the part of the security core that is not in a response body: which
+// headers crossed, and what the caller's path was rebuilt into.
+//
+// It is a refusal rather than a default when unset. A routing scenario with no
+// upstream would forward to nothing and compare two 503s, which looks like a pass
+// and is the failure mode this file exists to prevent.
 import { createApp, type AppOptions, type ProbeStatus } from "../../src/index";
 import type { BffOptions } from "../../src/bff/auth";
 
@@ -117,8 +122,8 @@ function scriptedIdentity(overrides: Record<string, () => Promise<Response>> = {
   };
 }
 
-// One named configuration. Both sides are handed the same name and must build
-// the same thing from it.
+// One named configuration. Both sides are handed the same name and must build the
+// same thing from it.
 export const SCENARIOS: Record<string, AppOptions> = {
   // Nothing configured. `createApp({})` registers the two probes and
   // `app.notFound`, and nothing else — every other operation in the document is
@@ -132,7 +137,7 @@ export const SCENARIOS: Record<string, AppOptions> = {
     // `ProbeStatus` and not a bare string literal: `async () => "ok"` widens to
     // `Promise<string>` under `strict`, which is a type error rather than a
     // behaviour, and a reference that does not typecheck is a reference CI will
-    // not build.
+  // not build.
     probes: { identity: async (): Promise<ProbeStatus> => "ok" },
   },
 
@@ -145,8 +150,8 @@ export const SCENARIOS: Record<string, AppOptions> = {
     probes: {
       // Insertion order is the response order, and these three names are
       // deliberately NOT in alphabetical order — a sorted list would render
-      // identically whether the gateway preserves insertion order or sorts, and
-      // the property would be untested. `internal/equivalence/scenarios.go`
+      // identically whether the gateway preserves insertion order or sorts, and the
+      // property would be untested. `internal/equivalence/scenarios.go`
       // declares the same three names in the same order and says why.
       redis: async (): Promise<ProbeStatus> => "ok",
       identity: async () => {
@@ -239,6 +244,63 @@ export const SCENARIOS: Record<string, AppOptions> = {
   },
 };
 
+// The route table the two routing scenarios share, read out of the environment.
+//
+// Three entries and three different shapes, in the same order
+// `internal/equivalence/scenarios.go` declares them:
+//
+//   * `/v1/pantry` — no credential. An entry whose absence of a token is
+//     meaningful: the upstream must see NO `Authorization` at all.
+//   * `/v1/pantry/imports` — a service credential, and a nested prefix so the
+//     longest match wins.
+//   * `/v1/catalog` — `public: true`. No token and no claims, which is the shape
+//     MD18 ruled and the only way to answer without a caller credential.
+//
+// No entry declares `principal`. The assertion's four properties are covered by
+// `internal/httpapi`'s own suite; minting one here would need a signing key on both
+// sides and produce a `jti` that differs per mint, which cannot be compared byte for
+// byte. That limit is stated in the report rather than hidden here.
+function routes(): AppOptions["routes"] {
+  const upstream = process.env.GATEWAY_EQUIVALENCE_UPSTREAM?.trim();
+  if (!upstream) {
+    throw new Error(
+      "reference: GATEWAY_EQUIVALENCE_UPSTREAM is not set, so a routing scenario would " +
+        "forward to nothing and compare two 503s — which looks like a pass. The runner " +
+        "starts a recording upstream and names it here.",
+    );
+  }
+
+  return {
+    "/v1/pantry": { baseUrl: upstream },
+    "/v1/pantry/imports": { baseUrl: upstream, token: "equivalence-service-token" },
+    "/v1/catalog": { baseUrl: upstream, public: true },
+  };
+}
+
+const probeForRouting = { redis: async (): Promise<ProbeStatus> => "ok" };
+
+// A route table with **no credential gate**, which is the reference's own state
+// when no `jwt` option is configured: `createApp` does not register the token gate,
+// so an anonymous request is relayed. That is the configuration in which the
+// pass-through's own answers can be compared with nothing above them to soften a
+// difference.
+SCENARIOS.routedUpstream = { probes: probeForRouting, routes: routes() };
+
+// The same table with the gate in front of it, which is where the standing 401
+// comes from: an anonymous caller to a private route, a public route that still
+// answers, and a probe that still answers an orchestrator with no credential.
+//
+// The verifier is configured but never asked to verify anything: no case in the
+// comparison carries a bearer token, so `requireJwt` refuses before it reads a key
+// set and no JWKS is ever fetched. That is deliberate — the point is the gate's
+// ANSWER and its POSITION, and a token that verified would need a key set both sides
+// could reach, which is the auth packet's comparison to make.
+SCENARIOS.gatedUpstream = {
+  probes: probeForRouting,
+  routes: routes(),
+  jwt: { issuer: "https://identity.localhost", audience: "gateway" },
+};
+
 // `GATEWAY_EQUIVALENCE_SCENARIO` names the scenario rather than argv, so the
 // runner and the process agree through one channel and the command line carries
 // only the port. An unknown name is a refusal rather than a fallback: silently
@@ -260,8 +322,8 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
   process.exit(2);
 }
 
-// The readiness line the runner waits for. It goes to stdout because that is the
-// only channel a runner reading a subprocess's output has, and it is printed
+// The readiness line the runner waits for. It goes to stdout because that is
+// the only channel a runner reading a subprocess's output has, and it is printed
 // AFTER `Bun.serve` so its arrival means the socket is open — a runner that slept
 // instead would be a race that passes on a fast machine and fails on a slow one.
 const server = Bun.serve({ port, fetch: createApp(options).fetch });

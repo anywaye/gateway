@@ -581,17 +581,24 @@ func writeV0NotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeRawJSON writes a body this package has already encoded. It exists so the
-// two places that need key order have an honest name, rather than reaching for
+// places that need key order have an honest name, rather than reaching for
 // `writeJSON` and passing a string that reads like an oversight.
 //
 // The CONDITIONAL content type is the same rule `writeJSON` keeps, and it was
-// FOUND HERE rather than assumed: `writeProblem` sets `application/problem+json`
-// and then calls this, and an unconditional `Set` overwrote it with
+// FOUND HERE rather than assumed: a caller sets `application/problem+json` and
+// then calls this, and an unconditional `Set` overwrote it with
 // `application/json`. The body was byte-identical to the reference's and the media
 // type was not, so every problem document in the service would have been served
-// with the type that says "this is not a problem document" — and a test that
+// with the type that says "this is not a problem document" -- and a test that
 // decodes the body and stops there never sees it. `internal/equivalence` does, as a
 // `Content-Type` mismatch on otherwise identical bytes.
+//
+// THE COUNT IS TWO, and it is two because the two packets that each found this bug
+// separately each added a caller: the BFF packet's `writeProblem` and the proxy
+// packet's `writeProblemBody`. Both set a media type before calling this, and both
+// would have had it overwritten. Neither packet could see the other's caller,
+// which is why both reported the same defect with a comment claiming there was
+// only one place -- and why this says two.
 func writeRawJSON(w http.ResponseWriter, r *http.Request, status int, body string) {
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/json")

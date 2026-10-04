@@ -645,11 +645,17 @@ func TestTheShapeOfAnAnswerTellsJsonFromNullFromText(t *testing.T) {
 	}
 }
 
-// An upstream that answers without a content type must not have one invented for
-// it. Go's writer sniffs the first bytes of a body whose type is unset, so a relayed
-// error page would arrive labelled by `net/http` — a header neither the service nor
-// gateway chose, and one the reference does not send.
-func TestAResponseWithNoContentTypeIsNotGivenOne(t *testing.T) {
+// An upstream that answers without a content type gets `application/octet-stream`,
+// and not `text/plain; charset=utf-8` sniffed out of the body by `net/http` and not
+// nothing either.
+//
+// The reference's answer was measured: `new Response(body, {status, headers})` with
+// no content type in `headers` reaches the caller as `application/octet-stream`
+// under Bun. Go has three possible answers here — the service's, `octet-stream`, and
+// whatever `net/http` guesses from the first 512 bytes — and the check exists to say
+// which one this port picks, because a relayed body whose type changed under it is a
+// difference a client that switches on the content type would see.
+func TestAResponseWithNoContentTypeIsRelayedAsOctetStreamNotSniffed(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
 		// `Header()["Content-Type"]` with no values is the only way to write a
@@ -662,8 +668,8 @@ func TestAResponseWithNoContentTypeIsNotGivenOne(t *testing.T) {
 	rec := ask(t, Options{Routes: RouteTable{"/v1/pantry": {BaseURL: service.Origin()}}},
 		http.MethodGet, "/v1/pantry/x", nil)
 
-	if got := rec.Header().Get("Content-Type"); got != "" {
-		t.Errorf("Content-Type is %q, want nothing: neither the service nor gateway chose a type and Go must not guess one", got)
+	if got := rec.Header().Get("Content-Type"); got != relayedUntyped {
+		t.Errorf("Content-Type is %q, want %q — and specifically not `text/plain; charset=utf-8`, which is `net/http` guessing from the body", got, relayedUntyped)
 	}
 	if got := rec.Body.String(); got != "plain text, deliberately untyped" {
 		t.Errorf("the body is %q", got)

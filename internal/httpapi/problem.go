@@ -112,94 +112,124 @@ func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 
 	traceID := newTraceID()
 
-	// HAND-RENDERED, in the reference's field order, and that is the whole reason
-	// this is not `writeJSON(w, r, int(p.Status), api.Problem{…})`.
-	//
-	// `api.Problem` declares its fields ALPHABETICALLY — `oapi-codegen` emits a
-	// struct in the order it finds them in the document's `properties` map, and
-	// that is sorted — so marshalling it writes
-	//
-	//	{"code":…,"detail":…,"instance":…,"status":…,"title":…,"trace_id":…,"type":…}
-	//
-	// where `src/problem.ts` writes
-	//
-	//	{"type":…,"title":…,"status":…,"detail":…,"instance":…,"code":…,"trace_id":…}
-	//
-	// and `internal/equivalence` compares bodies BYTE FOR BYTE. Every problem
-	// document in this service differed from the reference at byte 2, and not one of
-	// them differed in anything a client can read.
-	//
-	// It went unnoticed because this envelope was PORTED BUT NOT YET REACHABLE — the
-	// substrate packet wrote the document for five operations that all declined — so
-	// the first packet to make a rejection reachable is the one that found it. That
-	// is worth recording as a shape: an envelope nothing reaches is an envelope
-	// nothing has compared.
-	//
-	// `src/index.ts`'s `{deps: …}` had the same problem and the same fix, which is
-	// `orderedDeps`, and between them these are the only two places this repository
-	// builds JSON as text.
-	var b strings.Builder
-	b.WriteString(`{"type":`)
-	writeJSONString(&b, problemTypeBase+string(p.Code))
-	b.WriteString(`,"title":`)
-	writeJSONString(&b, title)
-	b.WriteString(`,"status":`)
-	b.WriteString(strconv.Itoa(int(p.Status)))
-	b.WriteString(`,"detail":`)
-	writeJSONString(&b, p.Detail)
-	// The path, never the query: a caller who put a credential in one should not
-	// find it echoed back in an error body.
-	b.WriteString(`,"instance":`)
-	writeJSONString(&b, r.URL.Path)
-	b.WriteString(`,"code":`)
-	writeJSONString(&b, string(p.Code))
-	b.WriteString(`,"trace_id":`)
-	writeJSONString(&b, traceID)
-
-	// `errors` LAST and only for a 422, so the key is absent rather than empty: a
-	// client rendering `errors` must be able to tell "no fields failed" from "this
-	// response is not about fields".
-	//
-	// `field` before `code`, and NOT alphabetically: `api.FieldError`'s generated
-	// order is `code, field` for the reason `api.Problem` is alphabetical, and the
-	// reference's literal is `{ field, code }`.
-	if p.Status == api.N422 && len(p.Errors) > 0 {
-		b.WriteString(`,"errors":[`)
-		for i, field := range p.Errors {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			b.WriteString(`{"field":`)
-			writeJSONString(&b, field.Field)
-			b.WriteString(`,"code":`)
-			writeJSONString(&b, field.Code)
-			b.WriteByte('}')
-		}
-		b.WriteByte(']')
+	body := api.Problem{
+		Type:   problemTypeBase + string(p.Code),
+		Title:  title,
+		Status: p.Status,
+		Detail: p.Detail,
+		// The path, never the query: a caller who put a credential in one
+		// should not find it echoed back in an error body.
+		Instance: instanceOf(r),
+		Code:     p.Code,
+		TraceID:  traceID,
 	}
-	b.WriteByte('}')
+	// Set last and only for a 422, so the key is absent rather than empty: a
+	// client rendering `errors` must be able to tell "no fields failed" from
+	// "this response is not about fields".
+	if p.Status == api.N422 && len(p.Errors) > 0 {
+		fields := p.Errors
+		body.Errors = &fields
+	}
 
 	w.Header().Set("Content-Type", problemContentType)
 	w.Header().Set("X-Trace-Id", traceID)
-	writeRawJSON(w, r, int(p.Status), b.String())
+	writeProblemBody(w, r, body)
 }
 
-// writeJSONString appends one JSON string, escaped by the encoder.
+// instanceOf is the path a problem document names.
 //
-// `json.Marshal` and not a hand-rolled escaper, because `detail` is caller-chosen
-// and `instance` is caller-influenced: a `detail` containing a quote or a backslash
-// would otherwise produce a body that is not JSON at all, on a path whose whole job
-// is to hand a document to a browser. The error is handled rather than ignored
-// because a handler that swallows an error is the pattern this repository keeps
-// warning about — and the answer to "a string cannot fail to marshal" is to write a
-// valid empty string and carry on, not to panic on the error path of an error path.
-func writeJSONString(b *strings.Builder, value string) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		b.WriteString(`""`)
-		return
+// ## THE PATH IS NORMALISED, AND THAT IS NOT TIDINESS
+//
+// The reference writes `new URL(c.req.url).pathname`, and a WHATWG URL parser
+// resolves dot segments AND keeps the request line's own spelling of every other
+// character: `/v1/../v1/me` is `/v1/me` there, `/v1/pantry/a%2Fb` is
+// `/v1/pantry/a%2Fb` there and `/v1/pantry/a/b` here. Go's `net/url` resolves
+// nothing and keeps two spellings, `Path` decoded and `EscapedPath` raw.
+//
+// It is `EscapedPath`, and the equivalence check is what said so — the reference's
+// own answer for `/v1/pantry/caf%C3%A9%20au%20lait` is
+// `/v1/pantry/caf%C3%A9%20au%20lait`, with the escapes intact.
+//
+// That is a divergence in what a *caller is told*, not only in what a service
+// receives, and it is worth having the right answer for: a caller who sent
+// `/v1/pantry/../secret` and is handed `instance: "/v1/pantry/../secret"` cannot
+// correlate the refusal with their own request log, and two answers for one request
+// is the thing `trace_id` exists to prevent.
+//
+// So the same `NormaliseRequestPath` the pass-through routes on is applied here.
+// There is one normalisation function in this package on purpose: two would be two
+// spellings of "what path is this", and a routing rule tightened in one of them
+// would leave the other naming something else.
+func instanceOf(r *http.Request) string {
+	return NormaliseRequestPath(r.URL.EscapedPath())
+}
+
+// writeProblemBody renders the envelope in the document's own field order.
+//
+// ## THE ORDER IS THE DOCUMENT'S, AND `encoding/json` WOULD GET IT WRONG
+//
+// `openapi/v1.yaml`'s `Problem.required` is `[type, title, status, detail,
+// instance, code, trace_id]` — in that order — and `src/problem.ts` writes its
+// object literal in that order. `api.Problem` is a **generated** struct whose
+// fields are in alphabetical order, so `json.Marshal` on it produced
+// `{"code":…,"detail":…,"instance":…,"status":…,"title":…,"trace_id":…,"type":…}`.
+//
+// That is the same trap `/readyz` hit and for the same reason: `encoding/json`
+// honours struct field order and the generator writes fields sorted. The
+// equivalence check found it on the first run of a single 503 case — every problem
+// document in the comparison differed on nothing else — and every client parses
+// both spellings identically, which is exactly why it would have shipped.
+//
+// So the object is built here, by hand, in the document's order, with every value
+// escaped by `json.Marshal` and only the braces, the commas and the keys written
+// literally. `errors` goes last and only for a 422, which is where the document
+// puts it too.
+func writeProblemBody(w http.ResponseWriter, r *http.Request, body api.Problem) {
+	// Encoded first, joined second. Building the members as complete
+	// `"key":value` fragments and joining them is what keeps the separator in one
+	// place: the first draft wrote each member with its own trailing comma and
+	// produced `{"type":"…""title":…}`, which every test that decodes a problem
+	// document noticed at once.
+	members := []string{
+		jsonStringMember("type", body.Type),
+		jsonStringMember("title", body.Title),
+		jsonNumberMember("status", int(body.Status)),
+		jsonStringMember("detail", body.Detail),
+		jsonStringMember("instance", body.Instance),
+		jsonStringMember("code", string(body.Code)),
+		jsonStringMember("trace_id", body.TraceID),
 	}
-	b.Write(encoded)
+	if body.Status == api.N422 && body.Errors != nil && len(*body.Errors) > 0 {
+		encoded, err := json.Marshal(*body.Errors)
+		if err != nil {
+			panic(fmt.Sprintf("httpapi: %s %s: the field errors did not encode: %v", r.Method, r.URL.Path, err))
+		}
+		members = append(members, `"errors":`+string(encoded))
+	}
+
+	writeRawJSON(w, r, int(body.Status), "{"+strings.Join(members, ",")+"}")
+}
+
+// jsonStringMember is one `"key":"value"` pair, both encoded.
+//
+// Encoded rather than interpolated, so a detail containing a quote is a detail with
+// a quote in it rather than a malformed document.
+func jsonStringMember(name, value string) string {
+	encodedName, _ := json.Marshal(name)
+	encodedValue, _ := json.Marshal(value)
+	return string(encodedName) + ":" + string(encodedValue)
+}
+
+// jsonNumberMember is one `"key":value` where the value is a JSON number and not a
+// string.
+//
+// It exists because the obvious thing — routing `status` through `jsonStringMember`
+// — writes `"status":"503"`, and the first run of the suite said so on every problem
+// document this service produces. `status` is `type: integer` in
+// `openapi/v1.yaml`, and a string would be a document the contract does not describe.
+func jsonNumberMember(name string, value int) string {
+	encodedName, _ := json.Marshal(name)
+	return string(encodedName) + ":" + strconv.Itoa(value)
 }
 
 // writeJSON writes a body, and is where the JSON content type is decided once

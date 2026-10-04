@@ -109,6 +109,10 @@ var ForwardedResponseHeaders = []string{"content-type"}
 // otherwise: five seconds.
 const DefaultUpstreamTimeout = 5 * time.Second
 
+// relayedUntyped is the content type a relayed answer carries when the service
+// sent none. See `relayUpstream`.
+const relayedUntyped = "application/octet-stream"
+
 // upstreamClient is the one `http.Client` every relayed request goes out on.
 //
 // `CheckRedirect` is the load-bearing line and it is the reason this is a named
@@ -262,7 +266,6 @@ func (p *routeProxy) call(r *http.Request, route ResolvedRoute, target string) *
 	// starting set to leak from, so "forward everything except N" is not a shape
 	// this code can be written in.
 	outgoing.Header = headers
-	outgoing.ContentLength = contentLength(r)
 
 	// `Host` is deliberately left unset, which is what makes `net/http` send the
 	// target's own host. The caller's `Host` header would otherwise be the one
@@ -373,10 +376,15 @@ type upstreamAnswer struct {
 // Streamed rather than buffered because a proxy that reads a body in order to hand
 // it straight on is holding a caller's megabytes in memory for no reason.
 //
-// The inbound `Content-Length` is copied rather than re-derived: `http.NewRequest`
-// cannot know it from an `io.Reader`, so a POST that arrived as a fixed length
-// would go out chunked and an upstream that reads exactly `Content-Length` bytes
-// would see a different request shape than the caller sent.
+// The inbound `Content-Length` is deliberately NOT copied, and the equivalence
+// check is why: the reference hands the caller's body to `fetch` as a **stream**,
+// and Bun then relays it with no `Content-Length` and a chunked framing. Copying
+// it would give the upstream a different request shape than the caller sent *and*
+// different from the reference's — and a service that reads exactly
+// `Content-Length` bytes would see two different framings depending on which
+// implementation forwarded to it. `http.NewRequestWithContext` is therefore left
+// to infer the framing from the reader, which is chunked, which is what the
+// reference does.
 func bodyOf(r *http.Request) io.Reader {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
@@ -386,17 +394,6 @@ func bodyOf(r *http.Request) io.Reader {
 		return nil
 	}
 	return r.Body
-}
-
-// contentLength copies the caller's framing onto the relayed request, or -1 when
-// there is none to copy. Assigned after `http.NewRequestWithContext`, which
-// cannot infer it from a reader.
-func contentLength(r *http.Request) int64 {
-	switch r.Method {
-	case http.MethodGet, http.MethodHead:
-		return 0
-	}
-	return r.ContentLength
 }
 
 // IsRelayableStatus reports whether a status crosses, or is translated.
@@ -440,15 +437,19 @@ func relayUpstream(w http.ResponseWriter, response *upstreamAnswer) {
 			w.Header().Set(name, value)
 		}
 	}
-	// An upstream that answered without a content type must not have one invented
-	// for it: Go's writer sniffs the first 512 bytes of a body whose type is unset,
-	// so a relayed `text/html` error page would arrive labelled by `net/http` rather
-	// than absent. A key present with no values is the way to say "no type" to a
-	// writer that would otherwise choose one — `Get` reads it as empty and the
-	// header is written with nothing in it.
-	if _, present := response.header[http.CanonicalHeaderKey("Content-Type")]; !present {
-		w.Header()[http.CanonicalHeaderKey("Content-Type")] = []string{}
+	if _, present := headerValue(response.header, "Content-Type"); !present {
+		w.Header().Set("Content-Type", relayedUntyped)
 	}
+	// An upstream that answered without a content type gets `application/octet-stream`,
+	// and that is measured rather than chosen. The reference builds
+	// `new Response(upstream.body, {status, headers})` with no content type in
+	// `headers`, and Bun answers the caller `application/octet-stream`; the first
+	// run of the equivalence check said `octet-stream` on one side and nothing on
+	// the other, and the TypeScript answer is the correct one.
+	//
+	// Go's writer would otherwise *sniff* — `net/http` reads the first 512 bytes of
+	// a body whose type is unset and labels it `text/plain; charset=utf-8` — so this
+	// is a third possible answer and the only one neither side chose.
 	w.Header().Set("Cache-Control", "no-store")
 
 	w.WriteHeader(response.status)
