@@ -145,7 +145,12 @@ describe("RESP encoding", () => {
   test("writes a command as an array of bulk strings", () => {
     const written = decoder.decode(encodeCommand(["GET", "gateway:rl:k"]));
 
-    expect(written).toBe("*2\r\n$3\r\nGET\r\n$10\r\ngateway:rl:k\r\n");
+    // `$12` is the byte count of `gateway:rl:k`. It is written out rather than
+    // built from the key because a count computed from the string it is
+    // checking cannot catch an encoder that got the length wrong — that is the
+    // defect the next test exists for. So a rename of the namespace has to
+    // change this number by hand, and `12` is what `gateway:rl` weighs.
+    expect(written).toBe("*2\r\n$3\r\nGET\r\n$12\r\ngateway:rl:k\r\n");
   });
 
   test("counts bytes, not characters, for a multi-byte argument", () => {

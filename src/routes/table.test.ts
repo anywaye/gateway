@@ -101,7 +101,7 @@ describe("what refuses to boot", () => {
     // A table claiming it describes a route that can never run. That is a
     // configuration error with no symptom at all — every request would be served
     // by gateway and the operator would believe their base URL had been used.
-    expect(() => routeTable({ "/v1/me": { baseUrl: "http://identity.test" } })).toThrow(/guard's own route/);
+    expect(() => routeTable({ "/v1/me": { baseUrl: "http://identity.test" } })).toThrow(/gateway's own route/);
   });
 
   test("a base URL that is not an absolute http(s) origin", () => {
