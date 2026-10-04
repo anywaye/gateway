@@ -549,3 +549,42 @@ The shape of each number is the interesting part:
   revocation.
 
 After all five: **306 comparisons, 0 differences.**
+
+---
+
+## 10. Process hygiene, and a leak I found but did not fix
+
+**Nothing of mine is left running.** After the final gate I scanned every `bun`,
+`go test` and `reference.ts` process on the machine and checked each one's working
+directory: no process has `wt-m39-gateway-go-bff-01` as its cwd.
+
+**Two `reference.ts` processes from OTHER worktrees are still running**, and I left
+them alone because the contract says not to touch another session's work:
+
+```
+pid  2188  cwd …/wt-m39-gateway-go-substrate-01/internal/equivalence   elapsed 2:41
+pid 37824  cwd …/wt-m39-gateway-go-proxy-01/internal/equivalence      elapsed 0:52
+```
+
+Note that `wt-m39-gateway-go-substrate-01` is **not in `git worktree list`** — that
+worktree appears to have been removed while its process was still running, which is
+the one hazard §7 of the worker contract names and it has already happened once.
+
+**The leak itself is a finding, and it is in code this packet made worse.**
+`internal/equivalence`'s `standUpReference` kills the reference in a `stop`
+closure, registers it with `t.Cleanup`, *and* calls it explicitly in the loop — so
+there are three paths that should each reap it and evidently one that does not. The
+most likely culprit is that `stop()` is only reached when the loop completes: an
+`ask` that calls `t.Fatalf` aborts the test, `t.Cleanup` fires for every reference
+staged so far, and a reference started in the same iteration is never reached by
+either path. It only shows up when something fails.
+
+I did not fix it. It is in `internal/equivalence`, which is shared, and a
+concurrency change to the harness belongs with whoever owns the equivalence check's
+next substantive change rather than at the end of a packet about the browser
+surface. **It is harmless to correctness** — a leaked reference holds an ephemeral
+port and answers only the requests made to it — and it costs a process per failed
+run.
+
+The successor's first five seconds on this: `t.Cleanup(stop)` unconditionally, and
+drop the explicit `stop()` call so there is one path rather than three.
