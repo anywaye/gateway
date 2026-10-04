@@ -1,17 +1,64 @@
 # Toolchain pins for gateway. The worktree and CI must agree, so the versions
 # live here rather than in whatever the machine happens to have installed.
 #
-# bun 1.3.12 is the same number as the oven/bun base image in the Dockerfile and
-# the `packageManager` field in package.json. `engines.bun` is a floor, not a
+# TWO LANGUAGES, AND WHY THAT IS NOT A RENAME. `go` arrives with the Go port
+# (gateway-go-substrate-01) while `src/` — the TypeScript service that is still
+# the reference implementation — is still here. `src/` is deleted in a later
+# packet, once equivalence is proven, and when it goes the `bun` and `node` pins
+# go with it, exactly as pantry's comment records the `rust` pin going with its
+# Rust tier. Two pins in this file is the temporary state, not the design.
+#
+# `bin/prime-go` asserts the Go pin against `go.mod`'s own `go` directive before
+# it runs anything, because nothing else makes the go command enforce either
+# file. The pattern came from a Rust gate that had the same hole: three files
+# naming a toolchain and a gate that checked none of them, so a developer on a
+# newer compiler read the difference as a defect in the code under test (the
+# cafaye-rb lesson, and it cost a debugging session).
+#
+# The Go pin is TWO files and the gate checks both. 1.26.1 is the toolchain the
+# build and the tests run on, and it is the SAME number `pantry/go.mod` and
+# `identity/go.mod` state — a fleet that pins three copies of a toolchain needs
+# them to agree, and this gate is what makes them. `Dockerfile.golang`'s
+# ARG GO_VERSION is 1.26, the tag the image builds with, the same way
+# RUST_VERSION used to name an image rather than a patch. go.mod's `go` directive
+# is the third copy and is the one the compiler enforces.
+#
+# bun 1.3.12 is the same number as the oven/bun base image in `Dockerfile` and the
+# `packageManager` field in package.json. `engines.bun` is a floor, not a
 # pin: `>=1.3.0` is satisfied by 1.3.12 and by 1.9.0 alike, so it says who may
-# run this rather than which one ran. mise is optional, which is why the pin is
-# in package.json too — a contributor without mise must still get the runtime CI
+# run this rather than which one ran. mise is optional, which is why the pin
+# is in package.json too — a contributor without mise must still get the runtime CI
 # tested, and `src/pins.test.ts` is what keeps the copies from drifting apart.
 [tools]
 bun = "1.3.12"
 node = "22.12.0"
+go = "1.26.1"
 
 [env]
 # Keeps `bun run` and `bunx` from inheriting a NODE_ENV that silently changes
 # which dependency tree a script sees.
 NODE_ENV = "development"
+
+[tasks.prime-go]
+description = "The Go tier of the gate: gofmt, build, vet, test, generated-code currency"
+run = "./bin/prime-go"
+
+[tasks.build-go]
+description = "Build the Go binary into ./build"
+run = "mkdir -p build && go build -trimpath -o build/gateway ./cmd/gateway"
+
+[tasks.run-go]
+description = "Serve the Go gateway on PORT (default 8080)"
+run = "go run ./cmd/gateway"
+
+[tasks.generate-go]
+description = "Regenerate internal/api from openapi/v1.yaml. Run in the SAME commit as the document change."
+run = "go generate ./internal/api/"
+
+[tasks.fmt-go]
+description = "Fail if anything under ./cmd or ./internal needs gofmt"
+run = "gofmt -l ./cmd ./internal"
+
+[tasks.lint-go]
+description = "go vet, which is what this tier treats as the linter"
+run = "go vet ./..."
