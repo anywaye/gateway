@@ -323,6 +323,48 @@ func TestABodyIsStreamedAndItsContentTypeCrossesWithIt(t *testing.T) {
 	}
 }
 
+// TestTheRequestAllowlistIsExactlyTwoNames is the check the allowlist test above
+// could not be.
+//
+// `TestOnlyContentTypeAndAcceptCrossToTheService` builds its expectation out of
+// `ForwardedRequestHeaders`, which is right for "the two that crossed are the two
+// named" and useless for "only two cross": widen the list and the test widens with
+// it and stays green. That was not reasoned — it was measured, by the mutation
+// script, which added `x-forwarded-for` to the list, watched the test stay green,
+// and reported it. This test states the list as a literal so the mutation bites.
+func TestTheRequestAllowlistIsExactlyTwoNames(t *testing.T) {
+	want := []string{"content-type", "accept"}
+
+	if len(ForwardedRequestHeaders) != len(want) {
+		t.Fatalf("the request allowlist is %v, want exactly %v. Every name in it is a header a caller chose that reaches an internal service, and the whole property is the length of this list.", ForwardedRequestHeaders, want)
+	}
+	for i, name := range want {
+		if ForwardedRequestHeaders[i] != name {
+			t.Errorf("the request allowlist is %v, want exactly %v — position %d", ForwardedRequestHeaders, want, i)
+		}
+	}
+}
+
+// TestTheResponseAllowlistIsExactlyOneName is the same property in the response
+// direction, and it is one name long: `content-type`.
+//
+// `set-cookie` is not in it, which is why a service cannot write the browser's
+// session from behind the edge. The response allowlist is read by the relay, so a
+// name added here crosses to the caller — and the mutation that adds `set-cookie`
+// is the one that turns session fixation back on.
+func TestTheResponseAllowlistIsExactlyOneName(t *testing.T) {
+	want := []string{"content-type"}
+
+	if len(ForwardedResponseHeaders) != len(want) {
+		t.Fatalf("the response allowlist is %v, want exactly %v. Anything else here is a header a service controls that reaches the caller unexamined.", ForwardedResponseHeaders, want)
+	}
+	for i, name := range want {
+		if ForwardedResponseHeaders[i] != name {
+			t.Errorf("the response allowlist is %v, want exactly %v — position %d", ForwardedResponseHeaders, want, i)
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // property 4: no redirect is followed, and the call is bounded
 // --------------------------------------------------------------------------
