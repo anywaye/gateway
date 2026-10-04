@@ -147,15 +147,32 @@ func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 // it found it because that test asserts the content type rather than decoding
 // the body and stopping there.
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
+	// `json.Marshal` and NOT `json.NewEncoder(w).Encode`, and the difference is a
+	// byte on every response the service writes. `Encode` appends a newline
+	// after the value — a convenience for writing a stream of values to a file —
+	// and Hono's `c.json()` does not. So `Encode` produced
+	// `{"status":"ok"}\n` where the reference produces `{"status":"ok"}`, and 63
+	// of the 72 comparisons in `internal/equivalence` failed on that one byte
+	// before anything else in this package was trusted. A trailing newline is
+	// legal JSON and every client parses it identically, which is exactly why it
+	// is the kind of difference that ships unnoticed and is worth the byte.
+	//
+	// `Marshal` first, `WriteHeader` second, is the other half: a marshalling
+	// failure means the handler built a body the document does not allow, and
+	// doing it in this order means nothing has been written yet. There is
+	// therefore nothing half-sent for a client to parse.
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		panic(fmt.Sprintf("httpapi: %s %s: response did not encode: %v", r.Method, r.URL.Path, err))
+	}
+
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/json")
 	}
 	w.WriteHeader(status)
-	// A marshalling failure here means the handler built a body the document
-	// does not allow. The header is already written, so the only honest thing
-	// left is to stop rather than emit a truncated body a client would parse.
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		panic(fmt.Sprintf("httpapi: %s %s: response did not encode: %v", r.Method, r.URL.Path, err))
+
+	if _, err := w.Write(encoded); err != nil {
+		panic(fmt.Sprintf("httpapi: %s %s: response did not write: %v", r.Method, r.URL.Path, err))
 	}
 }
 
