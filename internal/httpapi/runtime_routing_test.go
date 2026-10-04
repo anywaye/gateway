@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,11 +15,13 @@ import (
 	"time"
 )
 
-// The environment reader, and the four variables the pass-through needs.
+// The environment reader, and what a gateway built from it actually does.
 //
-// `TestTheRuntimeReaderReadsNoOtherVariable` in `httpapi_test.go` is the tripwire
-// for the SET, and it needed widening in this packet. That is the point of it: a
-// variable added without the assertion is a variable nobody reads.
+// `TestTheRuntimeReaderReadsExactlyTheseVariables` in `runtime_variables_test.go`
+// is the tripwire for the SET. This file is the other half: it asserts that what
+// the reader produced is a gateway with the properties a reader of `RuntimeOptions`
+// needs to be able to see — a route table, a minter, a credential gate, and the
+// two refusals that gate is supposed to make.
 
 // A PEM in a temporary file, because `ASSERTION_SIGNING_KEY_FILE` is a **path** and
 // the reason is the property this whole file is about — a private key in an
@@ -152,23 +156,45 @@ func TestTheAssertionKeyIsReadFromTheEnvironmentAndNothingElseIs(t *testing.T) {
 	}
 }
 
-// A gateway started from the environment has NO credential gate, and that is the
-// reference's own state rather than an oversight in this port.
+// A gateway started from the environment HAS a credential gate, and this test is
+// the one that says so.
 //
-// `createApp({routes})` does not register the token gate when no `jwt` option was
-// configured, so an anonymous request is relayed — and `gatedUpstream` in
-// `internal/equivalence` compares exactly that against the reference. This test
-// states it from the environment's side so a reader of `RuntimeOptions` cannot
-// mistake "the verifier is not ported yet" for "the gate was forgotten".
-func TestAGatewayBuiltFromTheEnvironmentHasNoCredentialGateYet(t *testing.T) {
+// # IT USED TO ASSERT THE OPPOSITE, AND THE FLIP IS THE WHOLE STORY
+//
+// This test was written by the pass-through packet as
+// `TestAGatewayBuiltFromTheEnvironmentHasNoCredentialGateYet`, and it asserted that
+// an anonymous request to a private route reached the pass-through and got the
+// upstream's `503`. That was true — there was no verifier in this repository yet —
+// and it is false now.
+//
+// The name ended in "Yet" precisely because it was a statement about a temporary
+// state, and the temporary state ended when `internal/auth` landed. What is
+// interesting is not that the test had to change but that it changed SILENTLY: the
+// reader would have taken away "no gate from the environment" and gone on. The test
+// is now its own opposite, and its new assertion is the one that matters: an
+// anonymous request is refused **at the gate**, and never reaches an upstream.
+//
+// # THE `503` MOVED TO WHERE IT BELONGS
+//
+// Nothing is listening on `127.0.0.1:1`, so a relayed request answers `503`. The
+// assertion below is that it answers `401` instead — the refusal happens above the
+// pass-through, so the dead port is never dialled. That is the observable difference
+// between "relayed anonymously" and "refused", and it is worth being able to tell
+// them apart from a test rather than from a log line.
+func TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstream(t *testing.T) {
 	config, err := RuntimeOptions(mapEnv(map[string]string{
 		"ROUTE_TABLE": `{"/v1/pantry":{"baseUrl":"http://127.0.0.1:1"}}`,
 	}))
 	if err != nil {
 		t.Fatalf("RuntimeOptions refused a valid table: %v", err)
 	}
+	t.Cleanup(config.CloseResources)
+
 	if config.Options.Authenticate != nil {
-		t.Error("RuntimeOptions configured a credential gate, and this packet has no verifier to put behind it")
+		t.Error("RuntimeOptions set Options.Authenticate directly; it leaves that to the verifier, which `New` reads instead")
+	}
+	if config.Options.Verifier == nil {
+		t.Fatal("RuntimeOptions built a gateway with no verifier, so nothing can authenticate anybody. `runtimeOptions` in the reference always passes `jwt:` — there is no unset-issuer state there — so the honest v0 shape is `New(Options{})`, not a started gateway.")
 	}
 
 	handler, err := New(config.Options)
@@ -176,14 +202,48 @@ func TestAGatewayBuiltFromTheEnvironmentHasNoCredentialGateYet(t *testing.T) {
 		t.Fatalf("New refused: %v", err)
 	}
 
-	// Nothing is listening on port 1, so the answer is the pass-through's own 503 —
-	// which is the observable difference between "relayed anonymously" and "refused
-	// at the gate".
-	rec := ask(t, config.Options, "GET", "/v1/pantry/items", nil)
-	if rec.Code != 503 {
-		t.Fatalf("an anonymous request answered %d, want 503 — it reached the pass-through, which is the reference's behaviour with no verifier configured", rec.Code)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil))
+
+	if rec.Code != 401 {
+		t.Fatalf("an anonymous request answered %d, want 401 — a `503` would mean it reached the pass-through and dialled a dead upstream, which is the failure the gate above the pass-through exists to prevent", rec.Code)
 	}
-	_ = handler
+	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Errorf("Content-Type is %q on the 401, want application/problem+json", got)
+	}
+}
+
+// The OTHER half of the gate, and the one that is easy to leave out: a route the
+// operator declared `public` answers for an anonymous caller, even on a gateway
+// that has a verifier.
+//
+// One test above and this one together are the property. A gate that refuses
+// everything is not a gate, it is a wall, and the difference between them is a
+// single word in one JSON entry.
+func TestAPublicRouteStillAnswersForAnAnonymousCallerOnAGatewayWithAVerifier(t *testing.T) {
+	fixture := newJWKSFixture(t)
+	verifier, err := authVerifierFor(t, fixture)
+	if err != nil {
+		t.Fatalf("building a verifier against the fixture's key set: %v", err)
+	}
+
+	handler, err := New(Options{
+		Verifier: verifier,
+		Routes:   RouteTable{"/v1/catalog": {BaseURL: "http://127.0.0.1:1", Public: true}},
+	})
+	if err != nil {
+		t.Fatalf("New refused: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/catalog/items", nil))
+
+	// `503`, not `401`: port 1 is closed, so a request that was NOT refused at the
+	// gate reaches the pass-through and finds nothing listening. A `401` here would
+	// be the wall.
+	if rec.Code != 503 {
+		t.Errorf("an anonymous request to a public route answered %d, want 503 — the upstream is closed, so 503 is the pass-through's own answer and a 401 means the gate refused a route it was told to leave open", rec.Code)
+	}
 }
 
 // The whole configuration at once, because a reader who sees four variables handled

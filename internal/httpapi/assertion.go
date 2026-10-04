@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cafaye/gateway/internal/auth"
 )
 
 // The principal assertion: gateway's own signature over who the caller is, sent to
@@ -131,32 +133,46 @@ func isReservedClaim(name string) bool {
 
 // Principal is what a credential gate established about the caller.
 //
-// ## DELIBERATELY SMALL, AND WHY IT IS NOT THE AUTH PACKET'S TYPE
+// ## AN ALIAS, AND WHY IT USED TO BE A STRUCT
 //
-// This is the half of a verified principal the pass-through needs: the subject,
-// and the claim set **as the verified token carried it**. The second field is the
-// load-bearing one — the assertion copies claims out of it rather than out of a
-// typed struct, so `scope` stays the space-separated string identity signed
-// rather than becoming the array gateway parsed it into, and `github_id` — which
-// is not a field gateway knows — crosses without gateway having to be taught its
-// name. gateway is a signer here, not a translator: reshaping a claim would make
-// the assertion a *different* claim from the one identity verified, which is a
-// second thing to get right for no gain.
+// This was a local `struct { Sub string; Claims map[string]any }`, written by the
+// pass-through packet with a note that the packet porting token verification would
+// own the question of what a principal carries. That packet has landed, so this is
+// `auth.Principal` under the name the pass-through already uses — one principal,
+// built once by the verifier, read by the assertion minter and rendered by
+// `/v1/me`.
 //
-// The scope list and the account id are deliberately absent. Nothing in routing
-// reads them, and the packet that ports token verification owns the question of
-// what a principal carries; widening this struct here for a reader that does not
-// exist yet is how a type becomes a dumping ground.
-type Principal struct {
-	// The `sub` claim, which identity verified and which gateway never invents.
-	Sub string
-
-	// The caller's claims, verbatim. Read for claim *names*, and never indexed by
-	// a name gateway owns — `checkClaimName` refuses those in a route entry, and
-	// the envelope is written first so a claim could not overwrite it even if that
-	// check were removed.
-	Claims map[string]any
-}
+// Two types would have been two answers to "who is this caller", and the gap
+// between them is exactly where a security property goes missing: the
+// pass-through would assert about a principal the verifier never saw, or the
+// verifier would prove a caller and the assertion would drop what it proved. An
+// alias makes that unrepresentable rather than merely unlikely.
+//
+// ## WHY THE CLAIM SET IS STILL THE VERBATIM ONE
+//
+// `auth.Principal.Claims` is the payload **as the token carried it**, and that is
+// the load-bearing part for the assertion: the minter copies claims out of it
+// rather than out of a typed struct, so `scope` stays the space-separated string
+// identity signed rather than becoming the array gateway parsed it into, and
+// `github_id` — which is not a field gateway knows — crosses without gateway
+// having to be taught its name. gateway is a signer here, not a translator:
+// reshaping a claim would make the assertion a *different* claim from the one
+// identity verified, which is a second thing to get right for no gain.
+//
+// It is read for claim *names*, and never indexed by a name gateway owns —
+// `checkClaimName` refuses those in a route entry, and the envelope is written
+// first so a claim could not overwrite it even if that check were removed. Hence
+// `Lookup` rather than an index: `Claims` keeps the token's order, and an order-
+// preserving type cannot be indexed without pretending it is a map.
+//
+// ## WHY IT GREW
+//
+// The scope list and the account id were "deliberately absent" here, on the
+// grounds that nothing read them yet. `internal/ratelimit` reads the account —
+// that is what it keys its buckets on — and `/v1/me` renders both. They are not a
+// widening of the pass-through's idea of a principal; they are the verifier's idea
+// of one, and having two of those was the defect.
+type Principal = auth.Principal
 
 // AssertionKey is a gateway signing key: the pair, and the id upstreams select it
 // by.
@@ -317,7 +333,7 @@ func declaredClaims(principal Principal, names []string) map[string]any {
 	out := make(map[string]any, len(names)+1)
 
 	for _, name := range names {
-		value, ok := principal.Claims[name]
+		value, ok := principal.Claims.Lookup(name)
 		if !ok {
 			continue
 		}

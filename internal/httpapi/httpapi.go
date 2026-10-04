@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/cafaye/gateway/internal/api"
+	"github.com/cafaye/gateway/internal/auth"
+	"github.com/cafaye/gateway/internal/ratelimit"
 )
 
 // Options is the whole configuration of a gateway, and it is an argument to
@@ -109,6 +112,64 @@ type Options struct {
 	// there is no retry, no circuit breaker and no health check, and each of those
 	// is absent on purpose — they are a packet that says what they cost.
 	UpstreamTimeout time.Duration
+
+	// The bearer-token verifier, or nothing.
+	//
+	// Nil is the honest v0 shape and it is `createApp`'s: "Omit and the gateway
+	// serves probes only: with no issuer there is nothing to verify a token
+	// against, and an endpoint that would have to trust a token is worse than an
+	// endpoint that is not there." So a nil verifier does not mount a gate that
+	// refuses everything — it mounts NO gate, and `GET /v1/me` declines with the
+	// reference's own `404` for an operation that is not there.
+	//
+	// The field is an interface rather than a concrete verifier so a test can put
+	// a stand-in in front of the router without a JWKS server, and so the package
+	// that decides WHEN a token is verified does not own HOW.
+	Verifier TokenVerifier
+
+	// The limiter, or nothing. Omitted means gateway applies no limit at all,
+	// which is the honest v0 default for an app built without one rather than a
+	// limit that exists only in the config.
+	Limiter RateLimiter
+}
+
+// TokenVerifier is the bearer-token gate, as the router needs it.
+//
+// The two methods are `requireJwt` and `requireScope` from
+// `src/middleware/jwt.ts`. Only `Require` is mounted by this package; `RequireScope`
+// is on the interface because the scope gate is part of the verifier's surface and
+// a later packet mounts it, and putting it on the interface NOW is what makes that
+// packet's wiring test able to assert it rather than discover it.
+//
+// `requireScope` takes a refusal writer in Go where it does not in TypeScript,
+// because Go's middleware writes the response and TypeScript's returns it. See
+// `internal/auth`'s own comment on the difference.
+//
+// # `Authenticate` IS HERE BECAUSE THE PASS-THROUGH NEEDS IT, NOT BECAUSE IT IS NEEDED TWICE
+//
+// `Authenticate` is the verifier's own door — one request, one token, one answer —
+// and it is on this interface because `Options.Authenticate` is the seam the
+// pass-through's gate was built to be plugged into. Without it here the seam could
+// only ever be filled by a second implementation of verification, which is the one
+// thing two verification paths must not be.
+//
+// It is a `*Principal` rather than this package's `Principal` because they are now
+// the same type: `Principal` is an alias for `auth.Principal`, so the principal a
+// pass-through route asserts about is the principal `/v1/me` renders, and there is
+// no conversion where one of them could quietly lose a claim the other carries.
+type TokenVerifier interface {
+	Require(refuse auth.Refuser) func(http.Handler) http.Handler
+	RequireScope(refuse auth.Refuser, scope string) (func(http.Handler) http.Handler, error)
+	Authenticate(ctx context.Context, token string) (*auth.Principal, *auth.Refusal)
+}
+
+// RateLimiter is the rate-limit middleware, as the router needs it.
+//
+// One method and it is the whole limiter: `rateLimit(options)` in TypeScript
+// returns a `MiddlewareHandler` and this returns the `func(http.Handler)
+// http.Handler` chi's `Use` takes.
+type RateLimiter interface {
+	Wrap(next http.Handler) http.Handler
 }
 
 // ProbePaths is the two operations the limiter must never count.
@@ -169,13 +230,44 @@ func New(options Options) (http.Handler, error) {
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) { writeV0NotFound(w, r) })
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { writeV0NotFound(w, r) })
 
-	// Before the generated router, and the reason is in `collapseRepeatedHeaders`:
-	// `oapi-codegen` refuses a header parameter sent twice with a `text/plain` 400,
-	// the reference has no such refusal, and without this middleware the two answers
-	// differ on status, in content type and in whether a cookie was set.
+	// # THE MOUNTS, IN THIS ORDER, AND THE ORDER IS THE WHOLE ARGUMENT
+	//
+	// 1. the repeated-header reduction, which is not a gate and must be first,
+	// 2. the bearer gate on `/v1/*`,
+	// 3. the limiter on everything.
+	//
+	// Authentication BEFORE the limiter, and the reason is the reference's: "the
+	// key is the strongest identity the request has, and the strongest identity is
+	// only known once a token has been verified." Mounted the other way round, a
+	// request refused by the auth gate would still be counted — under `ip:unknown`,
+	// because that is all a rejected request has — and a flood of forged tokens
+	// would exhaust the shared anonymous bucket for every legitimate anonymous
+	// caller. That is the amplifier, and it costs one line of ordering.
+	//
+	// The header reduction is before both because it is not a gate: it rewrites the
+	// request the gates read, and a gate that had already decided a request carried
+	// no `Origin` would be deciding it about a value the gateway then throws away.
+	// `collapseRepeatedHeaders` says why it exists — `oapi-codegen` refuses a header
+	// parameter sent twice with a `text/plain` 400, the reference has no such
+	// refusal, and without this middleware the two answers differ on status, in
+	// content type and in whether a cookie was set.
+	//
+	// chi requires `Use` before any route is registered, and
+	// `api.HandlerWithOptions` is what registers the seven, so all three mounts come
+	// before that call. There is no ordering hazard here the way there is in Hono,
+	// where a `use` mounted after a route never runs — which is why the comment in
+	// `src/index.ts` about "the route is registered further down, after the
+	// limiter" has no counterpart in this file.
 	router.Use(collapseRepeatedHeaders)
 
-	svc := &server{probes: options.Probes, bff: bff}
+	if options.Verifier != nil {
+		router.Use(onPrefix("/v1/", options.Verifier.Require(writeAuthRefusal)))
+	}
+	if options.Limiter != nil {
+		router.Use(options.Limiter.Wrap)
+	}
+
+	svc := &server{probes: options.Probes, bff: bff, verifier: options.Verifier}
 	api.HandlerWithOptions(
 		svc,
 		api.ChiServerOptions{BaseRouter: router, ErrorHandlerFunc: paramRefusal()},
@@ -239,8 +331,55 @@ func New(options Options) (http.Handler, error) {
 		Assertion: options.Assert,
 	}).handle(router)
 
-	return &mount{Router: router, handler: credentialGate(options.Authenticate, table, proxied)}, nil
+	return &mount{Router: router, handler: credentialGate(authentication(options), table, proxied)}, nil
 }
+
+// authentication is the gate the pass-through is mounted behind.
+//
+// # A VERIFIER SUPPLIES IT UNLESS SOMETHING ELSE ALREADY DID
+//
+// `Options.Authenticate` is the seam `gate.go` was built around, and until this
+// packet arrived nothing in this repository could fill it — so `gate.go`'s own
+// comment said the verifier packet would fill it and nothing else would change.
+// This is that. `*auth.Verifier` is `Options.Verifier` here, so a gateway
+// configured the way `RuntimeOptions` configures one verifies a token ONCE and both
+// halves of the answer to the same question: `/v1/me` renders the principal and a
+// private proxied route mints the assertion about it.
+//
+// The alternative — leaving `Authenticate` nil and letting the chi mount do the
+// verifying — is a gateway that verifies `/v1/*` and then forwards private proxied
+// requests with **no credential gate at all**, because `credentialGate(nil, …)` is
+// a pass-through and not a refusal. That is the whole failure this line exists to
+// prevent, and it is silent: nothing about a relayed anonymous request looks wrong.
+//
+// An explicit `Options.Authenticate` still wins, because a caller that supplied a
+// gate has said what the gate is and this must not replace it.
+func authentication(options Options) Authenticate {
+	if options.Authenticate != nil {
+		return options.Authenticate
+	}
+	if options.Verifier == nil {
+		return nil
+	}
+	return func(r *http.Request) (*Principal, error) {
+		token := auth.BearerToken(r.Header.Get("Authorization"))
+		principal, refusal := options.Verifier.Authenticate(r.Context(), token)
+		if refusal != nil {
+			// The refusal's own words are NOT passed on, and that is not a discard:
+			// `credentialGate` writes one 401 for every refusal this seam can return,
+			// and the detail string is `src/middleware/jwt.ts`'s. A verifier's reason
+			// can name an issuer, an audience or a `kid`, and a caller who cannot
+			// authenticate is not entitled to the reason.
+			return nil, errNotAuthenticated
+		}
+		return principal, nil
+	}
+}
+
+// errNotAuthenticated is what this seam returns for every refusal, so a reader
+// looking at the `err` branch does not go looking for a wrapped cause that is
+// deliberately not there.
+var errNotAuthenticated = errors.New("httpapi: the request carried no verified principal")
 
 // browserSurface builds `Options.BFF`, or reports why it cannot.
 //
@@ -301,6 +440,88 @@ type mount struct {
 }
 
 func (m *mount) ServeHTTP(w http.ResponseWriter, r *http.Request) { m.handler.ServeHTTP(w, r) }
+
+// onPrefix runs a middleware only on paths under a prefix, and nowhere else.
+//
+// # WHY IT EXISTS RATHER THAN `r.Group`
+//
+// `src/index.ts` writes `app.use("/v1/*", …)` and Hono scopes the mount to that
+// pattern. chi's `Mux.Use` takes middleware with no pattern, and `Group` returns a
+// NEW router — so the gate would have to be mounted on a group the generated
+// registrations are not on, and `api.gen.go` is a `//go:generate` output this
+// repository may not hand-edit. A path test inside the middleware is the only
+// spelling that puts the gate in front of a route nobody here registers by hand.
+//
+// # THE PREFIX IS `/v1/`, WITH THE SLASH
+//
+// Because Hono's `/v1/*` does not match `/v1` itself, and neither does this. A
+// bare `/v1` is an operation nobody declared and answers the v0 `404` on both
+// sides; a gate that answered `401` there would be a difference on a path the
+// contract does not have.
+//
+// # IT IS NOT A NORMALISATION
+//
+// A request to `/v1/../healthz` does NOT reach the handler: chi cleans the path
+// before routing and `http.Request.URL.Path` is the cleaned one, so the prefix
+// test reads the path the router matched. A traversal that reaches a probe is a
+// probe, and a probe is never authenticated.
+func onPrefix(prefix string, middleware func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		guarded := middleware(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !strings.HasPrefix(r.URL.Path, prefix) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
+}
+
+// writeAuthRefusal renders a verifier refusal as core's problem document.
+//
+// One function rather than a closure built at every mount, because the envelope is
+// `writeProblem`'s and the translation from `auth.Refusal`'s three fields to
+// `Problem`'s four is the kind of thing that must not be re-spelled: a status
+// defaulting to 401 because a caller forgot to set it is a `503` reported as a
+// caller's fault, and `TestAProblemIsTheDocumentedEnvelope` cannot see that.
+func writeAuthRefusal(w http.ResponseWriter, r *http.Request, refusal *auth.Refusal) {
+	writeProblem(w, r, Problem{
+		Status: api.ProblemStatus(refusal.Status),
+		Code:   api.ProblemCode(refusal.Code),
+		Detail: refusal.Detail,
+	})
+}
+
+// writeRateLimitRefusal is `writeAuthRefusal` for the limiter's single `429`.
+//
+// It exists as its own name because the limiter's refusal carries a status and a
+// code as strings — it is written by `internal/ratelimit`, which does not know
+// about `api.ProblemCode` — and one place converts them is one place to check. The
+// limiter has exactly one refusal and it is a constant: "The one 429 this
+// repository writes. A fixed detail: nothing here varies."
+func writeRateLimitRefusal(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
+	writeProblem(w, r, Problem{
+		Status: api.ProblemStatus(status),
+		Code:   api.ProblemCode(code),
+		Detail: detail,
+	})
+}
+
+// RateLimitRefuser is the `ratelimit.Refuser` this package supplies, exported so
+// `cmd/gateway` can build a limiter without importing `internal/httpapi`'s writer
+// by name and getting the conversion wrong.
+func RateLimitRefuser(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
+	writeRateLimitRefusal(w, r, status, code, detail)
+}
+
+// The two refusal writers are what `internal/auth` and `internal/ratelimit` are
+// handed, asserted here so a signature drift is a compile error in this package
+// rather than a `func(int, string, string)` mismatch at every mount.
+var (
+	_ auth.Refuser      = writeAuthRefusal
+	_ ratelimit.Refuser = RateLimitRefuser
+)
 
 // headOf adapts a `GET` handler to answer a `HEAD`.
 //
@@ -392,6 +613,10 @@ type server struct {
 	// by `New` from `Options.BFF` and cannot be nil-and-non-nil: the only
 	// assignment is the one line there.
 	bff *Bff
+
+	// Nil means no bearer gate was mounted, which is what makes `/v1/me` decline
+	// rather than answer. See `Options.Verifier`.
+	verifier TokenVerifier
 }
 
 var _ api.ServerInterface = (*server)(nil)
@@ -528,18 +753,9 @@ func (s *server) bffOr(w http.ResponseWriter, r *http.Request, method string, ha
 	})).ServeHTTP(w, r)
 }
 
-// GetCurrentPrincipal is the one operation this packet does not serve, and it is
-// bearer-token verification: a subsystem the auth packet owns.
-//
-// It stays a decline rather than a `401` for the reason `notBuilt` gives — the
-// reference does not register `/v1/me` without a verifier, so the reference
-// answers `404` here too. `grep notBuilt` therefore names exactly one operation
-// now, which is what makes it a useful inventory rather than a decoration.
-func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
-	notBuilt(w, r)
-}
-
 // notBuilt is the answer for an operation that is not here.
+// notBuilt is the answer for an operation whose subsystem this packet does not
+// port.
 //
 // It writes the v0 `404` envelope, and that is a decision rather than the obvious
 // thing. The alternatives were each wrong in a way that would have cost a reader

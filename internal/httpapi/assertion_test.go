@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cafaye/gateway/internal/auth"
 )
 
 // The principal assertion, and MD19's four properties.
@@ -44,7 +46,7 @@ func testMinter(t *testing.T) *AssertionMinter {
 
 // principal is a verified caller, with the claims identity actually signed.
 func principal(claims map[string]any) Principal {
-	return Principal{Sub: "user-1", Claims: claims}
+	return Principal{Sub: "user-1", Claims: auth.ClaimsFrom(claims)}
 }
 
 // decodedAssertion is a compact JWS taken apart.
@@ -170,9 +172,11 @@ func TestTheAssertionIsGatewaySignedAndNotTheCallersToken(t *testing.T) {
 	}
 
 	handler, err := New(Options{
-		Routes:       RouteTable{"/v1/pantry": {BaseURL: service.Origin(), Token: "svc-token", Principal: []string{"sub", "github_id"}}},
-		Assert:       minter,
-		Authenticate: func(*http.Request) (*Principal, error) { return &Principal{Sub: "user-1", Claims: callerClaims}, nil },
+		Routes: RouteTable{"/v1/pantry": {BaseURL: service.Origin(), Token: "svc-token", Principal: []string{"sub", "github_id"}}},
+		Assert: minter,
+		Authenticate: func(*http.Request) (*Principal, error) {
+			return &Principal{Sub: "user-1", Claims: auth.ClaimsFrom(callerClaims)}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("New refused: %v", err)
@@ -554,7 +558,7 @@ func TestNoAssertionIsMintedWithoutAMinterOrWithoutADeclaration(t *testing.T) {
 			authenticate := Authenticate(nil)
 			if tc.gated {
 				authenticate = func(*http.Request) (*Principal, error) {
-					return &Principal{Sub: "user-1", Claims: map[string]any{"sub": "user-1"}}, nil
+					return &Principal{Sub: "user-1", Claims: auth.ClaimsFrom(map[string]any{"sub": "user-1"})}, nil
 				}
 			}
 
@@ -616,7 +620,7 @@ func TestAPublicEntryIsRefusedAnAssertionEvenByATableThatBootWouldHaveRefused(t 
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodGet, "/v1/catalog/items", nil),
-		Principal{Sub: "user-1", Claims: map[string]any{"sub": "user-1"}}))
+		Principal{Sub: "user-1", Claims: auth.ClaimsFrom(map[string]any{"sub": "user-1"})}))
 
 	if got := service.Last(t).Header.Get(AssertionHeader); got != "" {
 		t.Errorf("an assertion was minted for a public route: %s. A public route has no verified caller, so that is a signed statement about a request nobody was required to make.", got)
