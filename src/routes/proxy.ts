@@ -24,11 +24,11 @@
 //      traversal is not filtered — it is not expressible. `%2e%2e` survives
 //      WHATWG URL normalisation, so this is the check that matters.
 //
-//   3. AN UPSTREAM FAILURE IS GUARD'S TO TRANSLATE. A 5xx, a 3xx or a dead
+//   3. AN UPSTREAM FAILURE IS GATEWAY'S TO TRANSLATE. A 5xx, a 3xx or a dead
 //      socket becomes a fixed 503 and nothing else. `ECONNREFUSED 10.0.3.7:8080`
 //      is the internal topology of a fleet and it must not reach whoever asked.
 //
-//   4. THE CREDENTIAL IS GUARD'S. See below.
+//   4. THE CREDENTIAL IS GATEWAY'S. See below.
 //
 // ## THE CREDENTIAL RULE, WHICH IS THE SECURITY CONTENT HERE
 //
