@@ -357,3 +357,40 @@ code change; nothing in this packet touches `package.json` or `bun.lock`. The
 equivalence tier did not need it — `bun` resolves `hono` and `jose` from its global
 cache when the reference is run as a script — which is why the Go tier was green
 while the TypeScript tier was not.
+---
+
+## Session notes, for whoever merges this
+
+**Other sessions were live in this repository while this packet ran.** Two worktrees,
+`wt-m39-gateway-go-auth-01` and `wt-m39-gateway-go-bff-01`, were working the sibling
+packets on their own branches at the same time, and a stale `bun` reference process
+belonging to an earlier session (`wt-m39-gateway-go-substrate-01`) was left running by
+that session and left running. None of them was touched: separate worktrees, separate
+branches, and the four `git worktree list` entries are disjoint from this packet's
+files.
+
+**`master` moved once underneath this branch** (1704270 → 083af70, "openapi + kit.ref:
+the last two occurrences of the old name in live files") and **there is no overlap**:
+the two files it changed are `kit.ref` and `openapi/v1.yaml`, and this branch changes
+neither. The `openapi/v1.yaml` change is `info.contact.url` — the repository rename —
+and no operation changed, so `api.gen.go` is unaffected and `bin/prime-go`'s
+regenerate-and-diff still agrees. This branch should merge as-is; it does not need a
+rebase, and re-merging would be a decision the manager owns rather than this report.
+
+**A symlink, and what it is.** `node_modules` in this worktree is a symlink to the
+main checkout's, created because a fresh `git worktree` does not install
+dependencies. It is gitignored, it is not part of the diff, and a reviewer will not
+see it. It is named here because it is the only thing in this worktree that is not
+reproducible from `git checkout`, and a successor who wonders why `bun test` fails in
+their own fresh worktree has the answer: run `bun install`, or link it the same way.
+
+**Final state, measured on the committed tree:**
+
+```
+$ ./bin/prime                -> == prime ok (bun 1.3.12)     exit 0
+$ ./bin/prime-go             -> suite: 93 passed, 0 failed    exit 0
+$ bun test                   -> 565 pass, 15 skip, 0 fail      exit 0
+$ ./test/proxyMutations.sh   -> proved: 27, not proved: 0      exit 0
+$ git status --short         -> (empty)
+$ git log --oneline          -> 6 commits on worker/gateway-go-proxy-01
+```
