@@ -441,7 +441,20 @@ func (b *Bff) Logout(w http.ResponseWriter, r *http.Request) {
 		drain(answer)
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		unusable(b.target(identitySession), answer.StatusCode, nil, false)
+		// `unreachable()`, NOT `unusable()`, and that is the reference's own choice
+		// rather than an omission: `src/bff/auth.ts`'s logout answers
+		// `revoked ? 204 : unreachable()`, so a non-revoking answer on THIS route is
+		// reported as "we could not complete the sign-out" and is not written to the
+		// log. The port answered `unusable()` here, which logged a line and named a
+		// different detail, and `internal/equivalence` found it on its first run with
+		// both answers printed.
+		//
+		// What the caller is NOT told is which of the two happened — `unreachable` and
+		// `unusable` are both a 503 with the same code — and that is correct: the
+		// sign-out itself has already succeeded locally either way, and the only
+		// thing left uncertain is how long a token may outlive its revocation.
+		drain(answer)
+		writeProblem(w, r, unreachable())
 	}
 }
 
@@ -588,13 +601,24 @@ func RequireSameOrigin(next http.Handler) http.Handler {
 // not *provably* same-origin, and this gate refuses what it cannot prove. curl
 // and the test suite state their origin; a browser never has to.
 func isSameOrigin(r *http.Request) bool {
-	site := joined(r.Header.Values("Sec-Fetch-Site"))
-	origin := joined(r.Header.Values("Origin"))
+	// The FIRST value, not a joined one, and that is MEASURED rather than assumed:
+	// the reference answers `200` — with the cookie — to a request carrying
+	// `Sec-Fetch-Site: same-origin` TWICE, so its framework hands the gate one value
+	// rather than `same-origin, same-origin`. The first version of this file joined
+	// them — the WHATWG `Headers` rule — and refused, and `internal/equivalence`
+	// reported the difference in all six browser scenarios with the reference's `200`
+	// on one side and this gate's `403` on the other.
+	//
+	// So the direction of the fix is the one the evidence points at, not the one that
+	// looks stricter: TypeScript is the reference, and a "stricter" gate that answers
+	// differently is a divergence.
+	site := firstValue(r.Header.Values("Sec-Fetch-Site"))
+	origin := firstValue(r.Header.Values("Origin"))
 
 	// Compared as a token, not as a string: a user agent that changed the casing of
 	// a header value would otherwise lock every browser out of sign-in, and
 	// case-folding four known tokens is not something an attacker can forge.
-	if site != "" && !strings.EqualFold(strings.TrimSpace(site), "same-origin") {
+	if site != "" && !strings.EqualFold(site, "same-origin") {
 		return false
 	}
 	if origin != "" && hostOf(origin) != r.Host {
@@ -608,15 +632,62 @@ func isSameOrigin(r *http.Request) bool {
 	return site != "" || origin != ""
 }
 
-// joined collapses repeated header lines the way the reference's framework does.
+// firstValue is the first value of a repeated header, trimmed, or "".
 //
-// `Header.Get` returns only the FIRST value, so a request carrying
-// `Sec-Fetch-Site: same-origin` twice would pass a gate it must fail. `Headers`
-// joins duplicates with ", ", so joining here is what keeps the two answers the
-// same — and it is why the generated router's own parameter error is routed to
-// this gate rather than to a `400` (`paramRefusal`).
-func joined(values []string) string {
-	return strings.TrimSpace(strings.Join(values, ", "))
+// Trimmed because a value's leading whitespace is significant to no one and Hono
+// trims it.
+func firstValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
+}
+
+// collapseRepeatedHeaders reduces a repeated single-valued header to its first
+// value, before the generated router reads it.
+//
+// # WHY THIS EXISTS, MEASURED
+//
+// `oapi-codegen` refuses a header parameter sent more than once and answers a
+// `text/plain` `400` before any handler runs. The reference has no such refusal and
+// no such answer: it answers `200` to a doubled `Sec-Fetch-Site: same-origin`.
+//
+// So without this middleware the Go service would answer `400 text/plain` to
+// something the reference serves, and the two answers would differ in status, in
+// content type and in whether a cookie was set. `internal/equivalence` has a case for
+// it precisely because this was found rather than foreseen.
+//
+// # AND WHY IT IS FIRST-VALUE RATHER THAN "REFUSE IT"
+//
+// Because the reference does not refuse it. Refusing a doubled `Sec-Fetch-Site` looks
+// stricter and is a divergence; the gate's job is to decide same-originness, and a
+// doubled header is a malformed request rather than a cross-site one. The first
+// value is what the reference's framework hands the gate, so that is what the gate
+// gets.
+//
+// # THE SCOPE IS A NAMED SET, AND THAT IS A LIMITATION
+//
+// The two names are the contract's two header parameters on the browser surface.
+// Named rather than derived, because deriving them means parsing
+// `internal/api/api.gen.go` for parameter declarations at run time, which is more
+// machinery than two constants justify — and the tripwire is elsewhere: a NEW header
+// parameter this does not collapse would be refused by the generated router with a
+// `text/plain` `400`, and the equivalence check compares every operation the document
+// declares, so the day one is added the difference appears as a red rather than as a
+// surprise.
+func collapseRepeatedHeaders(next http.Handler) http.Handler {
+	// `http.CanonicalHeaderKey` of each, computed ONCE at construction rather than
+	// per request: this runs on every request in the service.
+	names := []string{http.CanonicalHeaderKey("Sec-Fetch-Site"), http.CanonicalHeaderKey("Origin")}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, name := range names {
+			if values := r.Header[name]; len(values) > 1 {
+				r.Header[name] = values[:1]
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // refuseLogin maps identity's refusals, and nothing else.

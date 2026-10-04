@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/cafaye/gateway/internal/api"
 )
@@ -110,28 +112,94 @@ func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 
 	traceID := newTraceID()
 
-	body := api.Problem{
-		Type:   problemTypeBase + string(p.Code),
-		Title:  title,
-		Status: p.Status,
-		Detail: p.Detail,
-		// The path, never the query: a caller who put a credential in one
-		// should not find it echoed back in an error body.
-		Instance: r.URL.Path,
-		Code:     p.Code,
-		TraceID:  traceID,
-	}
-	// Set last and only for a 422, so the key is absent rather than empty: a
-	// client rendering `errors` must be able to tell "no fields failed" from
-	// "this response is not about fields".
+	// HAND-RENDERED, in the reference's field order, and that is the whole reason
+	// this is not `writeJSON(w, r, int(p.Status), api.Problem{…})`.
+	//
+	// `api.Problem` declares its fields ALPHABETICALLY — `oapi-codegen` emits a
+	// struct in the order it finds them in the document's `properties` map, and
+	// that is sorted — so marshalling it writes
+	//
+	//	{"code":…,"detail":…,"instance":…,"status":…,"title":…,"trace_id":…,"type":…}
+	//
+	// where `src/problem.ts` writes
+	//
+	//	{"type":…,"title":…,"status":…,"detail":…,"instance":…,"code":…,"trace_id":…}
+	//
+	// and `internal/equivalence` compares bodies BYTE FOR BYTE. Every problem
+	// document in this service differed from the reference at byte 2, and not one of
+	// them differed in anything a client can read.
+	//
+	// It went unnoticed because this envelope was PORTED BUT NOT YET REACHABLE — the
+	// substrate packet wrote the document for five operations that all declined — so
+	// the first packet to make a rejection reachable is the one that found it. That
+	// is worth recording as a shape: an envelope nothing reaches is an envelope
+	// nothing has compared.
+	//
+	// `src/index.ts`'s `{deps: …}` had the same problem and the same fix, which is
+	// `orderedDeps`, and between them these are the only two places this repository
+	// builds JSON as text.
+	var b strings.Builder
+	b.WriteString(`{"type":`)
+	writeJSONString(&b, problemTypeBase+string(p.Code))
+	b.WriteString(`,"title":`)
+	writeJSONString(&b, title)
+	b.WriteString(`,"status":`)
+	b.WriteString(strconv.Itoa(int(p.Status)))
+	b.WriteString(`,"detail":`)
+	writeJSONString(&b, p.Detail)
+	// The path, never the query: a caller who put a credential in one should not
+	// find it echoed back in an error body.
+	b.WriteString(`,"instance":`)
+	writeJSONString(&b, r.URL.Path)
+	b.WriteString(`,"code":`)
+	writeJSONString(&b, string(p.Code))
+	b.WriteString(`,"trace_id":`)
+	writeJSONString(&b, traceID)
+
+	// `errors` LAST and only for a 422, so the key is absent rather than empty: a
+	// client rendering `errors` must be able to tell "no fields failed" from "this
+	// response is not about fields".
+	//
+	// `field` before `code`, and NOT alphabetically: `api.FieldError`'s generated
+	// order is `code, field` for the reason `api.Problem` is alphabetical, and the
+	// reference's literal is `{ field, code }`.
 	if p.Status == api.N422 && len(p.Errors) > 0 {
-		fields := p.Errors
-		body.Errors = &fields
+		b.WriteString(`,"errors":[`)
+		for i, field := range p.Errors {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(`{"field":`)
+			writeJSONString(&b, field.Field)
+			b.WriteString(`,"code":`)
+			writeJSONString(&b, field.Code)
+			b.WriteByte('}')
+		}
+		b.WriteByte(']')
 	}
+	b.WriteByte('}')
 
 	w.Header().Set("Content-Type", problemContentType)
 	w.Header().Set("X-Trace-Id", traceID)
-	writeJSON(w, r, int(p.Status), body)
+	writeRawJSON(w, r, int(p.Status), b.String())
+}
+
+// writeJSONString appends one JSON string, escaped by the encoder.
+//
+// `json.Marshal` and not a hand-rolled escaper, because `detail` is caller-chosen
+// and `instance` is caller-influenced: a `detail` containing a quote or a backslash
+// would otherwise produce a body that is not JSON at all, on a path whose whole job
+// is to hand a document to a browser. The error is handled rather than ignored
+// because a handler that swallows an error is the pattern this repository keeps
+// warning about — and the answer to "a string cannot fail to marshal" is to write a
+// valid empty string and carry on, not to panic on the error path of an error path.
+func writeJSONString(b *strings.Builder, value string) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		b.WriteString(`""`)
+		return
+	}
+	b.Write(encoded)
 }
 
 // writeJSON writes a body, and is where the JSON content type is decided once

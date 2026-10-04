@@ -124,11 +124,98 @@ var comparedHeaders = []string{
 	"X-RateLimit-Reset",
 }
 
-// case is one request, asked of both sides.
-type caseSpec struct {
-	name   string
+// route is one `(method, path)` pair, declared here rather than imported from
+// `internal/httpapi` — whose `routes_test.go` has its own, for its own check, in the
+// other direction (it walks the live router rather than reading the generated file).
+// Two declarations of one shape in two packages checking two different halves is the
+// right answer: sharing them would make one package's test depend on the other's.
+type route struct {
 	method string
 	path   string
+}
+
+func (r route) String() string { return r.method + " " + r.path }
+
+// case is one request, asked of both sides.
+//
+// `headers`, `extra`, `body` and `signIn` exist because the browser surface cannot
+// be driven without them: `/auth/register` and `/auth/login` are POSTs with a JSON
+// body, the origin gate reads two headers, a duplicated header is its own case,
+// and a signed-in request needs a cookie the implementation under test minted. They
+// are all zero for the derived contract cases and the edge cases, which is what
+// keeps those two halves as they were.
+type caseSpec struct {
+	name    string
+	method  string
+	path    string
+	headers map[string]string
+
+	// `Name: value` lines ADDED, so a case can send the same header twice. `Set`
+	// cannot express that and the duplicated-header difference is one of the things
+	// this comparison exists to find.
+	extra []string
+
+	body string
+
+	// signIn logs in against the SAME base URL first and presents the cookie.
+	signIn bool
+
+	// originMatchesBase sends `Origin: <the base URL this case is asked at>`.
+	// Per-side, for the same reason `signIn` is: the two sides are on different
+	// ephemeral ports and a fixed value would name neither.
+	originMatchesBase bool
+}
+
+// signIn is one exchange against a base URL, returning a `Cookie` header value.
+//
+// It is a plain `POST /auth/login` with `Sec-Fetch-Site: same-origin` and the same
+// body `browserCases` sends, because the point is to obtain a cookie the other side
+// of the comparison cannot have — so a scenario where login is refused (a locked
+// account, a withdrawn session) reports the failure rather than pretending the case
+// ran. That is deliberate: a silent "no cookie, carry on" would turn a signed-in
+// case into a signed-out one and the comparison would still be green.
+func signIn(base string) (string, error) {
+	req, err := http.NewRequest(http.MethodPost, base+"/auth/login", strings.NewReader(loginBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	client := &http.Client{Timeout: requestTimeout}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+
+	for _, c := range res.Cookies() {
+		if c.Name == sessionCookieName {
+			return c.Name + "=" + c.Value, nil
+		}
+	}
+	return "", fmt.Errorf("the sign-in exchange answered %d and set no %s cookie, so the case that follows would silently be a signed-OUT case", res.StatusCode, sessionCookieName)
+}
+
+// sessionCookieName is read out of the service rather than typed, so a rename
+// cannot leave this package looking for a cookie nobody sets and reporting the
+// signed-in cases as "no cookie" forever.
+const sessionCookieName = "__Host-bff-session"
+
+// loginBody is what `signIn` and the browser cases send. A constant, and shared,
+// so the two cannot drift into sending different things.
+const loginBody = `{"email":"a@example.test","password":"pw"}`
+
+// withHeaders returns a copy carrying headers, so a table literal stays readable
+// and a case is never mutated after it is built.
+func (c caseSpec) withHeaders(headers map[string]string) caseSpec {
+	c.headers = headers
+	return c
+}
+
+func (c caseSpec) withBody(body string) caseSpec {
+	c.body = body
+	return c
 }
 
 // contractCases is every operation the generated document declares, derived from
@@ -206,7 +293,156 @@ var edgeCases = []caseSpec{
 	{name: "a very long path", method: http.MethodGet, path: "/" + strings.Repeat("x", 512)},
 }
 
-// answer is what one side said.
+// browserCases are the cases the BROWSER SURFACE needs, and they are only asked
+// in a scenario that mounts it.
+//
+// Two halves, and the split is the same as `contractCases` versus `edgeCases`:
+//
+//   - The first is DERIVED: every `/auth` operation the generated document
+//     declares, asked as a same-origin request with a body, so each reaches its
+//     handler instead of stopping at the origin gate. Derived because a
+//     hand-written list of four routes is a second inventory of the document, and
+//     it would compare `403`s for a route added next week while still looking
+//     complete.
+//   - The second is the packet's OWN LIST, in the order the packet states it: a
+//     correct login, a wrong password, an unknown account, a correct session, an
+//     expired session, a cross-origin POST, a same-origin POST, and the two
+//     header shapes. Those are not operations — they are what a request looks
+//     like — so typing them is legitimate and deriving them would be a category
+//     error.
+//
+// # WHAT IS NOT HERE, AND WHY
+//
+// A REVOKED KEY and a VALID KEY. Both belong to the API-key gate, which is
+// another packet and which this repository cannot serve yet, so there is nothing
+// to compare and pretending otherwise would be a case comparing two `404`s. The
+// `bare` scenario's derived `/v1/*` cases already cover the shape those two would
+// have, and the packet's own report names them as not covered.
+func browserCases(t *testing.T, canSignIn bool) ([]caseSpec, error) {
+	t.Helper()
+
+	declared, err := declaredAuthRoutes(t)
+	if err != nil {
+		return nil, err
+	}
+	if len(declared) == 0 {
+		return nil, fmt.Errorf("equivalence: read no /auth operation from internal/api/api.gen.go, so the derived browser cases below pass vacuously")
+	}
+
+	// The first half: DERIVED. Every `/auth` operation the generated document
+	// declares, asked as a same-origin request with a body so each reaches its
+	// handler instead of stopping at the origin gate. Derived because a
+	// hand-written list of four routes is a second inventory of the document, and
+	// it would compare `403`s for a route added next week while still looking
+	// complete.
+	cases := make([]caseSpec, 0, len(declared)+16)
+	for _, r := range declared {
+		spec := caseSpec{
+			name:    "same-origin " + r.String(),
+			method:  r.method,
+			path:    r.path,
+			headers: map[string]string{"Sec-Fetch-Site": "same-origin"},
+		}
+		if r.method != http.MethodGet {
+			spec.body = loginBody
+		}
+		cases = append(cases, spec)
+	}
+
+	// The signed-in half. `canSignIn` is DERIVED from the scenario's own overrides,
+	// so a scenario that refuses a login simply is not asked these. Asking them
+	// anyway would fail in `signIn` — loudly, and about the wrong thing.
+	if canSignIn {
+		cases = append(cases,
+			// A CORRECT SESSION, on both the read and the write. Signed in, so the
+			// cookie is one the implementation under test minted itself.
+			caseSpec{name: "a correct session on the read", method: http.MethodGet, path: "/auth/me", signIn: true},
+			caseSpec{name: "a correct session signing out", method: http.MethodPost, path: "/auth/logout", signIn: true,
+				headers: map[string]string{"Sec-Fetch-Site": "same-origin"}},
+
+			// A VALID SESSION COOKIE DOES NOT MAKE A CROSS-ORIGIN POST WORK. This is
+			// a different case from the cross-origin ones below, and the reason it
+			// exists: those carry no cookie, so a gate that only checked for a cookie
+			// would also pass them.
+			caseSpec{name: "a cross-origin logout with a live cookie", method: http.MethodPost, path: "/auth/logout", signIn: true,
+				headers: map[string]string{"Sec-Fetch-Site": "cross-site"}},
+		)
+	}
+
+	return append(cases,
+		// A CROSS-ORIGIN POST, on each mutating route, and it must be refused. The
+		// refusal is the CSRF defence, so this is the case that carries the property
+		// the packet calls property 1.
+		caseSpec{name: "a cross-origin register", method: http.MethodPost, path: "/auth/register", body: loginBody,
+			headers: map[string]string{"Sec-Fetch-Site": "cross-site"}},
+		caseSpec{name: "a cross-origin login", method: http.MethodPost, path: "/auth/login", body: loginBody,
+			headers: map[string]string{"Sec-Fetch-Site": "cross-site"}},
+
+		// SAME-SITE is a sibling subdomain, and a Lax cookie IS sent to one, so it
+		// has something to spend on its parent.
+		caseSpec{name: "a same-site login", method: http.MethodPost, path: "/auth/login", body: loginBody,
+			headers: map[string]string{"Sec-Fetch-Site": "same-site"}},
+
+		// The `Origin` fallback, both directions: a matching host is allowed even
+		// when a TLS-terminating proxy rewrote the scheme, and another host is not.
+		//
+		// `originMatchesBase` rather than a literal, because the two sides are asked
+		// at DIFFERENT ephemeral ports: a fixed `Origin` would name neither, the
+		// "names this host" case would compare a REFUSAL on both sides, and the
+		// comparison would be green for the wrong reason.
+		caseSpec{name: "an Origin naming this host", method: http.MethodPost, path: "/auth/login", body: loginBody,
+			originMatchesBase: true},
+		caseSpec{name: "an Origin naming another host", method: http.MethodPost, path: "/auth/login", body: loginBody,
+			headers: map[string]string{"Origin": "https://evil.test"}},
+
+		// No origin signal at all: not *provably* same-origin, so refused.
+		caseSpec{name: "no origin signal at all", method: http.MethodPost, path: "/auth/login", body: loginBody},
+
+		// A DUPLICATED header. The generated router refuses it before the handler
+		// reaches it; the reference joins the lines. The two must still agree.
+		caseSpec{name: "Sec-Fetch-Site sent twice", method: http.MethodPost, path: "/auth/login", body: loginBody,
+			extra: []string{"Sec-Fetch-Site: same-origin", "Sec-Fetch-Site: same-origin"}},
+
+		// A cookie no store has ever heard of: a restart, a swept map.
+		caseSpec{name: "a session the store has forgotten", method: http.MethodGet, path: "/auth/me",
+			headers: map[string]string{"Cookie": sessionCookieName + "=not-a-real-session"}},
+
+		// A body that is not an object, and one past the cap. Both are refusals that
+		// never reach identity, and both sides must refuse identically.
+		caseSpec{name: "a body that is not an object", method: http.MethodPost, path: "/auth/register",
+			body: `[{"email":"a@example.test"}]`, headers: map[string]string{"Sec-Fetch-Site": "same-origin"}},
+		caseSpec{name: "a body past the cap", method: http.MethodPost, path: "/auth/register",
+			body:    `{"email":"a@example.test","password":"` + strings.Repeat("x", 4<<10) + `"}`,
+			headers: map[string]string{"Sec-Fetch-Site": "same-origin"}},
+	), nil
+}
+
+// declaredAuthRoutes is the `/auth` subset of the generated registrations, read
+// with the same pattern `contractCases` uses rather than typed out.
+//
+// A subset rather than a new pattern: `contractCases` already proved the pattern
+// finds registrations at all, and a second pattern that silently matched nothing
+// would make the browser half of the comparison empty while it looked complete.
+func declaredAuthRoutes(t *testing.T) ([]route, error) {
+	t.Helper()
+
+	source, err := os.ReadFile(filepath.Join("..", "api", "api.gen.go"))
+	if err != nil {
+		return nil, err
+	}
+
+	var routes []route
+	for _, match := range generatedRegistration.FindAllStringSubmatch(string(source), -1) {
+		path := match[2]
+		if !strings.HasPrefix(path, "/auth/") {
+			continue
+		}
+		routes = append(routes, route{method: strings.ToUpper(match[1]), path: path})
+	}
+	sort.Slice(routes, func(i, j int) bool { return routes[i].String() < routes[j].String() })
+	return routes, nil
+}
+
 type answer struct {
 	status  int
 	headers http.Header
@@ -220,9 +456,49 @@ func ask(t *testing.T, base string, spec caseSpec) answer {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, spec.method, base+spec.path, nil)
+	var reader io.Reader
+	if spec.body != "" {
+		reader = strings.NewReader(spec.body)
+	}
+	req, err := http.NewRequestWithContext(ctx, spec.method, base+spec.path, reader)
 	if err != nil {
 		t.Fatalf("%s %s is not a request this check can build: %v", spec.method, spec.path, err)
+	}
+	// `Content-Type` on a body-bearing case only. A body with no content type is
+	// something neither implementation is contracted to read, and the browser
+	// surface's cap and object check both happen before it looks.
+	if spec.body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, value := range spec.headers {
+		req.Header.Set(name, value)
+	}
+	// Raw lines rather than a second map, because the case that needs one is a
+	// DUPLICATED header and `Header.Set` cannot express that. The generated router
+	// refuses a repeated `Sec-Fetch-Site` before the handler is reached and the
+	// reference has no such refusal — which is one of the reasons
+	// `internal/httpapi` installs its own `ErrorHandlerFunc`.
+	for _, line := range spec.extra {
+		name, value, found := strings.Cut(line, ": ")
+		if !found {
+			t.Fatalf("extra header %q is not `Name: value`", line)
+		}
+		req.Header.Add(name, value)
+	}
+
+	// A SIGNED-IN case fetches its cookie first, PER SIDE: the session id is minted
+	// by the implementation under test, so the two sides hold different ids and one
+	// shared header would be a session neither of them knows. That is why this is a
+	// field on the case rather than a constant in the table.
+	if spec.signIn {
+		cookie, err := signIn(base)
+		if err != nil {
+			t.Fatalf("%s %s could not be asked signed-in: %v", spec.method, spec.path, err)
+		}
+		req.Header.Set("Cookie", cookie)
+	}
+	if spec.originMatchesBase {
+		req.Header.Set("Origin", base)
 	}
 
 	// The client follows nothing: a redirect is a difference between two servers
@@ -281,10 +557,25 @@ func diff(spec caseSpec, scenario string, reference, port answer) string {
 
 	// Byte equality, with the first byte that differs named: "the bodies differ"
 	// over a 400-character refusal body is a sentence nobody reads to the end.
-	if reference.body != port.body {
-		fmt.Fprintf(&b, "\n    body:     typescript %s", oneLine(reference.body))
-		fmt.Fprintf(&b, "\n              go           %s", oneLine(port.body))
-		if at := firstDifference(reference.body, port.body); at >= 0 {
+	//
+	// `trace_id` IS NORMALISED, and that is the one exclusion in a byte-for-byte
+	// comparison, so it is worth saying exactly why it is not a weakening: the field
+	// is 32 hex characters of `crypto/rand`, generated per response on BOTH sides,
+	// so it cannot agree and comparing it would fail every problem document forever
+	// — a red that means nothing and a fix that would be to make the field a
+	// constant, which is the opposite of what it is for.
+	//
+	// What is NOT normalised is its PRESENCE or its SHAPE, and both are asserted
+	// below. A side that dropped the field, renamed it, or emitted a non-hex value
+	// still fails: `TestBothSidesCarryAWellFormedTraceId` is the check, and it is
+	// separate so a reader can see which part of the envelope is frozen and which
+	// part is required to differ.
+	referenceBody := normaliseTraceID(reference.body)
+	portBody := normaliseTraceID(port.body)
+	if referenceBody != portBody {
+		fmt.Fprintf(&b, "\n    body:     typescript %s", oneLine(referenceBody))
+		fmt.Fprintf(&b, "\n              go           %s", oneLine(portBody))
+		if at := firstDifference(referenceBody, portBody); at >= 0 {
 			fmt.Fprintf(&b, "\n    first difference at byte %d", at)
 		}
 	}
@@ -296,7 +587,11 @@ func diff(spec caseSpec, scenario string, reference, port answer) string {
 		return ""
 	}
 
-	fmt.Fprintf(&b, "\n  %s %s  (scenario %s)", spec.method, spec.path, scenario)
+	// The scenario, the request AND the case's NAME go on LAST and only when there is
+	// something to report. The name is the part a reader needs: several cases share
+	// a method and a path, and "POST /auth/login differs" does not say which of the
+	// seven login cases did.
+	fmt.Fprintf(&b, "\n  [%s] %s %s  (scenario %s)", spec.name, spec.method, spec.path, scenario)
 	return b.String()
 }
 
@@ -352,6 +647,23 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 
 	cases := append(append([]caseSpec{}, contract...), edgeCases...)
 
+	// The TOTAL, computed before the loop rather than inside it, because the case
+	// list is a function of the scenario and the summary has to be the number of
+	// comparisons that were actually made — not `len(cases) x len(scenarios)`,
+	// which would be wrong the moment a scenario mounts the browser surface.
+	comparisons := 0
+	for _, scenario := range scenarios {
+		n := len(cases)
+		if hasBrowserSurface(scenario) {
+			browser, err := browserCases(t, canSignIn(scenario))
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			n += len(browser)
+		}
+		comparisons += n
+	}
+
 	bun, err := exec.LookPath("bun")
 	if err != nil {
 		skipOrFail(t, "bun is not on PATH, so the TypeScript reference cannot be stood up")
@@ -376,10 +688,22 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 
+		// The browser cases only exist where there IS a browser surface, and asking
+		// them elsewhere would compare two `404`s and call it agreement about the
+		// surface. So the list is a function of the scenario rather than a constant.
+		theseCases := append(append([]caseSpec{}, contract...), edgeCases...)
+		if hasBrowserSurface(scenario) {
+			browser, err := browserCases(t, canSignIn(scenario))
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			theseCases = append(theseCases, browser...)
+		}
+
 		referenceURL, stop := standUpReference(t, bun, scenario)
 		goServer := httptest.NewServer(mustHandler(t, options))
 
-		for _, spec := range cases {
+		for _, spec := range theseCases {
 			want := ask(t, referenceURL, spec)
 			got := ask(t, goServer.URL, spec)
 
@@ -394,14 +718,14 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 	}
 
 	if differences > 0 {
-		t.Errorf("%d of %d case/scenario combinations differ. The TypeScript answer is the correct one: fix the Go side, or — if the reference is genuinely wrong — report it rather than changing it here.", differences, len(cases)*len(scenarios))
+		t.Errorf("%d of %d case/scenario combinations differ. The TypeScript answer is the correct one: fix the Go side, or — if the reference is genuinely wrong — report it rather than changing it here.", differences, comparisons)
 	}
 
 	// The count is printed on a green run too. A check that reports nothing when
 	// it agrees has no evidence in it, and "it passed" and "it passed and told me
 	// what it compared" are different results.
 	t.Logf("equivalence: %d cases x %d scenarios = %d comparisons, %d differences (status, Content-Type, %d compared headers, body bytes)",
-		len(cases), len(scenarios), len(cases)*len(scenarios), differences, len(comparedHeaders))
+		len(cases), len(scenarios), comparisons, differences, len(comparedHeaders))
 }
 
 func mustHandler(t *testing.T, options httpapi.Options) http.Handler {
@@ -664,6 +988,89 @@ func TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas(t *testing.T) {
 	if len(extra) > 0 {
 		t.Errorf("this package has scenario(s) %v and test/equivalence/reference.ts does not, so the reference would fall back to a configuration it was not asked for", extra)
 	}
+}
+
+// traceIDField is the one field in this comparison that is REQUIRED to differ
+// between the two answers, and the regex is what makes it an assertion rather than
+// a comment: a side that dropped the key, renamed it, or emitted a non-hex value
+// does not match, and `TestBothSidesCarryAWellFormedTraceId` fails.
+var traceIDField = regexp.MustCompile(`"trace_id":"[0-9a-f]{32}"`)
+
+// normaliseTraceID replaces the field with a constant so the rest of the document
+// can be compared byte for byte.
+func normaliseTraceID(body string) string {
+	return traceIDField.ReplaceAllString(body, `"trace_id":"<per-response>"`)
+}
+
+// TestBothSidesCarryAWellFormedTraceId is what the normalisation above is allowed
+// to assume, and it is asserted on BOTH sides for every problem document compared.
+//
+// The normalisation would be a hole if it also hid a side that had LOST the field,
+// or that emitted three of them, or that emitted something other than 32 hex
+// characters. So the shape is checked here instead: every problem document both
+// implementations produced in this run carries exactly one, it is 32 hex
+// characters, and the `X-Trace-Id` header — which the comparison already requires
+// to be present on both sides — matches it.
+//
+// Derived from the RUN rather than from a table of cases, so a document that stops
+// being a problem document is caught rather than skipped.
+func TestBothSidesCarryAWellFormedTraceId(t *testing.T) {
+	bun, err := exec.LookPath("bun")
+	if err != nil {
+		skipOrFail(t, "bun is not on PATH, so the TypeScript reference cannot be stood up")
+	}
+
+	var checked, documents int
+	for _, scenario := range scenarios {
+		if !hasBrowserSurface(scenario) {
+			// The three non-browser scenarios answer `404`, which is the v0 envelope
+			// and carries no trace id at all. Saying so is the point: they are skipped
+			// for a NAMEABLE reason rather than by a filename pattern.
+			continue
+		}
+
+		options, err := optionsFor(scenario)
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		referenceURL, stop := standUpReference(t, bun, scenario)
+		goServer := httptest.NewServer(mustHandler(t, options))
+		checked++
+
+		specs, err := browserCases(t, canSignIn(scenario))
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		for _, spec := range specs {
+			for _, base := range []string{referenceURL, goServer.URL} {
+				res := ask(t, base, spec)
+				if !strings.Contains(res.headers.Get("Content-Type"), "problem+json") {
+					continue
+				}
+				documents++
+
+				matches := traceIDField.FindAllString(res.body, -1)
+				if len(matches) != 1 {
+					t.Errorf("%s %s against %s: %d trace_id field(s) in a problem document (%q), and it must be exactly one of 32 hex characters",
+						spec.method, spec.path, base, len(matches), res.body)
+					continue
+				}
+				value := strings.TrimSuffix(strings.TrimPrefix(matches[0], `"trace_id":"`), `"`)
+				if header := res.headers.Get("X-Trace-Id"); header != value {
+					t.Errorf("%s %s against %s: the body's trace_id is %s and the X-Trace-Id header is %q. core's conventions say they are the same value, and a mismatch is how a support ticket stops being traceable.",
+						spec.method, spec.path, base, value, header)
+				}
+			}
+		}
+
+		goServer.Close()
+		stop()
+	}
+
+	if checked == 0 || documents == 0 {
+		t.Fatalf("checked %d browser scenario(s) and saw %d problem document(s). No trace_id was verified, and the normalisation in `diff` would then be hiding something it should not.", checked, documents)
+	}
+	t.Logf("trace id: %d problem document(s) across %d browser scenario(s), each with exactly one 32-hex trace_id matching its X-Trace-Id header", documents, checked)
 }
 
 func isScenario(name string) bool {

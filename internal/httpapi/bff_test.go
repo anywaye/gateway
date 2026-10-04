@@ -16,6 +16,67 @@ import (
 	"github.com/cafaye/gateway/internal/sessiontest"
 )
 
+// The problem envelope is the REFERENCE's bytes, in the reference's field order.
+//
+// Every other test here asserts something about a refusal's status, its code or its
+// detail, and all three can be right while the DOCUMENT is wrong — which is exactly
+// what happened. `api.Problem` declares its fields alphabetically because
+// `oapi-codegen` emits a struct in the order it finds them in the document's
+// `properties` map, so marshalling it writes `code, detail, instance, status, title,
+// trace_id, type` where `src/problem.ts` writes `type, title, status, detail,
+// instance, code, trace_id`. Byte-identical content, different order, and
+// `internal/equivalence` reported 13 differences on it.
+//
+// It went unnoticed because the substrate packet PORTED the envelope for five
+// operations that all declined: an envelope nothing reaches is an envelope nothing
+// has compared. This is the test that would have caught it earlier, and it is here
+// rather than only in the equivalence check so the ordering is stated in the package
+// that owns it.
+//
+// `trace_id` is normalised and nothing else is, because it is the one field that is
+// required to differ — see `internal/equivalence`'s `normaliseTraceID` for why that
+// is safe rather than a hole.
+func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
+	h := build(t, func(*http.Request) (*http.Response, error) {
+		return answer(http.StatusUnauthorized, `{"error":"invalid_credentials"}`), nil
+	})
+
+	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
+	body := withoutTraceID(readBody(t, res))
+
+	want := `{"type":"https://errors.cafaye.com/unauthorized","title":"Unauthorized","status":401,` +
+		`"detail":"email or password is not correct","instance":"/auth/login","code":"unauthorized","trace_id":"<id>"}`
+	if body != want {
+		t.Errorf("the problem document is\n  %s\nand it must be\n  %s\n\nThe field ORDER is part of the contract: `internal/equivalence` compares bodies byte for byte, and `api.Problem`'s generated order is alphabetical where `src/problem.ts` is not.", body, want)
+	}
+
+	// And the 422's `errors`, which is the one optional key: absent rather than
+	// empty on a status that has none.
+	created := build(t, func(*http.Request) (*http.Response, error) {
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+	}).do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
+
+	if strings.Contains(readBody(t, created), `"errors"`) {
+		t.Errorf("a 201 carries `errors`: %s. The key is absent rather than empty so a client rendering a form can tell \"no fields failed\" from \"this response is not about fields\".", readBody(t, created))
+	}
+}
+
+// The 422's `errors` array is rendered `field` before `code`, last, and only when
+// there is something in it.
+func TestAValidationFailureKeepsFieldBeforeCodeAndIsLast(t *testing.T) {
+	h := build(t, func(*http.Request) (*http.Response, error) {
+		return answer(http.StatusUnprocessableEntity, `{"errors":[{"field":"email","code":"not_an_email"},{"field":"password","code":"too_short"}]}`), nil
+	})
+
+	res := h.do(t, http.MethodPost, "/auth/register", `{"email":"nope","password":"x"}`, sameOrigin())
+
+	body := withoutTraceID(readBody(t, res))
+	tail := `,"errors":[{"field":"email","code":"not_an_email"},{"field":"password","code":"too_short"}]}`
+	if !strings.HasSuffix(body, tail) {
+		t.Errorf("the 422 is\n  %s\nand it must END with\n  %s\n\n`errors` is last and each entry is `field` then `code`: the reference's literal is `{ field, code }`, and `api.FieldError`'s generated order is the reverse because the generator sorts.", body, tail)
+	}
+}
+
 // The browser surface's properties, in the order `src/bff/auth.test.ts` states
 // them and in the order the packet lists them.
 //
@@ -394,29 +455,83 @@ func TestTheReadIsNotGated(t *testing.T) {
 	}
 }
 
-// A header sent twice is not a value the contract accepts, and the generated
-// router refuses it before the handler is reached. The reference has no such
-// refusal — its framework joins the two lines — so the answer here has to be the
-// origin gate's.
-func TestAHeaderSentTwiceIsTheOriginGatesAnswer(t *testing.T) {
-	h := build(t, func(*http.Request) (*http.Response, error) {
-		t.Error("identity was asked for a request with a duplicated header")
-		return answer(http.StatusOK, `{}`), nil
-	})
+// A header sent TWICE is not refused, and the FIRST value is what counts.
+//
+// Measured, not chosen: the reference answers `200` — with the cookie — to a
+// request carrying `Sec-Fetch-Site: same-origin` twice, so its framework hands the
+// gate ONE value. The first version of this port applied the WHATWG `Headers` rule
+// instead, joined the two into `same-origin, same-origin` and refused; and the
+// generated router refused even earlier, with a `text/plain` 400 that appears
+// nowhere in the contract. `internal/equivalence` reported both, in all six browser
+// scenarios.
+//
+// So two properties, and both are here: the generated router's own refusal is
+// UNREACHABLE for this header, and the gate reads the first value.
+func TestAHeaderSentTwiceTakesTheFirstValue(t *testing.T) {
+	for _, first := range []string{"same-origin", "cross-site"} {
+		t.Run(first, func(t *testing.T) {
+			h := build(t, func(*http.Request) (*http.Response, error) {
+				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+			})
 
-	req := httptest.NewRequest(http.MethodPost, "https://gateway.test/auth/login", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
-	req.Header.Add("Sec-Fetch-Site", "same-origin")
-	req.Header.Add("Sec-Fetch-Site", "same-origin")
+			req := httptest.NewRequest(http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
+			req.Header.Add("Sec-Fetch-Site", first)
+			req.Header.Add("Sec-Fetch-Site", "cross-site")
 
-	rec := httptest.NewRecorder()
-	h.handler.ServeHTTP(rec, req)
+			rec := httptest.NewRecorder()
+			h.handler.ServeHTTP(rec, req)
+			res := rec.Result()
 
-	res := rec.Result()
-	if res.StatusCode != http.StatusForbidden {
-		t.Errorf("Sec-Fetch-Site sent twice answered %d. The reference joins the lines, gets `same-origin, same-origin`, and refuses it with 403 — so the generator's own 400 is a difference no client asked for.", res.StatusCode)
+			want := http.StatusCreated
+			if first != "same-origin" {
+				want = http.StatusForbidden
+			}
+			if res.StatusCode != want {
+				t.Errorf("Sec-Fetch-Site sent twice, first value %q, answered %d and the first value's answer is %d. The reference takes the first value; refusing a doubled header would look stricter and would be a divergence.", first, res.StatusCode, want)
+			}
+			if got := res.Header.Get("Content-Type"); strings.HasPrefix(got, "text/plain") {
+				t.Errorf("the answer is %q, which is the GENERATED ROUTER's refusal. `collapseRepeatedHeaders` exists so the router never sees a repeated header, and a body shape that is not in `openapi/v1.yaml` must never reach a caller.", got)
+			}
+		})
 	}
-	if strings.Contains(readBody(t, res), "Sec-Fetch-Site") {
-		t.Errorf("the refusal names the header: %s. A body that describes the gateway's internals to an unauthenticated caller is the thing every other refusal here avoids.", readBody(t, res))
+}
+
+// `paramRefusal` is unreachable for the two headers the contract declares, and that
+// is asserted rather than asserted-about: each is doubled and the request must reach
+// its handler.
+//
+// The tripwire for a NEW header parameter. If the document adds one that
+// `collapseRepeatedHeaders` does not collapse, this test is not what catches it —
+// `internal/equivalence` is, because it compares every operation the document
+// declares. What this one says is that the guard is still doing nothing, which is
+// the state a reader of `paramRefusal` needs to know.
+func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
+	for _, header := range []string{"Sec-Fetch-Site", "Origin"} {
+		t.Run(header, func(t *testing.T) {
+			h := build(t, func(*http.Request) (*http.Response, error) {
+				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+			})
+
+			value := map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "https://gateway.test"}[header]
+
+			req := httptest.NewRequest(http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
+			req.Header.Add(header, value)
+			req.Header.Add(header, value)
+
+			rec := httptest.NewRecorder()
+			h.handler.ServeHTTP(rec, req)
+			res := rec.Result()
+
+			// The handler's answer is `201`. `paramRefusal`'s is the v0 `404` and
+			// the generator's default is a `text/plain` `400`, so all three are
+			// distinguishable and only one of them means the handler ran.
+			if res.StatusCode != http.StatusCreated {
+				t.Errorf("%s sent twice answered %d, and it must reach the handler and be answered there. A duplicate-header refusal is the generated router's, and it is not an answer this contract describes.", header, res.StatusCode)
+			}
+			if len(h.calls) != 1 {
+				t.Errorf("%s sent twice made %d call(s) to identity, and the handler behind it was reached exactly once", header, len(h.calls))
+			}
+		})
 	}
 }
 
@@ -841,6 +956,46 @@ func TestSigningOutWhileIdentityIsDownStillSignsOutAndSays503(t *testing.T) {
 	}
 }
 
+// Identity answering something that is NOT a revocation is reported as unreachable,
+// which is the reference's own choice and not an omission.
+//
+// `src/bff/auth.ts`'s logout is `revoked ? 204 : unreachable()`. The port answered
+// `unusable()` — "identity answered with something this contract does not cover" —
+// which is a different `detail` and an extra log line, and `internal/equivalence`
+// found the difference on its first run with both answers printed.
+//
+// So this is a port of a decision rather than of a status, and the status alone
+// would not have caught it.
+func TestANonRevokingLogoutIsUnreachableNotUnusable(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusInternalServerError, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			revoking := status
+			h := build(t, func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == identitySession && r.Method == http.MethodDelete {
+					return answer(revoking, "not a revocation"), nil
+				}
+				return loginIdentity(answer(http.StatusNoContent, ""))(r)
+			})
+			cookie := h.signedIn(t)
+
+			res := h.do(t, http.MethodPost, "/auth/logout", "", map[string]string{"Cookie": cookie, "Sec-Fetch-Site": "same-origin"})
+
+			if res.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("identity answering %d to a revoke produced %d, and it is a 503", revoking, res.StatusCode)
+			}
+			body := readBody(t, res)
+			if !strings.Contains(body, `"detail":"the authentication service could not be reached"`) {
+				t.Errorf("the 503 says %q. The reference's logout answers `unreachable()`, not `unusable()` — a caller that can tell those two apart can tell whether identity was REACHED, and `unreachable` is the answer that says it was not.", body)
+			}
+			// And the local sign-out happened either way, which is the part the
+			// caller cares about most.
+			if h.sessions.Size() != 0 {
+				t.Errorf("the store holds %d record(s); the browser must be signed out even when identity cannot confirm it", h.sessions.Size())
+			}
+		})
+	}
+}
+
 // The store being DOWN is a 503 on every route that touches it, and never a 401:
 // a 401 would send a signed-in browser to sign in again over an outage.
 func TestAStoreThatIsDownIs503Not401(t *testing.T) {
@@ -1228,13 +1383,18 @@ func TestWithoutABrowserSurfaceTheFourRoutesAre404(t *testing.T) {
 	}
 }
 
-// A configured identity registers itself as a probe, and it is FIRST, because
-// `/readyz` renders `deps` in registration order and `encoding/json` sorts map
-// keys — which is the entire reason `Options.Probes` is a slice.
-func TestAConfiguredIdentityRegistersAProbeAndItIsFirst(t *testing.T) {
+// A browser surface does NOT register a probe, because the reference does not.
+//
+// Measured, not assumed: `createApp({bff})` answers `{"deps":{}}`, because
+// `identityProbe` is registered by `runtimeOptions` — which reads `IDENTITY_URL`,
+// a variable `RuntimeOptions` in this package does not read because the verifier
+// that needs it is another packet. The first version of this port auto-registered
+// it and `/readyz` differed from the reference in all six browser scenarios, at
+// byte 9.
+func TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees(t *testing.T) {
 	h := build(t, func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == identityHealthz {
-			return answer(http.StatusOK, ""), nil
+			t.Error("identity's liveness endpoint was asked; nothing registered a probe for it")
 		}
 		return answer(http.StatusOK, `{}`), nil
 	})
@@ -1244,42 +1404,99 @@ func TestAConfiguredIdentityRegistersAProbeAndItIsFirst(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("/readyz answered %d", res.StatusCode)
 	}
-	if got := readBody(t, res); got != `{"deps":{"identity":"ok"}}` {
-		t.Errorf("/readyz is %s and a configured identity answers `{\"deps\":{\"identity\":\"ok\"}}` — the reference registers identity unconditionally and Redis only when REDIS_URL is set", got)
+	if got := readBody(t, res); got != `{"deps":{}}` {
+		t.Errorf("/readyz is %s and with a browser surface and no registered probe it is `{\"deps\":{}}` — which is `createApp({bff})`", got)
 	}
 }
 
-// A dependency that is DOWN is reported by name and not by detail: a readiness
-// endpoint that fails because of its own credentials is not a readiness check.
+// When a caller DOES register the identity probe, it renders where it was
+// registered, and a broken identity is `unavailable` by name.
+//
+// The first half is the ORDER property: `/readyz` renders `deps` in registration
+// order because `Options.Probes` is a slice, and `encoding/json` sorts map keys —
+// so a name declared in a non-alphabetical order is the only way to tell the two
+// apart. The second is the never-name-the-reason property.
 //
 // BOTH ways down, because they are different code paths: a transport failure
 // (`call` returns an error) and a dependency that is up and answering `5xx` — which
 // is what most outages actually look like, and the case `src/bff/auth.ts` calls out
 // as the one that used to pass through with no log line at all.
-func TestADownDependencyIsUnavailableAndNamesNoReason(t *testing.T) {
-	cases := map[string]func(*http.Request) (*http.Response, error){
-		"the transport failed": func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("dial tcp://identity.internal:8080: connect: connection refused (password=hunter2)")
+func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
+	cases := map[string]struct {
+		identity func(*http.Request) (*http.Response, error)
+		want     string
+		status   int
+	}{
+		"healthy": {
+			identity: func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == identityHealthz {
+					return answer(http.StatusOK, ""), nil
+				}
+				return answer(http.StatusOK, `{}`), nil
+			},
+			want:   `{"deps":{"aperture":"ok","identity":"ok"}}`,
+			status: http.StatusOK,
 		},
-		"identity answered 500": func(*http.Request) (*http.Response, error) {
-			return answer(http.StatusInternalServerError, "<html>upstream stack trace: password=hunter2</html>"), nil
+		"the transport failed": {
+			identity: func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("dial tcp://identity.internal:8080: connect: connection refused (password=hunter2)")
+			},
+			want:   `{"deps":{"aperture":"ok","identity":"unavailable"}}`,
+			status: http.StatusServiceUnavailable,
+		},
+		"identity answered 500": {
+			identity: func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == identityHealthz {
+					return answer(http.StatusInternalServerError, "<html>stack trace: password=hunter2</html>"), nil
+				}
+				return answer(http.StatusOK, `{}`), nil
+			},
+			want:   `{"deps":{"aperture":"ok","identity":"unavailable"}}`,
+			status: http.StatusServiceUnavailable,
 		},
 	}
 
-	for name, identity := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := build(t, identity)
+			h := build(t, tc.identity, func(o *BffOptions) {})
 
-			res := h.do(t, http.MethodGet, "/readyz", "", nil)
+			// Registered in a NON-alphabetical order, which is the point: a sorted
+			// renderer would produce `identity` first and this test would pass
+			// whether the order were preserved or not.
+			handler, err := New(Options{
+				BFF: &BffOptions{
+					IdentityURL: "http://identity.test",
+					Sessions:    h.sessions,
+					Now:         func() time.Time { return h.now },
+					Doer: doerFunc(func(r *http.Request) (*http.Response, error) {
+						if r.URL.Path == identityHealthz {
+							return tc.identity(r)
+						}
+						return answer(http.StatusOK, `{}`), nil
+					}),
+				},
+				Probes: []NamedProbe{
+					{Name: "aperture", Probe: func(context.Context) error { return nil }},
+					{Name: "identity", Probe: (&Bff{identityURL: "http://identity.test", doer: doerFunc(tc.identity), timeout: defaultIdentityTimeout, now: func() time.Time { return h.now }}).IdentityProbe()},
+				},
+			})
+			if err != nil {
+				t.Fatalf("New refused the configuration: %v", err)
+			}
 
-			if res.StatusCode != http.StatusServiceUnavailable {
-				t.Fatalf("/readyz with a down identity answered %d, and it is a 503", res.StatusCode)
+			req := httptest.NewRequest(http.MethodGet, "https://gateway.test/readyz", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			res := rec.Result()
+
+			if res.StatusCode != tc.status {
+				t.Errorf("/readyz answered %d and it must be %d", res.StatusCode, tc.status)
 			}
 			body := readBody(t, res)
-			if body != `{"deps":{"identity":"unavailable"}}` {
-				t.Errorf("/readyz is %s and it must be `{\"deps\":{\"identity\":\"unavailable\"}}`", body)
+			if body != tc.want {
+				t.Errorf("/readyz is %s and it must be %s — the ORDER is registration order, which is why these two names are not alphabetical", body, tc.want)
 			}
-			for _, leak := range []string{"hunter2", "identity.internal", "refused", "upstream"} {
+			for _, leak := range []string{"hunter2", "identity.internal", "refused", "upstream", "stack"} {
 				if strings.Contains(body, leak) {
 					t.Errorf("/readyz names %q: %s. Which dependency failed is named; why it failed is not.", leak, body)
 				}

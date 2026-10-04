@@ -37,15 +37,15 @@ import (
 // to trust a token is worse than an endpoint that is not there").
 type Options struct {
 	// Readiness probes by dependency name, in the order `/readyz` renders them.
-	// A caller registers extra ones here; `identity` is NOT one of them, because
-	// a configured `BFF` registers it on this slice's behalf and `identity` is a
-	// property of the browser surface rather than a thing an operator adds by
-	// hand. `New` puts it FIRST, which is `src/index.ts`'s order and not a
-	// detail: `/readyz` renders `deps` in registration order and
-	// `internal/equivalence` compares those bytes.
+	// A caller registers them here, by hand, and a configured `BFF` is NOT one of
+	// them — measured rather than assumed: `createApp({bff})` answers
+	// `{"deps":{}}`, because the `identity` probe is registered by
+	// `runtimeOptions`, which reads `IDENTITY_URL` and is not something this package
+	// does. Auto-registering it here made `/readyz` differ from the reference in
+	// every browser scenario, at byte 9.
 	//
-	// A `BFF` with no probes of its own still answers `{"deps":{"identity":…}}`,
-	// which is what the reference does with an identity configured and no Redis.
+	// The ORDER is not decoration: `/readyz` renders `deps` in registration order
+	// because this is a slice and not a map, and `encoding/json` sorts map keys.
 	Probes []NamedProbe
 
 	// BFF is the browser surface: the four `/auth` routes, the session cookie and
@@ -119,22 +119,16 @@ func New(options Options) (http.Handler, error) {
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) { writeV0NotFound(w, r) })
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { writeV0NotFound(w, r) })
 
-	// `ErrorHandlerFunc` is set rather than left nil, and the reason is that the
-	// generator's default is a `text/plain` 400 — a body shape that appears
-	// nowhere in `openapi/v1.yaml`.
-	//
-	// It is reachable on exactly the three operations that declare a header
-	// parameter, all of them on `/auth`: the generator refuses a header sent more
-	// than once before the handler is reached. The reference has no such refusal —
-	// its framework joins duplicate header lines — so `same-origin` twice is a
-	// joined `same-origin, same-origin`, which is NOT `same-origin`, and the
-	// reference answers `403`. Routing the generator's refusal to the origin gate
-	// is what makes the two agree, and `TestAHeaderSentTwiceIsTheOriginGatesAnswer`
-	// holds it there. See `paramRefusal`.
-	svc := &server{probes: options.probes(bff), bff: bff}
+	// Before the generated router, and the reason is in `collapseRepeatedHeaders`:
+	// `oapi-codegen` refuses a header parameter sent twice with a `text/plain` 400,
+	// the reference has no such refusal, and without this middleware the two answers
+	// differ on status, in content type and in whether a cookie was set.
+	router.Use(collapseRepeatedHeaders)
+
+	svc := &server{probes: options.Probes, bff: bff}
 	api.HandlerWithOptions(
 		svc,
-		api.ChiServerOptions{BaseRouter: router, ErrorHandlerFunc: paramRefusal(bff != nil)},
+		api.ChiServerOptions{BaseRouter: router, ErrorHandlerFunc: paramRefusal()},
 	)
 
 	// `HEAD` on the two probe paths, registered explicitly because chi does not
@@ -169,60 +163,33 @@ func (o Options) browserSurface() (*Bff, error) {
 	return NewBff(*o.BFF)
 }
 
-// probes is the list `/readyz` renders, with `identity` FIRST when there is a
-// browser surface.
-//
-// First, and derived rather than appended, because `src/index.ts` builds
-// `{ identity: identityProbe(bff), ...(redis && { redis }) }` — identity first,
-// unconditionally, and Redis only when `REDIS_URL` is set. `encoding/json` sorts
-// map keys and `Options.Probes` is a slice precisely so it does not, so appending
-// instead would render `{"redis":…,"identity":…}` and fail 3-of-3 comparisons on
-// bytes no client would read differently.
-//
-// The extra probes are taken from the ORIGINAL slice rather than from `o.Probes`
-// rebuilt, so a caller that wants `identity` somewhere else cannot have it: there
-// is one place the order is decided and it is here.
-func (o Options) probes(bff *Bff) []NamedProbe {
-	if bff == nil {
-		return o.Probes
-	}
-
-	probes := make([]NamedProbe, 0, len(o.Probes)+1)
-	probes = append(probes, NamedProbe{Name: "identity", Probe: bff.IdentityProbe()})
-	return append(probes, o.Probes...)
-}
-
 // paramRefusal is what the generated router does when it cannot bind a header.
 //
-// Two answers, and which one depends on whether the browser surface is mounted —
-// because the answer is the reference's answer for that configuration, not one
-// answer for this service:
+// # IT IS UNREACHABLE FOR THE TWO HEADERS THE CONTRACT DECLARES
 //
-//   - Mounted: the reference would have JOINED the duplicate header lines and
-//     handed the joined value to the origin gate, which refuses it. So this is the
-//     gate's `403`, and the generator's own error text — which names the header —
-//     is logged rather than written, for the same reason every other refusal in
-//     this package is: a body that names a header is a body that describes the
-//     gateway's internals to an unauthenticated caller.
-//   - Not mounted: the reference does not register `/auth/*` at all, so it answers
-//     its v0 `404`. `notBuilt` is that answer, and this is where it comes from.
+// `collapseRepeatedHeaders` reduces a repeated value to its first before the router
+// sees it, so the generator's "expected one value" refusal — the only way to reach
+// this — does not fire for `Sec-Fetch-Site` or `Origin`. What it does for is a
+// header parameter the document adds later and the middleware does not know about,
+// and the answer here is the v0 `404` with the generator's own reason LOGGED rather
+// than written: a body that names a header describes the gateway's internals to an
+// unauthenticated caller, which is the one thing every other refusal here avoids.
 //
-// The boolean is passed in rather than closed over a `*Bff` so the dependency is
-// visible at the call site: which configuration this writer answers for is the
-// one thing a reader should not have to infer.
-func paramRefusal(browserSurfaceMounted bool) func(http.ResponseWriter, *http.Request, error) {
+// NOT the generator's default. That default is `http.Error`, which is `text/plain`
+// — a body shape that appears nowhere in `openapi/v1.yaml`.
+//
+// `TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders` is the tripwire: it
+// doubles each declared header and asserts the request reaches its handler, so
+// "unreachable" is a measured fact rather than a hope.
+//
+// The older reason this writer took a boolean — "mounted answers the gate's `403`,
+// unmounted answers the v0 `404`" — is gone, because it rested on a measurement
+// that was wrong: the reference does not refuse a repeated header at all. See
+// `collapseRepeatedHeaders`.
+func paramRefusal() func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("gateway: a header the contract declares could not be read: %v", err)
-
-		if !browserSurfaceMounted {
-			notBuilt(w, r)
-			return
-		}
-		writeProblem(w, r, Problem{
-			Status: api.N403,
-			Code:   api.ProblemCodeForbidden,
-			Detail: "this request is not from the same origin",
-		})
+		log.Printf("gateway: a header the contract declares could not be read: %v. This is unreachable for Sec-Fetch-Site and Origin — collapseRepeatedHeaders reduces a repeated value to its first — so it means a header parameter this middleware does not know about arrived more than once.", err)
+		notBuilt(w, r)
 	}
 }
 
@@ -493,10 +460,21 @@ func writeV0NotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeRawJSON writes a body this package has already encoded. It exists so the
-// one place that needs key order has an honest name, rather than reaching for
-// `writeJSON` and passing a `json.RawMessage` that reads like an oversight.
+// two places that need key order have an honest name, rather than reaching for
+// `writeJSON` and passing a string that reads like an oversight.
+//
+// The CONDITIONAL content type is the same rule `writeJSON` keeps, and it was
+// FOUND HERE rather than assumed: `writeProblem` sets `application/problem+json`
+// and then calls this, and an unconditional `Set` overwrote it with
+// `application/json`. The body was byte-identical to the reference's and the media
+// type was not, so every problem document in the service would have been served
+// with the type that says "this is not a problem document" — and a test that
+// decodes the body and stops there never sees it. `internal/equivalence` does, as a
+// `Content-Type` mismatch on otherwise identical bytes.
 func writeRawJSON(w http.ResponseWriter, r *http.Request, status int, body string) {
-	w.Header().Set("Content-Type", "application/json")
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.WriteHeader(status)
 	if _, err := w.Write([]byte(body)); err != nil {
 		panic(fmt.Sprintf("httpapi: %s %s: response did not write: %v", r.Method, r.URL.Path, err))

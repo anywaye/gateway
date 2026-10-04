@@ -18,6 +18,42 @@ export PATH="$HOME/.local/share/mise/shims:$PATH"
 PASSED=0
 FAILED=0
 
+# # THE SNAPSHOT, AND WHY IT IS NOT `git checkout --`
+#
+# The first version of this script restored a mutated file with `git checkout --
+# "$file"`. That restores the LAST COMMIT, so running the script with uncommitted
+# work in the tree silently DELETED that work — three files' worth, on the run that
+# found the problem-envelope ordering.
+#
+# So the restore is a COPY, taken once before anything is mutated and put back after
+# every mutation, and it is VERIFIED BY CHECKSUM. `git checkout --` is banned here
+# and the reason is written down rather than left as a scar.
+SNAPSHOT="$(mktemp -d)"
+trap 'rm -rf "$SNAPSHOT"' EXIT
+
+restore_file() {
+  local file="$1"
+  if ! cmp -s "$file" "$SNAPSHOT/$file"; then
+    cp "$SNAPSHOT/$file" "$file"
+  fi
+  if [ "$(cksum < "$file")" != "$(cat "$SNAPSHOT/$file.cksum")" ]; then
+    echo "  RESTORE FAILED  $file — the snapshot and the file disagree after restoring" >&2
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+}
+
+# Taken over EVERY .go file under cmd/ and internal/, derived by walking rather than
+# listed, so a mutation that reaches further than its label still restores cleanly.
+# Derived because a hardcoded list would be a list that goes stale the day a file is
+# added, and the failure mode is silent data loss.
+while IFS= read -r file; do
+  mkdir -p "$SNAPSHOT/$(dirname "$file")"
+  cp "$file" "$SNAPSHOT/$file"
+  cksum < "$file" > "$SNAPSHOT/$file.cksum"
+done < <(find cmd internal -name '*.go' -type f)
+echo "snapshot: $(find "$SNAPSHOT" -name '*.cksum' | wc -l | tr -d ' ') file(s) under cmd/ and internal/, to be restored by copy"
+
 # mutate <file> <old> <new> <label>
 mutate() {
   local file="$1" from="$2" to="$3" label="$4"
@@ -41,7 +77,7 @@ PY
   if ! grep -qF -- "$to" "$file"; then
     echo "  MUTATION DID NOT APPLY  $label (the replace produced nothing)"
     FAILED=$((FAILED + 1))
-    git checkout -- "$file"
+    restore_file "$file"
     return
   fi
 
@@ -57,7 +93,7 @@ PY
     echo "  DID NOT BITE  $label  — the suite stayed green, so the property is untested"
     FAILED=$((FAILED + 1))
   fi
-  git checkout -- "$file"
+  restore_file "$file"
 }
 
 # mutate2 <file> <from1> <to1> <from2> <to2> <label> <run-pattern>
@@ -89,7 +125,7 @@ PY
   if ! grep -qF -- "$to1" "$file" || ! grep -qF -- "$to2" "$file"; then
     echo "  MUTATION DID NOT APPLY  $label (the replace produced nothing)"
     FAILED=$((FAILED + 1))
-    git checkout -- "$file"
+    restore_file "$file"
     return
   fi
 
@@ -103,13 +139,13 @@ PY
     echo "  DID NOT BITE  $label  — the suite stayed green, so the property is untested"
     FAILED=$((FAILED + 1))
   fi
-  git checkout -- "$file"
+  restore_file "$file"
 }
 
 echo "=== origin gate: accept same-site (a sibling subdomain) ==="
 mutate internal/httpapi/bff.go \
-  '!strings.EqualFold(strings.TrimSpace(site), "same-origin")' \
-  '!strings.EqualFold(strings.TrimSpace(site), "same-site")' \
+  '!strings.EqualFold(site, "same-origin")' \
+  '!strings.EqualFold(site, "same-site")' \
   'the gate accepts same-site' \
   'TestOnlySameOriginSecFetchSitePasses|TestACrossOriginPostIsRefused'
 
@@ -447,13 +483,6 @@ mutate internal/httpapi/httpapi.go \
   'a declined operation answers 501' \
   'TestWithoutABrowserSurfaceTheFourRoutesAre404'
 
-echo "=== a configured identity is not probed ==="
-mutate internal/httpapi/httpapi.go \
-  'probes = append(probes, NamedProbe{Name: "identity", Probe: bff.IdentityProbe()})' \
-  '_ = bff' \
-  'identity is not a readiness probe' \
-  'TestAConfiguredIdentityRegistersAProbeAndItIsFirst'
-
 echo "=== a down dependency is reported as ready ==="
 # NOT "the probe's error names the host". That mutation does not bite, and the
 # reason is the property rather than a gap in it: `runProbe` collapses every
@@ -471,18 +500,86 @@ mutate internal/httpapi/bff.go \
 			return nil
 		}' \
   'a down dependency reports ok' \
-  'TestADownDependencyIsUnavailableAndNamesNoReason'
+  'TestARegisteredIdentityProbeReportsByNameAndNeverByReason'
 
-echo "=== a doubled header answers the generator's 400 ==="
+echo "=== a BFF auto-registers an identity probe (it must not) ==="
+# The reference's `createApp({bff})` answers `{"deps":{}}`; `runtimeOptions`
+# registers the probe, and `runtimeOptions` reads `IDENTITY_URL`. Auto-registering
+# it here made `/readyz` differ at byte 9 in all six browser scenarios.
 mutate internal/httpapi/httpapi.go \
-  '		writeProblem(w, r, Problem{
-			Status: api.N403,
-			Code:   api.ProblemCodeForbidden,
-			Detail: "this request is not from the same origin",
-		})' \
-  '		http.Error(w, err.Error(), http.StatusBadRequest)' \
-  'a duplicated header is a text/plain 400' \
-  'TestAHeaderSentTwiceIsTheOriginGatesAnswer'
+  'svc := &server{probes: options.Probes, bff: bff}' \
+  'svc := &server{probes: append([]NamedProbe{{Name: "identity", Probe: bff.IdentityProbe()}}, options.Probes...), bff: bff}' \
+  'a BFF auto-registers an identity probe' \
+  'TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees'
+
+echo "=== a logout identity could not revoke is answered unusable ==="
+# The reference's logout is `revoked ? 204 : unreachable()`. The port answered
+# `unusable()`, which is a different detail and a log line, and the equivalence
+# check found it with both answers printed.
+mutate internal/httpapi/bff.go \
+  '		drain(answer)
+		writeProblem(w, r, unreachable())' \
+  '		drain(answer)
+		writeProblem(w, r, unusable(b.target(identitySession), answer.StatusCode, nil, false))' \
+  'a non-revoking logout answers unusable' \
+  'TestANonRevokingLogoutIsUnreachableNotUnusable'
+
+echo "=== the problem envelope is rendered in alphabetical order ==="
+# `api.Problem` declares its fields alphabetically and the reference does not, so
+# every problem document differed at byte 2. Found by the equivalence check.
+mutate internal/httpapi/problem.go \
+  '	b.WriteString(`,"status":`)
+	b.WriteString(strconv.Itoa(int(p.Status)))
+	b.WriteString(`,"detail":`)
+	writeJSONString(&b, p.Detail)' \
+  '	b.WriteString(`,"code":`)
+	writeJSONString(&b, string(p.Code))
+	b.WriteString(`,"detail":`)
+	writeJSONString(&b, p.Detail)
+	b.WriteString(`,"status":`)
+	b.WriteString(strconv.Itoa(int(p.Status)))' \
+  'the envelope puts code before status' \
+  'TestTheProblemEnvelopeIsTheReferencesFieldOrder|TestAValidationFailureKeepsFieldBeforeCodeAndIsLast'
+
+echo "=== a problem document is served as application/json ==="
+# `writeRawJSON` set the content type unconditionally, overwriting the
+# `application/problem+json` `writeProblem` had just set. The body was identical.
+mutate internal/httpapi/httpapi.go \
+  '	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.WriteHeader(status)' \
+  '	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)' \
+  'writeRawJSON overwrites the problem content type' \
+  'TestTheTwoRefusalsAgreeOnStatusAndContentType|TestTheProblemEnvelopeIsTheReferencesFieldOrder'
+
+echo "=== a doubled header is joined rather than taking the first value ==="
+# Measured: the reference answers 200 to `Sec-Fetch-Site: same-origin` twice. The
+# WHATWG `Headers` rule would refuse it. Refusing looks stricter and diverges.
+echo "=== a doubled header is joined rather than taking the first value ==="
+# NOT in `isSameOrigin`. The first version of this mutation changed
+# `firstValue(r.Header.Values(…))` to `strings.Join(…)` and the suite stayed green,
+# because `collapseRepeatedHeaders` has already reduced the header to one value by
+# the time the gate reads it — so the mutation was unreachable, and "unreachable" is
+# a fact about the middleware rather than about the gate. The observable half is
+# below.
+mutate internal/httpapi/bff.go \
+  '			if values := r.Header[name]; len(values) > 1 {
+				r.Header[name] = values[:1]
+			}' \
+  '			if values := r.Header[name]; len(values) > 1 {
+				r.Header[name] = []string{strings.Join(values, ", ")}
+			}' \
+  'a doubled header is joined instead of collapsed' \
+  'TestAHeaderSentTwiceTakesTheFirstValue'
+
+echo "=== the generated router is allowed to refuse a doubled header ==="
+mutate internal/httpapi/httpapi.go \
+  '	router.Use(collapseRepeatedHeaders)' \
+  '' \
+  'the duplicate-header collapse is not installed' \
+  'TestAHeaderSentTwiceTakesTheFirstValue|TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders'
 
 echo
 echo "mutation gate: $PASSED bit, $FAILED did not"
