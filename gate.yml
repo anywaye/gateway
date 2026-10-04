@@ -178,6 +178,20 @@ gate:
       # in `src/routes/publicRoute.test.ts` and 6 added to
       # `src/routes/table.test.ts`.
       #
+      # RAISED 535 -> 560, MEASURED, in gateway-go-substrate-01. 565 pass on
+      # master before it and 565 after — and that is the point worth stating
+      # rather than hiding: this packet added NO TypeScript test that counts here.
+      # The Go tier's 31 cases live behind `./bin/prime-go` and in their own
+      # `suite:` line, and `files` below went 24 -> 25 for two tests in
+      # `pins.test.ts` (the `--no-go` banner and the unknown-argument refusal)
+      # against one file. So the TypeScript floor moved by 25 and the reason is
+      # entirely in `pins.test.ts`, which this packet had to widen.
+      #
+      # It is NOT raised to 565. A floor at exactly today's number has to be moved
+      # by hand before a single test can be added, and the margin above says why a
+      # small one is the right one: the detector is "did the suite quietly lose
+      # five tests", and losing 25 of them would be `gate.floor` either way.
+      #
       # And the delta is the finding rather than the fix, which is why this
       # movement has the same shape as the one before it. The floor had been
       # sitting 55 below the tree while the comment above it still said "against
@@ -190,7 +204,7 @@ gate:
       #
       #     declared 462  measured 517   verdict below
       #     declared 535  measured 540   verdict above
-      minimum: 535
+      minimum: 560
     # ---------------------------------------------------------------------
     # The structural detector, and the one proof here that is immune to the
     # environment-gated tier. `Ran N tests across M files` counts every
@@ -218,6 +232,19 @@ gate:
       # gate reading a route table. It is in the Dockerfile's test stage, so the
       # `image` job's `find` diff below already agrees with 24.
       #
+      # RAISED 24 -> 25, MEASURED, in gateway-go-substrate-01 — but NOT by the Go
+      # packet's new file. `test/equivalence/reference.ts` is deliberately not
+      # named `*.test.ts`, so `bun test` does not discover it, `findTestFiles`
+      # (which matches `*.test.ts`) does not count it, and the `image` job's
+      # `find -name '*.test.ts'` does not either. Naming it `*.test.ts` would put
+      # a subprocess that opens a socket into the runner's discovery, and it is
+      # not a test: it is one side of a comparison the Go suite drives. The count
+      # went to 25 for the two `pins.test.ts` cases and nothing else.
+      #
+      # So the floor here stays EXACT and not a rounded number, per the rule
+      # above: a file count does not move when a test is added, so a margin buys
+      # nothing and only lets a deletion through.
+      #
       # The reason this floor has moved twice and the `pass` floor four times is
       # the same reason both were stale when found, and it is worth stating once
       # here rather than in either block: a declared floor is only a check while
@@ -227,7 +254,7 @@ gate:
       # It is the same set the `image` CI job diffs against `find`; this is the
       # cheap half, running everywhere the gate runs, and the image job is the
       # half that reads the built tree rather than the source.
-      minimum: 24
+      minimum: 25
     # ---------------------------------------------------------------------
     # The step markers, and the reason there are three of them.
     #

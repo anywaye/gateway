@@ -16,6 +16,14 @@ process unless
 a **static configured table**, not a service registry — see [Routing](#routing)
 and [Not built yet](#not-built-yet) before relying on anything here.
 
+**`gateway` is being rewritten in Go, and it is mid-rewrite.** Everything above
+describes the TypeScript implementation, which is the **reference** and is still
+the thing that serves traffic. A Go service now stands beside it and serves the
+same contract — see [The Go rewrite](#the-go-rewrite) for exactly which parts of
+the surface are Go today, which are still TypeScript, and what has not been ported
+yet. `src/` is not deleted in this state and must not be treated as legacy: it is
+what the Go service is compared against.
+
 ## Endpoints
 
 | Method | Path             | Auth           | Rate limited | v0 behaviour                                               |
@@ -788,11 +796,14 @@ framework choice; this one is a correctness choice.
 ## Running it
 
 ```sh
-bin/prime                        # frozen install, typecheck, then the suite (the gate)
-bun run src/index.ts             # http://localhost:8080
+bin/prime                        # the gate: frozen install, typecheck, bun test, then bin/prime-go
+bin/prime-go                     # the Go tier alone
+bin/prime --no-go                # everything but the Go tier, and it says so
+bun run src/index.ts             # http://localhost:8080 — the TypeScript reference
+go run ./cmd/gateway             # http://localhost:8080 — the Go rewrite, PORT only
 curl localhost:8080/healthz
-curl localhost:8080/v1/me        # 401: no bearer token
-curl localhost:8080/readyz       # {"deps":{"identity":"unavailable"}}: no identity to ask
+curl localhost:8080/v1/me        # 401 from the reference: no bearer token. 404 from Go: not ported.
+curl localhost:8080/readyz       # {"deps":{"identity":"unavailable"}} from the reference; {"deps":{}} from Go
 ```
 
 Point it at a real identity to get past either refusal:
@@ -834,8 +845,11 @@ mise trust && mise install
 `mise trust` is not optional housekeeping: mise refuses to read a config file it
 has not been told to trust, and `bun run typecheck` reaches `node` (to launch
 `tsc`), so an untrusted `mise.toml` fails the typecheck gate even though nothing
-in this repository is wrong. Without mise, install Bun 1.3.x and Node 22
-yourself and everything below works unchanged.
+in this repository is wrong. Without mise, install Bun 1.3.x, Node 22 and Go
+1.26.1 yourself and everything below works unchanged. Go is pinned to the same
+1.26.1 `pantry` and `identity` name, and `bin/prime-go` asserts `mise.toml`
+against `go.mod`'s own `go` directive before it runs anything — three files state
+that number and nothing makes the go command enforce any of them.
 
 ## CI
 
@@ -853,7 +867,7 @@ with:
 | Job          | What it is                                                        | Why kit cannot own it |
 | ------------ | ----------------------------------------------------------------- | --------------------- |
 | `ci`         | kit's `bun` job: frozen install, typecheck, test                   | — it *is* the shared half |
-| `prime`      | runs `bin/prime` itself, then `git diff --exit-code -- bun.lock`     | the gate is gateway's command, and the lockfile check needs an install to have run |
+| `prime`      | runs `bin/prime` itself — which ends in `bin/prime-go`, so the Go tier runs here — then `git diff --exit-code` on `bun.lock`, `go.mod` and `go.sum`, then reads the equivalence comparison count and fails under 72 | the gate is gateway's command, and the lockfile checks need an install to have run |
 | `redis`      | the live Redis tier, against a real `redis:7.4.1-alpine`            | gateway's counter store is gateway's dependency |
 | `manifest`   | `cafaye.yml` against core's fetched manifest schema                 | it reaches into `cafaye/core` |
 | `image`      | hadolint, `docker build --target test`, the test files it ran, `docker compose build` | kit's lint tier does not cover Dockerfiles |
@@ -908,16 +922,143 @@ GATEWAY_REDIS_URL=redis://127.0.0.1:6379 GATEWAY_REDIS_REQUIRED=true \
   bun test src/middleware/rateLimitRedisLive.test.ts
 ```
 
+**The equivalence tier cannot skip in CI.** `internal/equivalence` needs `bun` to
+stand the TypeScript reference up, so it skips on a machine without one — and a
+skip nobody can see is a green run that verified nothing, which this repository
+has been bitten by twice. The workflow sets `GATEWAY_EQUIVALENCE_REQUIRED=1`, the
+same mechanism the `redis` job uses with `GATEWAY_REDIS_REQUIRED`, and a step
+after it reads the comparison count out of `bin/prime-go`'s own output and fails
+under 72. `gate.yml` deliberately carries **no** floor on that number: it is only
+printed on a run that found `bun`, so a `minimum` on it would turn every
+developer's machine without bun into a red gate. A floor on something a legitimate
+environment cannot print is not a floor.
+
+**There is no `prime-go` CI job, and that is deliberate.** Two jobs running two
+tiers would be the gate existing twice, and the two could disagree about what
+"the Go tier is green" means. `setup-go` uses `go-version-file: go.mod` rather
+than a literal version, so the Go pin has two copies and one of them is checked
+by `bin/prime-go` at startup.
+
 **The pin.** Bun 1.3.12 is stated in `package.json` (`packageManager`),
 `mise.toml`, the Dockerfile's `ARG BUN_VERSION`, compose's build arg and this
 workflow's `versions` input. `pins.test.ts` asserts all of them agree, so a bump
 in one fails the gate instead of quietly testing one runtime and shipping another.
-`engines.bun` is deliberately a floor (`>=1.3.0`), not a pin.
+`engines.bun` is deliberately a floor (`>=1.3.0`), not a pin. Go 1.26.1 is stated
+in `mise.toml`, `go.mod` and `Dockerfile.golang`'s `ARG GO_VERSION`, and
+`bin/prime-go` asserts the first two against each other before it runs anything.
+
+## The Go rewrite
+
+`gateway` is being rewritten in Go: `net/http` + `chi`, with `oapi-codegen`
+generating the server from `openapi/v1.yaml` — the contract is the framework. The
+framework choice and the reasoning are in `MVP-SCOPE.md`; this section is the
+state of the work, kept here because a reader who finds a Go binary and a
+TypeScript one in one repository deserves to be told which is which before they
+read either.
+
+### Why side by side, and for how long
+
+The TypeScript implementation is the **reference**, not the thing being
+discarded: it has the documented HTTP contract, a 578-test suite, and a security
+core whose behaviour is reasoned about line by line in its own comments. So the
+Go service lands **next to** `src/`, and `src/` is deleted in a later packet —
+once equivalence has been proven rather than asserted.
+
+That is not tidiness. A port and a deletion in one commit produce a diff where
+nobody can tell a porting bug from a mechanical edit, which is precisely the
+review this rewrite most needs. So the two coexist, the gate runs both, and the
+equivalence check stands them up side by side on every run.
+
+### What is Go today
+
+| | TypeScript (`src/`) | Go (`cmd/`, `internal/`) |
+| --- | --- | --- |
+| `GET /healthz` | ✅ | ✅ |
+| `GET /readyz` | ✅, with `identity` and `redis` probes | ✅, with **no** probes registered |
+| `HEAD` on the two probes | ✅ (Hono routes it to the `GET` handler) | ✅ (registered explicitly — chi does not) |
+| the v0 `404` / `500` envelope | ✅ | ✅ |
+| core's `problem+json` envelope | ✅ | ✅ **ported, not yet reachable** |
+| `GET /v1/me` | ✅ | declines with the reference's `404` |
+| the four `/auth` routes | ✅ | decline with the reference's `404` |
+| bearer-token verification, JWKS cache, scopes | ✅ | **not ported** — Wave 3 |
+| API keys | ✅ | **not ported** — Wave 3 |
+| rate limiting, `RateLimit-*` headers | ✅ | **not ported** — Wave 3 |
+| the pass-through, the route table, the principal assertion | ✅ | **not ported** — Wave 3 |
+| the BFF and the session store | ✅ | **not ported** — Wave 3 |
+
+"Declines with the reference's `404`" is a decision and not a gap that was left
+open by accident. `createApp({})` does not register `/v1/me` without a verifier
+and does not register `/auth/*` without an identity to ask, so the reference
+answers `404` on all five with nothing configured — and so does the Go service. A
+`501` would have been more truthful about the code and less true about the
+contract, and where the two disagree the TypeScript answer is the correct one.
+
+A started Go gateway reads exactly one environment variable, `PORT`, and serves
+`{"deps":{}}` on `/readyz`. The other six the TypeScript `runtimeOptions` reads
+belong to subsystems that are not ported; a variable an operator sets that changes
+nothing is worse than one they cannot set, because `IDENTITY_ISSUER` in a compose
+file looks configured and configures a `404`.
+
+### The equivalence check, and what it does not cover
+
+`internal/equivalence` stands the TypeScript reference up as a subprocess, drives
+the same requests at both, and fails where the answers differ. It compares status,
+`Content-Type`, the presence of the contract-declared headers, and the body **byte
+for byte**, across 24 cases × 3 configurations.
+
+The 24 cases are derived: every operation `openapi/v1.yaml` declares is read out
+of the generated registrations, which `bin/prime-go` holds in step with the
+document by regenerating and diffing, so an operation added to the contract is
+compared the day it lands. The remaining cases are hand-written and are the edge:
+wrong method, trailing slash, doubled slash, the root, wrong case, query string,
+traversal, `HEAD`.
+
+**What it does not cover: every error status except `404`.** There is no bearer
+token, no API key, no limiter, no `X-Trace-Id`, no `Set-Cookie` and no upstream,
+so no `401`, no `429` and no problem document is compared — because the Go service
+cannot produce one. `TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe`
+reads the status enum out of the generated file and fails on any status that is
+neither producible nor named with a reason, so that gap is asserted rather than
+left for a reader to discover.
+
+**What it found:** `json.Encoder.Encode` appends a newline to every value it
+writes and Hono's `c.json()` does not, so 63 of 72 comparisons failed on one byte
+that no client would ever notice and every port would have shipped. It is
+recorded here because the next packet's equivalence run will not find it again,
+and because it is the reason the comparison is byte equality rather than "both
+sides parsed as JSON".
+
+**What it is not:** a claim that the rewrite is done. Two operations of seven are
+Go.
+
+### Running the Go service
+
+```sh
+bin/prime-go                    # the Go tier alone: gofmt, build, vet, test, codegen
+go run ./cmd/gateway            # http://localhost:8080
+curl localhost:8080/healthz     # {"status":"ok"}
+curl localhost:8080/readyz      # {"deps":{}}
+docker build -f Dockerfile.golang -t cafaye/gateway-go .
+```
+
+`Dockerfile.golang` is not named `Dockerfile` because `Dockerfile` is the
+TypeScript image and is not being replaced. It is at the repository root and it is
+not named `*.go`, because `go build ./...` compiles every `.go` file in the tree
+and a file called `docker/Dockerfile.go` is a Go source file to the go command.
+It is renamed to `Dockerfile` in the commit that deletes `src/`, not before.
 
 ## Not built yet
 
 Each line is a packet, not a plan. The stubs that stand in for them are marked in
 the source with the packet that replaces them.
+
+- **The Go rewrite has two operations.** `GET /healthz` and `GET /readyz`, the
+  error envelope, and nothing else — see [The Go rewrite](#the-go-rewrite) for the
+  table, for why the other five decline rather than 501, and for what the
+  equivalence check does and does not compare. This line is the honest one and it
+  sits at the top of the list because it is the thing a reader is most likely to
+  get wrong: `src/` is **not** legacy here, it is the reference the Go service is
+  measured against, and the packet that deletes it is a later one.
 
 - **The service registry.** Routing exists and is a **static configured table**:
   `ROUTE_TABLE` says which prefix goes where, it is validated at startup, and it
@@ -1054,7 +1195,27 @@ the source with the packet that replaces them.
 
 ## Layout
 
+Two implementations live here. `src/` is the TypeScript reference and is still
+what serves traffic; `cmd/` and `internal/` are the Go rewrite, which serves the
+same contract and is two operations of seven. See
+[The Go rewrite](#the-go-rewrite).
+
 ```
+cmd/gateway/main.go          the Go binary: reads PORT, hands the result to httpapi.New, listens
+internal/api/api.gen.go      GENERATED from openapi/v1.yaml by oapi-codegen — committed, and gated
+internal/api/generate.go     the //go:generate lines, with the generator pinned to an exact version
+internal/api/oapi-codegen.yaml   models + chi-server, and why not strict-server
+internal/api/stripbaseurl/   makes the route registrations readable to core's account-scope checker
+internal/httpapi/httpapi.go  Options, New, the chi wiring, and which operations are served
+internal/httpapi/probe.go    NamedProbe and the bounded probe runner
+internal/httpapi/problem.go  core's error envelope, ported from src/problem.ts
+internal/httpapi/env.go      the ONLY os.Getenv in the module, and it is a named function
+internal/httpapi/runtime.go  RuntimeOptions — the only function that reads the environment
+internal/equivalence/        the Go side of the equivalence check, and the scenarios it compares
+test/equivalence/reference.ts the TypeScript side, stood up on a port by the same check
+bin/prime-go                 the Go tier of the gate
+Dockerfile.golang            distroless/static; NOT named Dockerfile, which is the TypeScript image
+
 src/index.ts                 createApp + runtimeOptions + the Bun.serve bootstrap
 src/problem.ts               core's error envelope, the one rejection path
 src/probe.ts                 what a readiness probe is
@@ -1081,7 +1242,7 @@ test/openapiDocument.test.ts the document held to the router, in both directions
 test/dockerStage.ts          reads a Dockerfile's stages and COPY chain (never shipped)
 test/dockerStage.test.ts     the test stage's file set held to the repository's
 openapi/v1.yaml              the HTTP contract, and the open decisions in its header
-bin/prime                    the gate
+bin/prime                    the gate: frozen install, typecheck, bun test, then bin/prime-go
 Dockerfile                   oven/bun slim, multi-stage; `docker build --target test` runs the suite in the image
 docker-compose.yml          gateway's OVERRIDE: its own service, its own port, and nothing kit already ships
 kit.ref                     the pinned kit commit this repository's stack is fetched at
