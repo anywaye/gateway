@@ -10,6 +10,32 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **NOT YET BUILT, RECORDED HERE SO IT IS NOT LOST WITH ITS WORKTREE: two
+  equivalence scenarios for the limiter's refusals.**
+  `worker/gateway-go-auth-01` declared `ScenarioLimitsExhausted` and
+  `ScenarioCounterStoreDown` in `internal/equivalence/scenarios.go` and then
+  stopped — the constants are in the tree, and **no case anywhere builds on
+  either**. That is a named scenario no run can reach, which is the same shape as
+  a comment asserting a property the code does not have, so it is written down
+  rather than left to look like coverage.
+
+  What they would cover, and why each is worth the work: every existing scenario
+  compares a limiter at a GENEROUS allowance, so all eleven compare the rate-limit
+  HEADERS and **none of them compares the 429** — the refusal is the half with a
+  status code and a problem body, and the half a client actually reads.
+  `limitsExhausted` is a limiter at an allowance small enough that a burst crosses
+  it, with the clock injected and fixed on both sides so the crossing is
+  reproducible without either process sleeping. `counterStoreDown` is the same
+  limiter over a store that cannot be reached, which is the fail-open decision
+  stated as a comparison rather than as a comment: served uncounted, `/readyz`
+  naming `redis` as unavailable, and no reason carried in either body or log
+  line.
+
+  They are a separate scenario each rather than modes of one, because the two must
+  not look alike — one answers 429 and the other answers 200, and a configuration
+  where both did the same thing would be indistinguishable from a limiter that was
+  never mounted.
+
 - **The browser-facing surface, in Go: four `/auth` routes and the origin gate.**
   `internal/httpapi/bff.go` ports `src/bff/auth.ts` — `POST /auth/register`,
   `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` — behind
