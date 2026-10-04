@@ -142,7 +142,10 @@ dependencies:
     required: true
 
 repository:
-  url: git@github.com:cafaye/guard.git
+  # The GitHub repository was renamed guard -> gateway, so this URL is no
+  # longer "deliberately stale": the old one redirects, and this one is where
+  # the bytes actually live. `caf dev` and `pantry` read this field.
+  url: git@github.com:cafaye/gateway.git
   defaultBranch: master
   visibility: public
 
