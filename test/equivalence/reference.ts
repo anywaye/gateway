@@ -33,6 +33,89 @@
 // image's COPY list to that count. A file named `*.test.ts` here would change a
 // number that means something.
 import { createApp, type AppOptions, type ProbeStatus } from "../../src/index";
+import type { BffOptions } from "../../src/bff/auth";
+
+// # THE BFF SCENARIOS, AND WHY THE REFERENCE HAS TO BE GIVEN A FETCH
+//
+// The four `/auth` routes only exist when `options.bff` is set, and that option
+// needs an `identityUrl` AND — to compare anything but a `404` — an identity to
+// answer. `BffOptions.fetch` is the seam for that, and it is the reference's own:
+// `createBffAuth` takes a `FetchFn` precisely so its suite never opens a socket.
+//
+// So the scenarios below script identity's answers as a function, and the Go side
+// gets the same script through its own `Doer` (see `internal/equivalence/
+// scenarios.go`). The two are written in two languages that cannot see each
+// other, which is the reason the scenario LIST is compared by reading this file's
+// source rather than by sharing it.
+//
+// # EVERY FIXTURE IS A CONSTANT, AND THAT IS THE POINT
+//
+// `expires_at` is fixed, the ids are fixed, the tokens are fixed. A login body
+// carries the expiry and the comparison is byte for byte, so a session that
+// expired "in an hour" would render a different string on each side and fail for a
+// reason that is not a port defect. Nothing random, nothing relative to now.
+//
+// # AND WHY `expires_at` IS NOT IN 2031
+//
+// `hono/cookie` REFUSES to serialise a cookie whose expiry is more than 400 days
+// out — it throws, and `src/index.ts`'s `onError` turns that into a `500`. So the
+// first draft of this fixture, `2031-03-04`, made the reference answer `500
+// {"error":"internal_error"}` to a successful login while the Go service answered
+// `200` and set the cookie.
+//
+// That is a real divergence between the two implementations and it is NOT a porting
+// mistake on either side: the reference cannot issue a session longer than about a
+// year, and the Go service can. Reproducing the cap in Go is a decision about
+// session lifetimes, not a porting detail, so it goes in the report rather than
+// into a line changed here to make a check green.
+//
+// `2027-01-15` is inside the 400-day window and in the future, which is the whole
+// requirement. `TestTheFixtureExpiryIsInsideTheReferenceCookieWindow` on the Go
+// side states the constraint and the failure date, so nobody discovers this by
+// running the suite in a year.
+//
+// # WHAT THE SESSION ID IS NOT COMPARED AS A VALUE
+//
+// The session id is minted fresh by both implementations and is necessarily
+// different. `internal/equivalence` compares headers as a SET OF NAMES plus
+// `Content-Type`'s value, so `Set-Cookie`'s presence is compared and its value is
+// not — which is what makes a login comparable at all. The id is checked where it
+// matters, in `bff_test.go`, by asserting the cookie is the key the record is
+// stored under.
+
+const jsonAnswer = (status: number, body: unknown, headers: Record<string, string> = {}): Promise<Response> =>
+  Promise.resolve(
+    new Response(typeof body === "string" ? body : JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    }),
+  );
+
+// One scripted identity, shared by every BFF scenario.
+//
+// A lookup keyed on the path rather than a `switch`, so an override is exactly one
+// route and a scenario cannot accidentally change two. The keys are the four
+// identity routes, and the Go side reads the same four out of `internal/httpapi`.
+function scriptedIdentity(overrides: Record<string, () => Promise<Response>> = {}): NonNullable<BffOptions["fetch"]> {
+  return async (input) => {
+    const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+    const override = overrides[path];
+    if (override !== undefined) return override();
+
+    switch (path) {
+      case "/healthz":
+        return new Response("", { status: 200 });
+      case "/v1/session":
+        return jsonAnswer(200, { token: "identity-token-abcdef0123456789", expires_at: "2027-01-15T09:00:00.000Z" });
+      case "/v1/me":
+        return jsonAnswer(200, { id: "11111111-2222-3333-4444-555555555555", email: "a@example.test" });
+      case "/v1/users":
+        return jsonAnswer(201, { id: "11111111-2222-3333-4444-555555555555", email: "a@example.test" });
+      default:
+        return jsonAnswer(404, {});
+    }
+  };
+}
 
 // One named configuration. Both sides are handed the same name and must build
 // the same thing from it.
@@ -70,6 +153,88 @@ export const SCENARIOS: Record<string, AppOptions> = {
         throw new Error("dial tcp://identity.internal:8080: no route to host");
       },
       aperture: async (): Promise<ProbeStatus> => "unavailable",
+    },
+  },
+
+  // # THE BROWSER SURFACE, AND THE `identity` PROBE IT REGISTERS
+  //
+  // One identity, healthy, and the four `/auth` routes mounted. This is the
+  // scenario that compares the `201`/`200`/`204` bodies, the `Set-Cookie`, the
+  // origin gate's `403`, and the body-shaped refusals — so it is the one that
+  // says whether the port is the reference.
+  //
+  // The probe is registered by `bff` itself rather than named under `probes`,
+  // because that is what `src/index.ts` does: `probes: { identity:
+  // identityProbe(bff), … }`. Naming it in `probes` as well would render it TWICE
+  // on the reference and once on the Go side, which is a difference in the thing
+  // being configured rather than in the port.
+  bff: {
+    bff: {
+      identityUrl: "http://identity.test",
+      fetch: scriptedIdentity(),
+    },
+  },
+
+  // Identity refuses the credential. The upstream body names a cause, and the
+  // contract is that it does not reach the browser.
+  bffBadCredentials: {
+    bff: {
+      identityUrl: "http://identity.test",
+      fetch: scriptedIdentity({
+        "/v1/session": () => jsonAnswer(401, { error: "invalid_credentials", detail: "that password is not correct" }),
+      }),
+    },
+  },
+
+  // An account that does not exist, refused with a DIFFERENT slug and a DIFFERENT
+  // detail. The pair exists so the two must be indistinguishable through this
+  // gateway: `bffBadCredentials` and this scenario must produce byte-identical
+  // answers apart from `trace_id`, and `bff_test.go` asserts that directly.
+  bffUnknownAccount: {
+    bff: {
+      identityUrl: "http://identity.test",
+      fetch: scriptedIdentity({
+        "/v1/session": () => jsonAnswer(401, { error: "no_such_user", detail: "no account has that email address" }),
+      }),
+    },
+  },
+
+  // A locked account, WITH its window. `423` and `Retry-After` are the mapping the
+  // packet calls the contract, and `Retry-After` is one of the header names
+  // `internal/equivalence` compares for presence.
+  bffAccountLocked: {
+    bff: {
+      identityUrl: "http://identity.test",
+      fetch: scriptedIdentity({
+        "/v1/session": () => jsonAnswer(423, { error: "account_locked" }, { "Retry-After": "900" }),
+      }),
+    },
+  },
+
+  // Identity is up and returning 500 — the outage that used to pass through with no
+  // log line at all, and the one `unusable()` exists for. `unreachable()` and
+  // `unusable()` are two different 503s and this is the one that is NOT
+  // "unreachable", so the two must not collapse.
+  bffIdentityBroken: {
+    bff: {
+      identityUrl: "http://identity.test",
+      fetch: scriptedIdentity({
+        "/v1/session": () => jsonAnswer(500, "<html>identity: undefined is not a function</html>"),
+        "/v1/me": () => jsonAnswer(500, "<html>identity: undefined is not a function</html>"),
+        "/healthz": () => jsonAnswer(500, ""),
+      }),
+    },
+  },
+
+  // Identity answers 401 on `/v1/me`: it WITHDREW the token. The record is dropped
+  // and the cookie cleared, and this scenario compares that shape rather than
+  // asserting it.
+  bffSessionWithdrawn: {
+    bff: {
+      identityUrl: "http://identity.test",
+      fetch: scriptedIdentity({
+        "/v1/me": () => jsonAnswer(401, { error: "unauthorized" }),
+      }),
     },
   },
 };

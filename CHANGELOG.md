@@ -10,6 +10,112 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **The browser-facing surface, in Go: four `/auth` routes and the origin gate.**
+  `internal/httpapi/bff.go` ports `src/bff/auth.ts` — `POST /auth/register`,
+  `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` — behind
+  `Options.BFF`, which is **nil by default**: `cmd/gateway` therefore serves probes
+  only and the four routes answer the reference's v0 `404`, which is what
+  `createApp({})` gives. Set `Options.BFF` and they are served.
+
+  The properties it holds, each with a test that is shown red by mutation:
+
+  - **The origin gate is the CSRF defence, and there is no double-submit token.**
+    `RequireSameOrigin` covers the three mutating routes and *not* `GET /auth/me`,
+    and the coverage is read out of the generated document's registrations rather
+    than from a hand-written list, so a route added next week is gated by default.
+    A token is absent because the gate is the defence; the reasoning for not adding
+    one — the second cookie would be readable by the very script the first hides
+    from, so the "secret" is compared against a value the attacker supplied — is in
+    the source.
+  - **The session cookie is `__Host-bff-session`**: `Secure`, `Path=/`, `HttpOnly`,
+    `SameSite=Lax`, no `Domain`, and it expires when *identity's* session does.
+    The clearing cookie repeats every attribute, because a deletion missing one
+    leaves the original in place.
+  - **The browser never receives an identity token.** Asserted behaviourally (the
+    login body is exactly `{"expires_at":…}`; `/auth/me` returns exactly
+    `{"id":…,"email":…}`) *and* by reading `bff.go`'s own sources for any line that
+    writes a token into a response.
+  - **Password rules, lockout and enumeration are identity's.** The body is
+    forwarded byte-for-byte, a `423` stays a `423` and carries its `Retry-After`
+    only when it is digits, and **two different refusal causes produce
+    byte-identical responses** — the test asserts that, not that a 401 exists.
+  - **A revoked session is dead on the next request.** A `401` from identity on
+    `/auth/me` drops the record and clears the cookie; a `503` does not, because
+    treating an outage as a revocation signs everybody out whenever identity
+    hiccups. Those two are different branches and both are tested.
+  - **Rate limiting keys on the client address**, because a browser session has no
+    principal yet: nothing in this package invents a principal, so the bucket a
+    browser lands in is still derived from the socket.
+
+  **No session store ships, and that is the decision.** `src/bff/session.ts`'s
+  `Map` was not ported. `identity/internal/sessions/store.go` is the better design
+  and cannot be used here: it is keyed by `token_digest` and resolves a *token* to a
+  session, while the gateway needs the opposite direction — the browser's opaque id
+  in, the identity token out — and nothing in identity performs that direction,
+  because the digest is one-way by construction. Go's `internal/` rule forbids the
+  import across modules and identity exposes no endpoint that does the inverse
+  lookup. `internal/session` declares the interface, `internal/sessiontest` holds a
+  fixture, `NewBff` **refuses to construct** a browser surface with a nil store, and
+  `TestNoProductionFileImportsTheSessionDouble` runs `go list -deps ./cmd/...` to
+  prove the fixture is not linked into the binary. A partial migration would have
+  been worse than none: two services that each believe they own the session.
+
+- **`mutation-gate.sh`: 39 properties, each shown red by breaking it.** A green
+  suite is not evidence that a property is tested; a mutation is. Every mutation is
+  verified to have *applied* before the suite runs, the tree is restored by copy
+  rather than by `git checkout --` (which restores the last commit and silently
+  deletes uncommitted work — it did, once), and three mutations that "did not bite"
+  turned out to be about the recipe rather than about the code, and say so in a
+  comment instead of being deleted.
+
+- **`internal/equivalence` reaches the browser surface**: nine scenarios, **306
+  comparisons**, and the runner can now send a body, two headers, a *duplicated*
+  header, and a per-side sign-in exchange — because the session id is minted by the
+  implementation under test and a single shared cookie would be a session neither
+  side knows.
+
+### Fixed
+
+- **The problem document's field order, which the equivalence check found.** Every
+  rejection this service wrote differed from the reference at **byte 2**, and not
+  one of them differed in anything a client can read. `api.Problem` declares its
+  fields alphabetically (`oapi-codegen` emits a struct in the order it finds them in
+  the document's `properties` map, which is sorted) where `src/problem.ts` writes
+  `type, title, status, detail, instance, code, trace_id`. `writeProblem` now
+  hand-renders in the reference's order, `field` before `code` inside a 422's
+  `errors`. This was invisible until now because the envelope was ported for five
+  operations that all *declined* — an envelope nothing reaches is an envelope
+  nothing has compared.
+
+- **`writeRawJSON` overwrote the problem content type.** It set
+  `application/json` unconditionally, so `writeProblem`'s `application/problem+json`
+  was replaced on every problem document in the service: a correct body served with
+  the media type that says "this is not a problem document". Now conditional, like
+  `writeJSON`'s.
+
+### Changed
+
+- **A doubled `Sec-Fetch-Site` is no longer refused, and the first value wins.**
+  Measured, not chosen: the reference answers `200` — with the cookie — to a
+  request carrying `Sec-Fetch-Site: same-origin` **twice**. Two mistakes followed
+  from getting this wrong. The origin gate joined the lines (the WHATWG `Headers`
+  rule) and refused, which is a "stricter" gate that diverges; and `oapi-codegen`
+  refused the repeated header before any handler ran, with a `text/plain` `400`
+  that appears nowhere in `openapi/v1.yaml`. `collapseRepeatedHeaders` now reduces
+  a repeated value to its first before the generated router sees it.
+
+- **A `BFF` no longer registers a readiness probe.** `createApp({bff})` answers
+  `{"deps":{}}`; the `identity` probe is registered by `runtimeOptions`, which
+  reads `IDENTITY_URL`. Auto-registering it made `/readyz` differ from the
+  reference in every browser scenario, at byte 9.
+
+- **A logout identity could not revoke is `unreachable()`, not `unusable()`.**
+  `src/bff/auth.ts`'s logout is `revoked ? 204 : unreachable()`. The port answered
+  `unusable()` — a different `detail` and an extra log line. A decision, not a
+  status, and the status alone would not have caught it.
+
+### Added (earlier in this series)
+
 - **A Go gateway, beside the TypeScript one, serving the same contract.**
   `gateway` is being rewritten in Go: `net/http` + `chi`, with `oapi-codegen`
   generating the server from `openapi/v1.yaml`, because the contract is the
@@ -22,12 +128,13 @@ dependency versions follow npm's own rules.
   nobody can tell a porting bug from a mechanical edit, which is the review this
   rewrite most needs.
 
-  What the Go service serves today is **two operations of seven**: `GET /healthz`
-  and `GET /readyz`, plus both error envelopes. The other five — `GET /v1/me` and
-  the four `/auth` routes — are declared by the contract, need a subsystem this
-  packet does not port, and answer the **v0 `404`**. A `501` would have been more
-  truthful about the code and less true about the contract: `createApp({})` does
-  not register `/v1/me` without a verifier and does not register `/auth/*`
+  What the Go service serves today is **three operations of seven**: `GET /healthz`
+  and `GET /readyz`, plus both error envelopes, plus the four `/auth` routes behind
+  `Options.BFF` (see above). The remaining three — `GET /v1/me` and the API-key and
+  rate-limit surfaces behind `/v1/*` — are declared by the contract, need a subsystem
+  this packet does not port, and answer the **v0 `404`**. A `501` would have been
+  more truthful about the code and less true about the contract: `createApp({})`
+  does not register `/v1/me` without a verifier and does not register `/auth/*`
   without an identity to ask, so the reference answers `404` too, and where the
   two implementations differ the TypeScript answer is the correct one.
 

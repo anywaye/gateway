@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -36,10 +37,28 @@ import (
 // to trust a token is worse than an endpoint that is not there").
 type Options struct {
 	// Readiness probes by dependency name, in the order `/readyz` renders them.
-	// Nothing registers one by hand in this packet: the first dependency
-	// gateway is given arrives with the packet that ports it, and it registers
-	// here and nowhere else. See `NamedProbe` for why this is a slice.
+	// A caller registers them here, by hand, and a configured `BFF` is NOT one of
+	// them — measured rather than assumed: `createApp({bff})` answers
+	// `{"deps":{}}`, because the `identity` probe is registered by
+	// `runtimeOptions`, which reads `IDENTITY_URL` and is not something this package
+	// does. Auto-registering it here made `/readyz` differ from the reference in
+	// every browser scenario, at byte 9.
+	//
+	// The ORDER is not decoration: `/readyz` renders `deps` in registration order
+	// because this is a slice and not a map, and `encoding/json` sorts map keys.
 	Probes []NamedProbe
+
+	// BFF is the browser surface: the four `/auth` routes, the session cookie and
+	// the origin gate. NIL means none of it, and the four routes then decline with
+	// the reference's `404` — which is what `createApp({})` does, so a gateway
+	// configured with nothing serves the same answer the reference does.
+	//
+	// Not a pointer for its own sake: the reference's `AppOptions.bff` is
+	// `BffOptions | undefined`, and "there is an identity to ask" is a fact about
+	// the deployment rather than an empty struct. A `BffOptions{}` with an empty
+	// `IdentityURL` would be a browser surface that cannot reach identity, and
+	// `NewBff` refuses that — so the two spellings would not even both build.
+	BFF *BffOptions
 }
 
 // ProbePaths is the two operations the limiter must never count.
@@ -79,6 +98,11 @@ func New(options Options) (http.Handler, error) {
 		return nil, err
 	}
 
+	bff, err := options.browserSurface()
+	if err != nil {
+		return nil, err
+	}
+
 	// The generated router. `openapi/v1.yaml` IS the routing table — the
 	// document, not this file, decides what is mounted — and
 	// `internal/httpapi/routes_test.go` holds the two together in both
@@ -95,7 +119,17 @@ func New(options Options) (http.Handler, error) {
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) { writeV0NotFound(w, r) })
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { writeV0NotFound(w, r) })
 
-	api.HandlerWithOptions(&server{probes: options.Probes}, api.ChiServerOptions{BaseRouter: router})
+	// Before the generated router, and the reason is in `collapseRepeatedHeaders`:
+	// `oapi-codegen` refuses a header parameter sent twice with a `text/plain` 400,
+	// the reference has no such refusal, and without this middleware the two answers
+	// differ on status, in content type and in whether a cookie was set.
+	router.Use(collapseRepeatedHeaders)
+
+	svc := &server{probes: options.Probes, bff: bff}
+	api.HandlerWithOptions(
+		svc,
+		api.ChiServerOptions{BaseRouter: router, ErrorHandlerFunc: paramRefusal()},
+	)
 
 	// `HEAD` on the two probe paths, registered explicitly because chi does not
 	// route `HEAD` to a `GET` handler and Hono does. The reference answers `200`
@@ -109,11 +143,54 @@ func New(options Options) (http.Handler, error) {
 	// holds the two sets equal, so adding a probe path without its `HEAD` route —
 	// or the other way round — is a failing test rather than a difference only
 	// the equivalence check would notice.
-	svc := &server{probes: options.Probes}
 	router.Method(http.MethodHead, "/healthz", headOf(svc.Liveness))
 	router.Method(http.MethodHead, "/readyz", headOf(svc.Readiness))
 
 	return router, nil
+}
+
+// browserSurface builds `Options.BFF`, or reports why it cannot.
+//
+// A nil `BFF` is the nil result and not an error: that is the "there is no
+// identity to ask" configuration, and the reference serves probes only in it. A
+// non-nil one with anything wrong in it is a refusal, because `/auth/*` answering
+// `404` when an operator configured it is the failure this repository's rule
+// names — "invalid config is an error, not a fallback".
+func (o Options) browserSurface() (*Bff, error) {
+	if o.BFF == nil {
+		return nil, nil
+	}
+	return NewBff(*o.BFF)
+}
+
+// paramRefusal is what the generated router does when it cannot bind a header.
+//
+// # IT IS UNREACHABLE FOR THE TWO HEADERS THE CONTRACT DECLARES
+//
+// `collapseRepeatedHeaders` reduces a repeated value to its first before the router
+// sees it, so the generator's "expected one value" refusal — the only way to reach
+// this — does not fire for `Sec-Fetch-Site` or `Origin`. What it does for is a
+// header parameter the document adds later and the middleware does not know about,
+// and the answer here is the v0 `404` with the generator's own reason LOGGED rather
+// than written: a body that names a header describes the gateway's internals to an
+// unauthenticated caller, which is the one thing every other refusal here avoids.
+//
+// NOT the generator's default. That default is `http.Error`, which is `text/plain`
+// — a body shape that appears nowhere in `openapi/v1.yaml`.
+//
+// `TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders` is the tripwire: it
+// doubles each declared header and asserts the request reaches its handler, so
+// "unreachable" is a measured fact rather than a hope.
+//
+// The older reason this writer took a boolean — "mounted answers the gate's `403`,
+// unmounted answers the v0 `404`" — is gone, because it rested on a measurement
+// that was wrong: the reference does not refuse a repeated header at all. See
+// `collapseRepeatedHeaders`.
+func paramRefusal() func(http.ResponseWriter, *http.Request, error) {
+	return func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("gateway: a header the contract declares could not be read: %v. This is unreachable for Sec-Fetch-Site and Origin — collapseRepeatedHeaders reduces a repeated value to its first — so it means a header parameter this middleware does not know about arrived more than once.", err)
+		notBuilt(w, r)
+	}
 }
 
 // headOf adapts a `GET` handler to answer a `HEAD`.
@@ -169,21 +246,30 @@ func (o Options) validate() error {
 // server is the `api.ServerInterface` the generated router calls. It is the only
 // place a handler is written.
 //
-// Each method below is ONE of two things, and the distinction is the whole shape
-// of this packet:
+// Each method below is ONE of three things, and the distinction is the whole
+// shape of the port:
 //
-//   - the operation is served (`Liveness`, `Readiness`), or
-//   - the operation is declared by the contract, needs a Wave 3 subsystem this
-//     packet does not port, and answers the reference's own answer for an
-//     operation that is not there (`notBuilt`).
+//   - the operation is served unconditionally (`Liveness`, `Readiness`), or
+//   - the operation is served when its subsystem is configured and declines with
+//     the reference's own `404` when it is not (the four `/auth` routes), or
+//   - the operation is declared by the contract, needs a Wave 3 subsystem neither
+//     packet ports, and declines (`GetCurrentPrincipal`).
 //
-// The second kind is the honest part. `src/index.ts` does not register `/v1/me`
-// unless a verifier is configured, and does not register `/auth/*` unless there
-// is an identity to ask — so a gateway built with nothing configured answers
-// `404` on all five, and this one must too. `TestEveryOperationIsEitherServedOr
-// Declined` reads the router and fails on an operation that is neither.
+// The second kind is the honest part and it is two-valued on purpose.
+// `src/index.ts` does not register `/auth/*` unless there is an identity to ask,
+// so a gateway built with nothing configured answers `404` on all four — and a
+// gateway built WITH an identity has to answer exactly what the reference does
+// with one, which is a different thing entirely. `decline` is the one writer for
+// that shape, so the four methods below are one line each and the difference
+// between "this is not here" and "this is here" is the `bff` field and nothing
+// else.
 type server struct {
 	probes []NamedProbe
+
+	// Nil means no browser surface, and every `/auth` method declines. It is set
+	// by `New` from `Options.BFF` and cannot be nil-and-non-nil: the only
+	// assignment is the one line there.
+	bff *Bff
 }
 
 var _ api.ServerInterface = (*server)(nil)
@@ -262,53 +348,97 @@ func orderedDeps(probes []NamedProbe, deps map[string]ProbeStatus) string {
 	return b.String()
 }
 
-// The five operations the contract declares that this packet does not serve.
+// The four browser routes, each behind the origin gate except the read.
 //
-// One paragraph is on `notBuilt`. Repeating it five times would be five places
-// to update and one place a reader looks, and each of these is a bare name for
-// `notBuilt` so `grep notBuilt` enumerates the Wave 3 surface.
+// `GET /auth/me` is NOT gated and that is not an oversight: the gate is CSRF
+// defence, and a CSRF defence on a request that changes nothing protects a caller
+// from itself. `src/index.ts` mounts it per route for exactly this reason, and
+// `TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose` holds the set equal to
+// the document's method list rather than to a hand-written one.
+func (s *server) RegisterUser(w http.ResponseWriter, r *http.Request, _ api.RegisterUserParams) {
+	s.bffOr(w, r, http.MethodPost, (*Bff).Register)
+}
+
+func (s *server) CreateSession(w http.ResponseWriter, r *http.Request, _ api.CreateSessionParams) {
+	s.bffOr(w, r, http.MethodPost, (*Bff).Login)
+}
+
+func (s *server) DeleteSession(w http.ResponseWriter, r *http.Request, _ api.DeleteSessionParams) {
+	s.bffOr(w, r, http.MethodPost, (*Bff).Logout)
+}
+
+func (s *server) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	if s.bff == nil {
+		notBuilt(w, r)
+		return
+	}
+	s.bff.Me(w, r)
+}
+
+// bffOr dispatches to a browser-surface handler, behind the origin gate, or
+// declines.
+//
+// The `method` is an argument and not derived from the handler, because "is this
+// route mutating" is a property of the CONTRACT and the contract is the generated
+// document. Passing it means the gate's coverage is stated once, here, where a
+// reader can see that a read is ungated on purpose; deriving it would mean asking
+// the method off a request that the router has already matched.
+//
+// The handler is a method expression rather than a closure so no allocation
+// happens per request and, more to the point, so the gate cannot be forgotten on
+// one route by forgetting to wrap it in a `func`.
+func (s *server) bffOr(w http.ResponseWriter, r *http.Request, method string, handler func(*Bff, http.ResponseWriter, *http.Request)) {
+	if s.bff == nil {
+		notBuilt(w, r)
+		return
+	}
+
+	// `GET` is the only method on this surface that does not change anything, and
+	// naming it is the whole exemption. A new method on `/auth` therefore gets the
+	// gate by default, which is the direction to be wrong in: an ungated POST is a
+	// CSRF hole and a gated GET is a read that 403s.
+	if method == http.MethodGet {
+		handler(s.bff, w, r)
+		return
+	}
+	RequireSameOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler(s.bff, w, r)
+	})).ServeHTTP(w, r)
+}
+
+// GetCurrentPrincipal is the one operation this packet does not serve, and it is
+// bearer-token verification: a subsystem the auth packet owns.
+//
+// It stays a decline rather than a `401` for the reason `notBuilt` gives — the
+// reference does not register `/v1/me` without a verifier, so the reference
+// answers `404` here too. `grep notBuilt` therefore names exactly one operation
+// now, which is what makes it a useful inventory rather than a decoration.
 func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 	notBuilt(w, r)
 }
 
-func (s *server) RegisterUser(w http.ResponseWriter, r *http.Request, _ api.RegisterUserParams) {
-	notBuilt(w, r)
-}
-
-func (s *server) CreateSession(w http.ResponseWriter, r *http.Request, _ api.CreateSessionParams) {
-	notBuilt(w, r)
-}
-
-func (s *server) DeleteSession(w http.ResponseWriter, r *http.Request, _ api.DeleteSessionParams) {
-	notBuilt(w, r)
-}
-
-func (s *server) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	notBuilt(w, r)
-}
-
-// notBuilt is the answer for an operation whose subsystem this packet does not
-// port.
+// notBuilt is the answer for an operation that is not here.
 //
-// It writes the v0 `404` envelope, and that is a decision rather than the
-// obvious thing. The alternatives were each wrong in a way that would have cost
-// a reader something:
+// It writes the v0 `404` envelope, and that is a decision rather than the obvious
+// thing. The alternatives were each wrong in a way that would have cost a reader
+// something:
 //
 //   - `501 Not Implemented` is the truthful answer about *this codebase*, and it
 //     is not the contract's answer. `src/index.ts` does not register `/v1/me`
-//     without a verifier, so the reference answers `404` there — and the packet
-//     rules that the TypeScript answer is the correct one.
-//   - A `503` in the real handler's shape would make a deployment look broken in
-//     a way `404` does not.
+//     without a verifier and does not register `/auth/*` without an identity to
+//     ask, so the reference answers `404` on all five with nothing configured —
+//     and the packet rules that the TypeScript answer is the correct one.
+//   - A `503` in the real handler's shape would make a deployment look broken in a
+//     way `404` does not.
 //   - Leaving the route unmounted would be indistinguishable from a path nobody
 //     declared, and the router is generated, so there is no line here to leave
-//     out: the document declares these five operations and the generated router
-//     registers all five whatever this package does with them.
+//     out: the document declares these operations and the generated router
+//     registers all of them whatever this package does with them.
 //
 // One writer rather than five, because the answer is one answer. The method
-// bodies above are what make it *visible* which five operations are in this
-// state, and `TestEveryOperationIsEitherServedOrDeclined` is what keeps the two
-// in step with the document.
+// bodies above are what make it *visible* which operations are in this state, and
+// `TestEveryOperationIsEitherServedOrDeclined` is what keeps the two in step with
+// the document.
 func notBuilt(w http.ResponseWriter, r *http.Request) {
 	writeV0NotFound(w, r)
 }
@@ -330,10 +460,21 @@ func writeV0NotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeRawJSON writes a body this package has already encoded. It exists so the
-// one place that needs key order has an honest name, rather than reaching for
-// `writeJSON` and passing a `json.RawMessage` that reads like an oversight.
+// two places that need key order have an honest name, rather than reaching for
+// `writeJSON` and passing a string that reads like an oversight.
+//
+// The CONDITIONAL content type is the same rule `writeJSON` keeps, and it was
+// FOUND HERE rather than assumed: `writeProblem` sets `application/problem+json`
+// and then calls this, and an unconditional `Set` overwrote it with
+// `application/json`. The body was byte-identical to the reference's and the media
+// type was not, so every problem document in the service would have been served
+// with the type that says "this is not a problem document" — and a test that
+// decodes the body and stops there never sees it. `internal/equivalence` does, as a
+// `Content-Type` mismatch on otherwise identical bytes.
 func writeRawJSON(w http.ResponseWriter, r *http.Request, status int, body string) {
-	w.Header().Set("Content-Type", "application/json")
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.WriteHeader(status)
 	if _, err := w.Write([]byte(body)); err != nil {
 		panic(fmt.Sprintf("httpapi: %s %s: response did not write: %v", r.Method, r.URL.Path, err))
