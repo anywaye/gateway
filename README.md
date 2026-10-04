@@ -9,7 +9,9 @@ routing.** Tokens are verified for real against identity's published keys; a
 browser signs in through guard and comes away with a session cookie instead of a
 token; a script can hold a scoped, revocable API key; a configured path prefix
 is forwarded to the service that owns it, carrying a credential guard chose
-rather than one the caller sent. Rate-limit counters are per process unless
+rather than one the caller sent — and, on a route that declared what it needs, a
+short-lived signed assertion of *which caller* it was. Rate-limit counters are per
+process unless
 `REDIS_URL` names a shared store, and sessions are always per process. Routing is
 a **static configured table**, not a service registry — see [Routing](#routing)
 and [Not built yet](#not-built-yet) before relying on anything here.
@@ -140,9 +142,12 @@ Four things it does **not** do, because each one is a different packet:
   like every other `/v1/` path — see below.
 - It does not give the upstream anything. A `public` entry **cannot** carry a
   `token`: the two are different credentials and an entry with both refuses to
-  boot.
+  boot. And it cannot carry `principal` claims either — a public route has no
+  verified caller, so it gets **no assertion at all**. See [A private upstream
+  learns who is calling](#a-private-upstream-learns-who-is-calling).
 - It does not forward the caller's credential. A caller who sends one to a public
-  prefix has it dropped, exactly as on a private one.
+  prefix has it dropped, exactly as on a private one — and what a private route
+  gets instead is a *new* header carrying guard's own signature, never their token.
 
 **What it costs, stated plainly.** The rate-limit bucket is keyed on the account,
 the key, or the client address — in that order. An anonymous request has none of
@@ -178,7 +183,77 @@ value is a refusal to boot, for the reason `REDIS_URL=redis//redis` is:
 | a token containing whitespace or a control character         | it is written into an `Authorization` header verbatim, so a newline in it is header injection configured on purpose |
 | a `public` that is not `true` or `false`                     | `{"public":"true"}` is what an operator writes when they mean public and have not checked that JSON has no booleans-as-strings. Coerced, it is a route serving anyone |
 | an entry that is `public` **and** carries a `token`           | two credentials answering two different questions, and nobody reading the table can say which was meant — so the message names both ways out |
+| an entry that is `public` **and** declares `principal` claims | a public route has no verified caller, so there is nothing to assert one about — and honouring it would mint a signed statement about a request nobody was required to make |
+| `principal` that is not an array, or is empty                 | `{"principal":"sub"}` does not mean what it says, and `[]` is **not** "no assertion": it is an assertion carrying no claims, at the cost of a signature per request |
+| `principal` naming `iss`, `aud`, `exp`, `nbf`, `iat` or `jti` | those are guard's envelope. An entry that chose its own audience or lifetime would mint an assertion that verifies for a route it was never minted for |
+| `principal` naming `"*"`, or a name with whitespace in it      | `"*"` is "minimal claims" quietly turned into the caller's whole JWT, and a name with a space in it is a name no upstream can look up |
 | `{}`                                                         | `ROUTE_TABLE={}` forwards nothing, and an operator would find out from 404s |
+
+### A private upstream learns who is calling
+
+A route entry may declare **which claims its upstream needs**, and guard then
+sends that upstream a short-lived signed assertion of the caller in a header of
+its own, `X-Cafaye-Principal`:
+
+```sh
+ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
+                                     "principal":["sub","github_id"]},
+              "/v1/catalog":{"baseUrl":"http://pantry:8080","public":true}}'
+```
+
+The upstream answers `POST /v1/pantry/services/…` having been handed a compact
+JWS it can verify against guard's published key. It did not get: the caller's
+`Authorization` (never — that would make guard a confused deputy and a relay for
+a token minted for a different audience), the caller's `Cookie`, or any claim the
+entry did not declare.
+
+Five rules, each of which is a refusal or a startup error rather than a default:
+
+- **Never on a `public` entry.** That is what makes a route public. The
+  combination refuses to boot *and* is refused again at the send site, because a
+  security property that rests only on a validation in another file is one
+  refactor from being decorative.
+- **Not the caller's token.** guard signs **its own** statement, over **its own**
+  key. The caller's token was minted for a different audience and carries whatever
+  the caller was given.
+- **Bound to the upstream.** `aud` is that upstream's base URL origin, so a leaked
+  assertion is worth nothing on any other upstream. `kid` is the RFC 7638
+  thumbprint of the key unless an operator sets one, because two deployments both
+  calling their key `guard-1` is a key set in which an upstream verifies against
+  the wrong deployment.
+- **Short-lived.** Two minutes by default, and `ASSERTION_TTL_MS` is **refused
+  above ten minutes** — a lifetime nobody may exceed is the property; a default is
+  only a default.
+- **Minimal, and declared.** Exactly the names in `principal`, no wildcard, and a
+  name the caller's token does not carry is **omitted** rather than invented — so
+  a publisher with no `github_id` reaches pantry as *no publisher record*, which
+  is the refusal, rather than as a token saying something untrue.
+
+**It is off unless a deployment turns it on**, and that is what makes it safe to
+add to a running gateway. Configure nothing and guard forwards exactly the
+headers it forwarded before:
+
+| Variable                        | Default                  | Meaning                                                     |
+| ------------------------------ | ------------------------ | ----------------------------------------------------------- |
+| `ASSERTION_SIGNING_KEY_FILE`   | *unset — no assertions*  | Path to a **PKCS#8 PEM**. A missing or malformed file is a refusal to boot |
+| `ASSERTION_SIGNING_KEY_ID`     | the key's thumbprint     | The `kid` an upstream selects the key by                    |
+| `ASSERTION_ISSUER`             | `https://guard.localhost` | Who minted it, which is the `iss` an upstream checks        |
+| `ASSERTION_TTL_MS`             | `120000`, max `600000`   | How long an assertion is good for                           |
+
+A **file path, not the PEM in a variable**, and the distinction is not tidiness: an
+environment value appears in `docker inspect`, in `/proc/<pid>/environ` and in any
+crash dump, and this README already refuses a base URL carrying a password for the
+same reason. The public half is **not** published at `/.well-known/jwks.json` —
+hand it to an upstream out of band, the way it already receives the `token`. See
+[Not built yet](#not-built-yet) for why.
+
+**What it still cannot do, which is the more useful half.** An upstream learns the
+caller's `sub` and whatever else it declared — and nothing about *what that caller
+is allowed to do*. The assertion says "this request came from `sub=…` on this
+route, signed by this gateway, minutes ago"; authorising them is still the
+upstream's own database. The verifying half of MD19's "both halves written" is
+pantry's, and until pantry reads the header the assertion is minted, verified
+against a key set nobody has, and refused.
 
 ### The credential rule, which is the part that matters
 
@@ -203,12 +278,11 @@ never has — a deny list has to have thought of `Authorization`, `Cookie`,
 A table entry with no `token` is sent **no** `Authorization` header at all,
 which is a different thing from one this process invented.
 
-**What this costs, stated plainly.** An upstream cannot tell which caller sent a
-request: the per-service `token` is a service credential, not a delegation, and
-no header here asserts who the caller was. Propagating a verified principal is a
-deliberate decision with both halves written — guard asserting it *and* the
-service checking it — and it is not built. See
-[Not built yet](#not-built-yet).
+**What this used to cost, and what it costs now.** Until the principal assertion
+landed, an upstream could not tell which caller sent a request at all: the
+per-service `token` is a service credential, not a delegation. It can now — on a
+route that **declared** what it needs, and only there. See
+[A private upstream learns who is calling](#a-private-upstream-learns-who-is-calling).
 
 ### Failures behind the edge are guard's to translate
 
@@ -852,14 +926,32 @@ the source with the packet that replaces them.
   packet, and it is written as one because naming it here is how this one grows
   past what it can hold. `RouteTable` is a plain object so that the swap is a
   populate rather than a rewrite.
-- **A service cannot tell which caller sent a request.** Routed traffic carries
-  guard's own per-service credential and no assertion of who the caller was —
-  see [the credential rule](#the-credential-rule-which-is-the-part-that-matters).
-  Propagating a verified principal needs both halves written at once: guard
-  asserting it, and each service checking it rather than trusting the network.
-  Until then a routed service can authenticate the caller and cannot *authorise*
-  them, which is a real limit on what routing is good for and the reason this is
-  named here rather than left to be discovered.
+- **An upstream learns who the caller is; it still cannot learn what the caller
+  may do.** Guard now mints a short-lived signed assertion on a private route
+  that declared claims — see [A private upstream learns who is
+  calling](#a-private-upstream-learns-who-is-calling) — and that assertion says
+  *who*, from *this* route, signed by *this* gateway, *minutes* ago. It says
+  nothing about what that caller is entitled to; authorising them remains the
+  upstream's own database, which is where it belongs. **The verifying half is not
+  built anywhere**: no service in this repository reads `X-Cafaye-Principal`, so
+  an assertion configured today is minted, and dropped. MD19 asked for both halves
+  at once and this is guard's; the reader is `pantry`'s, and it is what
+  `pantry.current_publisher_id()` needs before a publisher can write.
+- **guard does not publish its assertion key over HTTP.** The public JWK is
+  available from the minter (`publicJwk()`), so wiring a
+  `/.well-known/jwks.json` is small — and it is deliberately not done here. It
+  would add a route to the public edge of the gateway: an operation in
+  `openapi/v1.yaml`, six `registeredAt` anchors in `account_scope.yml`, and a
+  `surface.minimum` change this packet has no standing to make, all for something
+  no *caller* needs. Upstreams are already configured out of band — they need
+  guard's `token` the same way — so the key travels the road the `token` does.
+  Serving it becomes worth it when more than one service needs it, or when keys
+  rotate.
+- **A leaked assertion is bounded but not revocable.** It is useless on any other
+  upstream and dead in two minutes, which is the bar MD19 set. It cannot be
+  withdrawn inside its window, because there is no key id per assertion to
+  denylist and no introspection endpoint to ask. A `jti` denylist is a later
+  packet, and until one exists the honest sentence is "minutes, not revocable".
 - **No readiness probe per service.** A configured upstream is a dependency and
   is deliberately **not** registered as a probe: `/readyz` failing whenever any
   optional service is down would take a working gateway out of rotation for a
@@ -976,7 +1068,8 @@ src/middleware/rateLimitRedis.ts   GCRA in Redis, one Lua script, plus RESP2
 src/middleware/apiKey.ts     API keys: issue, authenticate, revoke
 src/middleware/assert.ts     configuration checks, one RangeError each
 src/routes/table.ts         which prefix goes where, validated, and the resolver
-src/routes/proxy.ts         the pass-through: rebuild, attach guard's credential, translate
+src/routes/assertion.ts     the principal assertion: guard's own signed statement of the caller
+src/routes/proxy.ts         the pass-through: rebuild, attach guard's credentials, translate
 src/bff/auth.ts              the /auth surface: identity calls, the cookie, the origin gate
 src/bff/session.ts           SessionStore + the in-memory v0 implementation
 test/fakeIdentity.ts         a stand-in for identity's auth API (never shipped)

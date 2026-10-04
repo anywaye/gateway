@@ -10,6 +10,82 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **A private upstream now learns who the caller is.** A `ROUTE_TABLE` entry that
+  declares `principal` causes guard to send that upstream a short-lived signed
+  assertion of the verified caller, in a header of its own
+  (`X-Cafaye-Principal`):
+
+  ```sh
+  ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
+                                       "principal":["sub","github_id"]}}'
+  ```
+
+  Before this, `proxy.ts` sent the per-upstream `token` and nothing else, and its
+  own header said the cost out loud: *"an upstream cannot tell which caller sent a
+  request."* That rule is unchanged and load-bearing — forwarding the caller's
+  `Authorization` would make guard a confused deputy — and it is precisely why a
+  publisher write could not work: `pantry.current_publisher_id()` had nothing to
+  compare. The caller was never missing. `src/index.ts` resolved it to a principal
+  before the proxy ran; it was discarded at the boundary.
+
+  **guard's own signature, never the caller's token.** The caller's JWT was minted
+  for a different audience and carries whatever the caller was given; forwarding
+  it would make guard a credential relay. So guard signs its **own** statement with
+  **its own** RS256 key — configured as `ASSERTION_SIGNING_KEY_FILE`, a path to a
+  PKCS#8 PEM, and refused at startup if it is missing or malformed. It is a file
+  path and not the PEM in a variable because an environment value appears in
+  `docker inspect`, in `/proc/<pid>/environ` and in any crash dump. The existing
+  JWKS machinery could not be reused for this: a JWKS is public keys by definition
+  and cannot sign, and a key that can sign must not be one identity can mint
+  everything with.
+
+  **Four properties, each refused rather than defaulted, each with a mutation
+  proof in `REPORT-mvp-guard-principal-01.md`:**
+
+  1. **Never on a `public` entry** — that is what makes a route public. Refused at
+     boot *and* refused again at the send site, and the send-site gate has its own
+     test against a table `routeTable` would have refused, because a check no input
+     can reach is not a check.
+  2. **Not the caller's token, ever** — asserted byte for byte, and by the stronger
+     reading that it does not verify against identity's key set at all.
+  3. **Bound to the upstream and short-lived** — `aud` is that upstream's base URL
+     origin, so a leaked assertion is worth nothing elsewhere; two minutes by
+     default, and `ASSERTION_TTL_MS` is **refused above ten minutes**, because a
+     lifetime nobody may exceed is the property and a default is only a default.
+  4. **Minimal claims, declared per upstream** — exactly the names in `principal`,
+     copied from the caller's token as identity signed them (`scope` stays a string;
+     `github_id` crosses without guard being taught its name). No wildcard. A name
+     the token does not carry is **omitted**, so a publisher with no `github_id`
+     reaches pantry as *no publisher record*. A name guard owns — `iss`, `aud`,
+     `exp`, `nbf`, `iat`, `jti` — is a refusal to boot.
+
+  **An upstream that declared nothing gets no assertion at all.** Not an assertion
+  with no claims: a token whose entire content is which gateway minted it. That is
+  also what keeps the feature additive — with no signing key configured, guard
+  forwards exactly the headers it forwarded before, which is asserted rather than
+  assumed.
+
+  `kid` defaults to the RFC 7638 thumbprint of the public key, because two
+  deployments both calling their key `guard-1` is a key set in which an upstream
+  silently verifies against the wrong one.
+
+  **A defect found and fixed inside this packet, now a tripwire.** The first draft
+  derived the published JWK with `exportJWK(privateKey)`. jose returns
+  `kty, n, e, d, p, q, dp, dq, qi` for a private key — the whole private key, RSA
+  primes included — and nothing about the result would have looked wrong, because
+  RFC 7638 hashes only `e`, `kty` and `n` so the `kid` stayed correct and every
+  signature still verified. `assertion.test.ts` now asserts the published JWK's
+  field names **exactly**, which is the only shape that notices a library upgrade
+  adding a fourth private parameter.
+
+  **Still not built, and named rather than discovered:** no service reads the
+  header yet, so an assertion configured today is minted and dropped; guard does
+  not publish its assertion key over HTTP, on purpose (it would be a new route on
+  the public edge, a new operation in `openapi/v1.yaml`, six `account_scope.yml`
+  anchors and a `surface.minimum` change with no standing to be made); and a
+  leaked assertion is bounded but not revocable inside its window. The README's
+  *Not built yet* carries all three.
+
 - **A routed entry can declare itself public, and that is the only way to be
   let in without a credential.** A `ROUTE_TABLE` entry may carry `"public": true`,
   and that prefix is mounted **without** `jwt.requireJwt`:
