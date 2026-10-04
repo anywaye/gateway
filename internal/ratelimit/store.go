@@ -63,6 +63,21 @@ type Request struct {
 	Now time.Time
 }
 
+// nowMs is the clock as the arithmetic reads it: epoch milliseconds.
+//
+// `RedisStore.Hit` marshals `Now.UnixMilli()` to the script, so a memory store
+// that counted in anything finer would be running a model the Redis path cannot
+// reproduce. See `count` for what that cost when it did.
+func (r Request) nowMs() float64 { return float64(r.Now.UnixMilli()) }
+
+// windowMs is the window as the arithmetic reads it: whole milliseconds.
+//
+// The same reason as `nowMs`, and the same marshalling — `Window.Milliseconds()`
+// is what `RedisStore.Hit` puts in `ARGV[2]`. `Date.now()` in the reference is
+// whole milliseconds too, so this is also the only precision the contract ever
+// had.
+func (r Request) windowMs() float64 { return float64(r.Window.Milliseconds()) }
+
 // Store is one bucket, counted and read in a single step.
 //
 // The shape of this interface IS the atomicity guarantee. There is deliberately
@@ -94,36 +109,69 @@ type Store interface {
 //     millisecond after it is 2x the allowance inside two milliseconds.
 //
 // ONE DIFFERENCE FROM THE SOURCE, and it is a difference of SPELLING only: the
-// debt is a `time.Time` here and a `number` of milliseconds there, so `tat` is
-// `time.UnixMilli(0)` rather than `0` and every comparison is `time.Time`'s
-// rather than `<` on a float. The Redis Lua below has to do the same arithmetic
-// on integers because Lua has no integer milliseconds type either, and the parity
-// test is what proves the two agree request for request.
-func count(tat, now time.Time, request Request) (time.Time, Verdict) {
-	interval := request.Window / time.Duration(request.Limit)
+// debt is a `float64` of epoch milliseconds here and a `number` of milliseconds
+// there, and that is the whole of it. It was NOT always spelling, and `live_test.go`
+// is what found that out.
+//
+// # THIS USED TO COUNT IN NANOSECONDS, AND IT WAS NOT THE SAME ALGORITHM
+//
+// `count` took `tat` and `now` as `time.Time` and computed
+// `interval := request.Window / time.Duration(request.Limit)` — an INTEGER
+// division, in nanoseconds, truncated. Lua has no integer millisecond type, so
+// `GCRA_Lua` computes `interval = window / limit` as a FLOAT, and `Date.now()` in
+// the reference is a whole number of milliseconds. Those are two different models
+// of one algorithm, not two spellings of it:
+//
+//   - `Window/Limit` in nanoseconds throws away the sub-millisecond remainder, so
+//     a 1001ms window at a limit of 3 counted 333.666666ms in Lua and
+//     333.666666ms-then-truncated in Go. The debt `tat` then carried a different
+//     number of digits depending on which store held it.
+//   - `remaining` is `ceil((next - now) / interval)`, and a ratio one part in 10^13
+//     either side of a whole number is the whole answer. Ten of four hundred
+//     randomised steps landed there: Lua's float debt had drifted a hair above
+//     `now`, `ceil` tipped from 1 to 2, and the client was told it had one
+//     fewer unit left than the memory store had just told it.
+//
+// So the header a caller reads depended on the DEPLOYMENT — one replica on the
+// memory store, several on Redis, and the same request answered two different
+// `RateLimit-Remaining` values. `parity_test.go` never saw it because every row
+// in its table divides evenly by the limit; `live_test.go` draws `limit` from
+// 1..6 and `windowMs` from 1,000..60,000, so it draws the other 99%.
+//
+// The fix is not more care in the comparison. It is to count the way the
+// contract counts: milliseconds in, milliseconds out, `float64` throughout, with
+// the two inputs truncated to whole milliseconds exactly where `RedisStore.Hit`
+// truncates them before `ARGV`.
+//
+// The debt this returns is a float and NOT a `time.Time` on purpose. Truncating
+// it to a `time.Time` here would re-introduce the same class of bug one layer
+// down: the next request would read a debt the script never wrote.
+func count(tat, now float64, request Request) (float64, Verdict) {
+	windowMs := request.windowMs()
+	interval := windowMs / float64(request.Limit)
 	next := now
-	if tat.After(now) {
+	if tat > now {
 		next = tat
 	}
-	next = next.Add(interval)
-	delay := next.Sub(now)
+	next = next + interval
+	delay := next - now
 
 	// Strictly greater, so a caller sitting exactly on the threshold is admitted:
 	// that is what lets a burst of exactly `limit` land.
-	if delay > request.Window {
+	if delay > windowMs {
 		// Nothing is written. A refused request must not deepen the debt, or a
 		// caller that keeps hammering while throttled locks itself out for as long
 		// as it keeps trying.
 		return tat, Verdict{
 			Allowed:   false,
 			Remaining: 0,
-			ResetAt:   tat,
-			RetryAt:   next.Add(-request.Window),
+			ResetAt:   at(tat),
+			RetryAt:   at(next - windowMs),
 		}
 	}
 
-	used := float64(next.Sub(now)) / float64(interval)
-	remaining := float64(request.Limit) - ceil(used)
+	used := ceil((next - now) / interval)
+	remaining := float64(request.Limit) - used
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -134,12 +182,22 @@ func count(tat, now time.Time, request Request) (time.Time, Verdict) {
 		// The whole allowance is back once the debt has been repaid in full, which
 		// is at `next`. Before this request it stood at `tat`, so one request costs
 		// exactly one interval of that.
-		ResetAt: next,
+		ResetAt: at(next),
 		// Already admitted at `now`, so this is at or before it. Only the refusal
 		// branch above produces a future value, and that is the `Retry-After`.
-		RetryAt: next.Add(-interval).Add(-request.Window),
+		RetryAt: at(next - interval - windowMs),
 	}
 }
+
+// at is the one place a debt becomes an instant, and it truncates toward zero.
+//
+// That is `Math.trunc` in the reference and `int64` here, and it is not tidiness:
+// Redis converts a returned Lua number to an integer reply the same way, so this
+// is where the two backends stop disagreeing about a timestamp and not a
+// millisecond before they would have to. A `Verdict` therefore carries whole
+// milliseconds — the same resolution `X-RateLimit-Reset` is emitted in, and the
+// finest the Redis half could ever return.
+func at(ms float64) time.Time { return time.UnixMilli(int64(ms)) }
 
 // ceil is `Math.ceil` for the one value it is applied to.
 //
@@ -179,7 +237,7 @@ const DefaultMaxClients = 100_000
 // 200 concurrent `Hit`s at a limit of 50 still admits exactly 50.
 type MemoryStore struct {
 	mu         sync.Mutex
-	buckets    map[string]time.Time
+	buckets    map[string]float64
 	maxClients int
 }
 
@@ -191,7 +249,7 @@ func NewMemoryStore(maxClients int) (*MemoryStore, error) {
 	if maxClients < 1 {
 		return nil, fmt.Errorf("%w: maxClients must be an integer >= 1, got %d", ErrNotConfigured, maxClients)
 	}
-	return &MemoryStore{buckets: make(map[string]time.Time), maxClients: maxClients}, nil
+	return &MemoryStore{buckets: make(map[string]float64), maxClients: maxClients}, nil
 }
 
 // Hit counts one request against one bucket.
@@ -207,12 +265,14 @@ func (s *MemoryStore) Hit(key string, request Request) (Verdict, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := request.nowMs()
 	if len(s.buckets) >= s.maxClients {
-		s.sweepSettledLocked(request.Now)
+		s.sweepSettledLocked(now)
 	}
 
-	tat, _ := s.buckets[key]
-	next, verdict := count(tat, request.Now, request)
+	// A missing key reads as the zero debt, which is `?? 0` in the reference and
+	// what epoch zero means to GCRA: nobody owes anything before the first request.
+	next, verdict := count(s.buckets[key], now, request)
 	if verdict.Allowed {
 		s.buckets[key] = next
 	}
@@ -240,9 +300,9 @@ func (s *MemoryStore) Size() int {
 // active in the current window. That is stated in the README rather than
 // defended against, because the alternative — evicting a caller in debt — is the
 // failure this limiter is for.
-func (s *MemoryStore) sweepSettledLocked(at time.Time) {
+func (s *MemoryStore) sweepSettledLocked(at float64) {
 	for key, tat := range s.buckets {
-		if !tat.After(at) {
+		if tat <= at {
 			delete(s.buckets, key)
 		}
 	}

@@ -175,6 +175,39 @@ else
   fi
 fi
 
+# # THE SAME COUNT, FOR THE OTHER TIER THAT CAN SKIP
+#
+# `internal/ratelimit` has a live tier — the GCRA script against a real
+# `redis-server` — and it skips for the same reason and in the same silence. This
+# block exists because `live_test.go` says so in its own header: "the skip PRINTS a
+# line beginning `ratelimit: DID NOT RUN` and `bin/prime-go` counts it". Until this
+# block existed that sentence described a mechanism the gate did not have, which is
+# the same defect as a comment asserting a property the code does not have.
+#
+# IT WAS NOT ONLY A MISSING COUNT. While running the tier against a real server
+# (one was already listening on this machine at :6379) it turned out that
+# `TestMain` exited 0 BEFORE `m.Run()` whenever `GATEWAY_REDIS_URL` was unset — so
+# the entire package ran no tests at all, the parity table and the instant grid
+# included, and `go test` printed `ok`. That is the worst shape this class of bug
+# takes: a green about nothing whatsoever. The tier skips per test now and prints
+# one line, and this block is what makes that line countable.
+#
+# SAME THREE OUTCOMES AS THE BLOCK ABOVE, for the same three reasons. RAN when the
+# marker is absent. DID NOT RUN, and a failure, when the tier was declared
+# required. Neither — which cannot be told apart here, because the live tier has no
+# summary line to prove it ran — so the marker being ABSENT is taken as RAN and the
+# `-v` run above is what would notice if this gate had stopped seeing its output.
+ratelimit_skipped="$(grep -m1 -o 'ratelimit: DID NOT RUN.*' <<<"$out" || true)"
+if [ -z "$ratelimit_skipped" ]; then
+  echo "ratelimit: the live Redis tier RAN — no DID NOT RUN marker"
+else
+  echo "ratelimit: DID NOT RUN — $ratelimit_skipped"
+  if [ "${GATEWAY_REDIS_REQUIRED:-0}" = "1" ]; then
+    echo "bin/prime-go: GATEWAY_REDIS_REQUIRED=1 and the live Redis tier did not run." >&2
+    exit 3
+  fi
+fi
+
 step "the generated server matches the OpenAPI document"
 # REGENERATE AND DIFF, and this replaced a grep — which is the whole reason this
 # step exists as a rewrite rather than an addition.

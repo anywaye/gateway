@@ -411,32 +411,43 @@ func TestTheInstantsAreWhereTheArithmeticPutsThem(t *testing.T) {
 			},
 		},
 		{
-			// `window / limit` does NOT divide here, and this row is where the port's
-			// instants stop being bit-identical to the reference's. The reason is
-			// arithmetic, not a choice, and it is worth stating exactly:
+			// `window / limit` does NOT divide here, so this row is the one that had to
+			// be measured rather than reasoned about. `60_000 / 7` is
+			// 8571.428571…ms, and every number below is that grid truncated to whole
+			// milliseconds — the resolution `ResetAt` and `RetryAt` carry, because a
+			// `float64` debt becomes an instant through `time.UnixMilli` and because
+			// Redis returns a Lua number the same way.
 			//
-			//   - The reference carries `now` as a JavaScript `number` of epoch
-			//     MILLISECONDS. At 1.79e12 an IEEE double's spacing is 2^-12 ms, about
-			//     244ns, so `next = max(now, tat) + interval` is ROUNDED at every step
-			//     and the error accumulates: the reference's eighth `resetAt` is
-			//     59999.999267578125ms where the true grid is 59999.999ms, a gap of
-			//     730ns in seven additions.
-			//   - `MemoryStore` carries a `time.Time` and adds an integer
-			//     `time.Duration`, so it lands on the exact nanosecond grid
-			//     `window / limit` — here 8571428571ns per interval.
+			// # THE TRUNCATION FLOORS A NEGATIVE OFFSET, AND THAT IS WHY STEP 8 IS -1ms
 			//
-			// So this port is MORE precise than the thing it ports, by less than the
-			// reference's own representation error, and every decision on the row is
-			// identical — which is the envelope `expectSameVerdict` describes in the
-			// reference itself: "the two implementations agree on what they DECIDE and
-			// not on the last decimal of a timestamp."
+			// `at` is 1_790_000_000_000ms, a positive number, and `at()` truncates the
+			// EPOCH value toward zero — which for a positive epoch is a floor. So an
+			// instant at +8571.43ms above the base lands a millisecond short, and one
+			// at -0.5ms lands a whole millisecond BELOW the base: step 8's `retryAt` is
+			// `-1ms`, not `0`. Reading these as `trunc(offset)` gets step 8 wrong and
+			// nothing else, which is the worst possible way for a table to be wrong.
 			//
-			// Deliberately NOT "fixed" by carrying milliseconds as a float64 here. That
-			// would trade a real improvement for a bit-pattern match on a field the
-			// reference documents as outside its own equality, and `RateLimit-Reset` is
-			// computed from it by every client in the deployment.
+			// # WHAT USED TO BE HERE, AND WHY IT WAS WRONG
 			//
-			// The last two rows are the two the reference's row would refuse and admit:
+			// This row used to expect `time.Duration` values on a nanosecond grid —
+			// `8571428571ns` per interval, and a `retryAt` of `-3ns` at step 8 — and the
+			// comment above them argued for keeping it. The argument was sound and
+			// addressed only the timestamps: the port was MORE precise than the
+			// reference, by less than the reference's own float error, and every
+			// DECISION on the row was identical. What it did not consider is
+			// `remaining`, which is `ceil((next - now) / interval)` — a ratio one part
+			// in 10^13 either side of a whole number IS the whole answer, and a debt
+			// carried in nanoseconds drifts across that boundary where a debt carried in
+			// milliseconds does not.
+			//
+			// `live_test.go` found it against a real redis-server: ten of four hundred
+			// randomised steps came back with one fewer unit of allowance than the
+			// memory store had just granted, because the two backends were running
+			// different arithmetic. So the decision was not "more precise" — it was
+			// "a different algorithm, agreeing on the decisions by luck". The nanosecond
+			// grid was not worth keeping once it was measured.
+			//
+			// The last two rows are the two the reference's row would admit and refuse:
 			// 9s has repaid one whole interval and 428ms of the next, so the ninth
 			// request lands with nothing left, and the tenth is refused.
 			name:     "an interval that does not divide the window",
@@ -444,23 +455,25 @@ func TestTheInstantsAreWhereTheArithmeticPutsThem(t *testing.T) {
 			window:   time.Minute,
 			instants: []time.Duration{0, 0, 0, 0, 0, 0, 0, 0, time.Second * 9, time.Second * 9},
 			wantReset: []time.Duration{
-				intervalOf(time.Minute, 7), 2 * intervalOf(time.Minute, 7), 3 * intervalOf(time.Minute, 7), 4 * intervalOf(time.Minute, 7),
-				5 * intervalOf(time.Minute, 7), 6 * intervalOf(time.Minute, 7), 7 * intervalOf(time.Minute, 7), 7 * intervalOf(time.Minute, 7),
-				8 * intervalOf(time.Minute, 7), 8 * intervalOf(time.Minute, 7),
+				8571 * time.Millisecond, 17142 * time.Millisecond, 25714 * time.Millisecond,
+				34285 * time.Millisecond, 42857 * time.Millisecond, 51428 * time.Millisecond,
+				59999 * time.Millisecond, 59999 * time.Millisecond,
+				68571 * time.Millisecond, 68571 * time.Millisecond,
 			},
 			wantRetry: []time.Duration{
-				-60 * time.Second, intervalOf(time.Minute, 7) - 60*time.Second, 2*intervalOf(time.Minute, 7) - 60*time.Second,
-				3*intervalOf(time.Minute, 7) - 60*time.Second, 4*intervalOf(time.Minute, 7) - 60*time.Second,
-				5*intervalOf(time.Minute, 7) - 60*time.Second, 6*intervalOf(time.Minute, 7) - 60*time.Second,
-				// REFUSED: `next - window`, so the eighth interval minus the window —
-				// which is why a client told to retry in 8.571s is right and one told
-				// to retry in 8s would be hammering.
-				8*intervalOf(time.Minute, 7) - 60*time.Second,
-				// Admitted at +9s with `resetAt` at 8 intervals: `next - interval - window`
-				// lands 3ns before `now`, because 9s is 429ms past the seventh interval.
-				-3 * time.Nanosecond,
+				-60 * time.Second, -51429 * time.Millisecond, -42858 * time.Millisecond,
+				-34286 * time.Millisecond, -25715 * time.Millisecond, -17143 * time.Millisecond,
+				-8572 * time.Millisecond,
+				// REFUSED at step 7: `next - window`, so the eighth interval minus the
+				// window — which is why a client told to retry in 8.571s is right and
+				// one told to retry in 8s would be hammering.
+				8571 * time.Millisecond,
+				// Admitted at +9s with `resetAt` at eight intervals: `next - interval -
+				// window` lands just before `now`, and the floor puts it a millisecond
+				// before rather than level with it.
+				-1 * time.Millisecond,
 				// REFUSED again, one further interval out.
-				9*intervalOf(time.Minute, 7) - 60*time.Second,
+				17142 * time.Millisecond,
 			},
 		},
 	} {
@@ -488,16 +501,15 @@ func TestTheInstantsAreWhereTheArithmeticPutsThem(t *testing.T) {
 	}
 }
 
-// intervalOf is `window / limit` in the type `count` computes it in.
+// `intervalOf` was deleted with this row's rewrite, and the reason is worth keeping
+// even though the function is gone.
 //
-// Spelled as a division rather than as the literals `8571428571ns` because the
-// interesting property of the non-integral row is that the interval is a WHOLE
-// NANOSECOND GRID — `time.Duration` division truncates, and 60s over 7 is not a whole
-// number of anything below a nanosecond. Writing the literals would hide that, and
-// hiding it is how `8571428571ns` becomes `8 * time.Millisecond` in a later edit.
-func intervalOf(window time.Duration, limit int) time.Duration {
-	return window / time.Duration(limit)
-}
+// It computed `window / limit` to produce the EXPECTATION, which is the defect in a
+// test helper: it re-ran the implementation's own division, so any change to what
+// `count` divides by moved the expectation by the same amount and the row could not
+// fail. It stayed green through the nanosecond-to-millisecond change for exactly
+// that reason. The row above spells its numbers out as literals, for the reason this
+// file's own header gives: "a derived expectation is the implementation".
 
 // sameDecision compares the two fields a table row states: whether the request was
 // admitted, and what is left of the allowance.
