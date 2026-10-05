@@ -232,6 +232,7 @@ func New(options Options) (http.Handler, error) {
 
 	// # THE MOUNTS, IN THIS ORDER, AND THE ORDER IS THE WHOLE ARGUMENT
 	//
+	// 0. the server span, which `everyRequest` puts outermost,
 	// 1. the repeated-header reduction, which is not a gate and must be first,
 	// 2. authentication, resolved before anything decides to spend an upstream call,
 	// 3. the limiter on everything, routed traffic included.
@@ -296,10 +297,12 @@ func New(options Options) (http.Handler, error) {
 	// agreement.
 	limiter := middlewareOf(options.Limiter)
 	insideLimiter := limiter
+	insideTelemetry := telemetryMiddleware
 	if options.Routes != nil {
 		insideLimiter = nil
+		insideTelemetry = nil
 	}
-	router.Use(everyRequest(insideLimiter, bearerGate(options))...)
+	router.Use(everyRequest(insideTelemetry, insideLimiter, bearerGate(options))...)
 
 	svc := &server{probes: options.Probes, bff: bff, verifier: options.Verifier}
 	api.HandlerWithOptions(
@@ -368,21 +371,38 @@ func New(options Options) (http.Handler, error) {
 		Assertion: options.Assert,
 	}).handle(router)
 
-	gates := everyRequest(limiter, credentialGate(authentication(options), table))
+	gates := everyRequest(telemetryMiddleware, limiter, credentialGate(authentication(options), table))
 	return &mount{Router: router, handler: compose(proxied, gates...)}, nil
 }
 
-// everyRequest is the middleware every request passes through, in order: the
-// repeated-header reduction, then `gate` when there is one, then the limiter.
+// everyRequest is the middleware every request passes through, in order: the span,
+// then the repeated-header reduction, then `gate` when there is one, then the
+// limiter.
 //
 // ## WHY IT IS ONE LIST AND NOT THREE MOUNTS
 //
-// The order is the property — a request refused by a gate is not counted, and the
-// reduction rewrites what the gates read — and an order written out as three
-// separate statements in two branches of `New` is an order one of the branches can
-// forget. `New` registers this list with chi's `Use` when there is no pass-through
-// and wraps the pass-through with it when there is; both are the same chain, so a
-// fourth middleware added to gateway's request path is added in one place.
+// The order is the property — a span covers the whole request, a request refused by
+// a gate is not counted, and the reduction rewrites what the gates read — and an
+// order written out as three separate statements in two branches of `New` is an
+// order one of the branches can forget. `New` registers this list with chi's `Use`
+// when there is no pass-through and wraps the pass-through with it when there is;
+// both are the same chain, so a fourth middleware added to gateway's request path is
+// added in one place.
+//
+// ## THE SPAN IS IN EXACTLY ONE OF THE TWO PLACEMENTS, AND THAT IS MEASURED
+//
+// The limiter is mounted in one of them for a reason this paragraph repeats because
+// the span has the same one: a middleware in BOTH runs twice for a request that
+// passes through both — a path the proxy does not claim reaches the router, so the
+// outer chain and chi's own `Use` chain both run. Two spans for one request is not a
+// cosmetic doubling: a trace view renders it as a call that happened twice, and a
+// request-counted dashboard is wrong by a factor of two on exactly the paths that
+// are hardest to read.
+//
+// So `New` decides placement the same way it decides it for the limiter: the outer
+// `compose` chain when there is a pass-through, chi's `Use` chain when there is
+// none. Every request that reaches this process is in exactly one span, including a
+// forwarded one and including a 404 that matches no route.
 //
 // ## THE LIMITER IS WRAPPED AROUND THE PASS-THROUGH, AND THAT IS THE WHOLE FIX
 //
@@ -400,8 +420,11 @@ func New(options Options) (http.Handler, error) {
 // `credentialGate` returns nil when there is no `Authenticate`, and `New` passes a
 // gate only when there are routes to gate, so `gate == nil` here means a gateway
 // with no verifier rather than one that refuses everything.
-func everyRequest(limiter, gate func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
+func everyRequest(telemetry, limiter, gate func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
 	chain := []func(http.Handler) http.Handler{collapseRepeatedHeaders}
+	if telemetry != nil {
+		chain = append([]func(http.Handler) http.Handler{telemetry}, chain...)
+	}
 	if gate != nil {
 		chain = append(chain, gate)
 	}

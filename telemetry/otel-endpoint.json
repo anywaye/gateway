@@ -1,0 +1,39 @@
+{
+  "service": "gateway",
+  "signals": [
+    "traces",
+    "metrics",
+    "logs"
+  ],
+  "endpoint": {
+    "variable": "GATEWAY_OTEL_ENDPOINT",
+    "default": "http://otel-collector:4317",
+    "required": false
+  },
+  "noOp": {
+    "implementedBy": "OTEL_SDK_DISABLED",
+    "buffering": "none",
+    "retry": "none",
+    "warnings": "none",
+    "startupCost": "none"
+  },
+  "disabledBy": {
+    "global": "OTEL_SDK_DISABLED",
+    "traces": "OTEL_TRACES_EXPORTER",
+    "metrics": "OTEL_METRICS_EXPORTER",
+    "logs": "OTEL_LOGS_EXPORTER"
+  },
+  "resourceAttributes": [
+    "service.name",
+    "service.version",
+    "service.instance.id",
+    "service.namespace",
+    "deployment.environment",
+    "telemetry.sdk.name",
+    "telemetry.sdk.language",
+    "telemetry.sdk.version",
+    "tenant_id",
+    "account_id"
+  ],
+  "notes": "The collector is the default value of GATEWAY_OTEL_ENDPOINT, not a requirement: unset it and the no-op below is free. The verifier is internal/telemetry/telemetry_test.go."
+}

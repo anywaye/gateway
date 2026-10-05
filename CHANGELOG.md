@@ -8,6 +8,38 @@ dependency versions follow npm's own rules.
 
 ## [Unreleased]
 
+### Added
+
+- **gateway emits real telemetry: one server span per request, and the fleet's
+  collector can now see them.** `internal/telemetry/` is `caf gen telemetry`
+  output — the per-signal attribute allowlists, the span-name grammar, the endpoint
+  contract and the no-op path, all read out of core's vendored schemas — plus a
+  hand-written SDK half (`sdk.go`) that consults that generated contract rather than
+  copying it. `internal/httpapi/telemetry.go` mounts it, outermost, in exactly one
+  of the two places `New` builds its chain, and `cmd/gateway` installs the exporter
+  and flushes it on SIGTERM.
+
+  A span carries three attributes — `http.request.method`, `http.route` (the matched
+  TEMPLATE, never a caller's path) and `http.response.status_code` — plus
+  `error.type` from core's closed vocabulary and a failed status on a 5xx and on
+  nothing else. The process identity (`service.name`, `service.namespace`,
+  `service.version`, `deployment.environment`, `tenant_id`) is on the RESOURCE, which
+  is where core puts an identity and is exempt from the 2000-combination metric cap.
+  An inbound W3C `traceparent` is continued; a missing or malformed one starts a new
+  trace and never changes the answer.
+
+  New variables: `GATEWAY_OTEL_ENDPOINT` (default `http://otel-collector:4317`, set
+  in `docker-compose.yml`), `GATEWAY_TENANT_ID`, and the standard
+  `OTEL_SDK_DISABLED` / `OTEL_TRACES_EXPORTER` switches. Unset endpoint is **not** a
+  no-op: core's contract makes the shipped collector the default, so a developer with
+  nothing configured gets traces.
+
+  `cafaye.yml`'s `language` said `typescript`, an implementation deleted at cutover,
+  and `caf gen telemetry` refuses any language it does not emit for — so the field
+  had to agree with the tree before the fleet's own generator could be used. That
+  does not resolve DECISION NEEDED item 7, which is about which implementation the
+  manifest describes.
+
 ### Changed
 
 - **`/v1/api-keys`' 60/min allowance is a deliberate tightening, checked, and left
