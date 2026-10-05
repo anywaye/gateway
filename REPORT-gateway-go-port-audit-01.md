@@ -301,14 +301,16 @@ This packet's verification is the diff. Run before the final commit:
 
 ```
 $ git diff master...HEAD --stat
- REPORT-gateway-go-port-audit-01.md | 250 ++++++++++++++++++++++++++++++++++++++
- 1 file changed, 250 insertions(+)
+ REPORT-gateway-go-port-audit-01.md | 314 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 314 insertions(+)
 ```
 
 One added file, nothing else — no modification to any `src/` file, no new Go
 file, no edit to `CHANGELOG.md`, `AGENTS.md`, `account_scope.yml` or any other
 `HANDOFF-*` / `REPORT-*`.
 
-Two commits, both adding only this file:
-`e81a65f` (the table, §1–§3) and `6d09270` + the final one (corrections found in
-Q3). Nothing was reverted or amended after the fact.
+Three commits, each adding or amending only this file:
+`e81a65f` (the table, §1–§3, committed inside Q1), `6d09270` (the Q2 corrections
+— one row withdrawn, two README errors found), and `e3f2c36` (Q3: the
+`account_scope.yml` correction and §4). Nothing was reverted or amended after the
+fact.
