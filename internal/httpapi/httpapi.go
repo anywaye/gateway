@@ -232,6 +232,7 @@ func New(options Options) (http.Handler, error) {
 
 	// # THE MOUNTS, IN THIS ORDER, AND THE ORDER IS THE WHOLE ARGUMENT
 	//
+	// 0. the server span, which `everyRequest` puts outermost,
 	// 1. the repeated-header reduction, which is not a gate and must be first,
 	// 2. authentication, resolved before anything decides to spend an upstream call,
 	// 3. the limiter on everything, routed traffic included.
@@ -372,17 +373,28 @@ func New(options Options) (http.Handler, error) {
 	return &mount{Router: router, handler: compose(proxied, gates...)}, nil
 }
 
-// everyRequest is the middleware every request passes through, in order: the
-// repeated-header reduction, then `gate` when there is one, then the limiter.
+// everyRequest is the middleware every request passes through, in order: the span,
+// then the repeated-header reduction, then `gate` when there is one, then the
+// limiter.
 //
 // ## WHY IT IS ONE LIST AND NOT THREE MOUNTS
 //
-// The order is the property — a request refused by a gate is not counted, and the
-// reduction rewrites what the gates read — and an order written out as three
-// separate statements in two branches of `New` is an order one of the branches can
-// forget. `New` registers this list with chi's `Use` when there is no pass-through
-// and wraps the pass-through with it when there is; both are the same chain, so a
-// fourth middleware added to gateway's request path is added in one place.
+// The order is the property — a span covers the whole request, a request refused by
+// a gate is not counted, and the reduction rewrites what the gates read — and an
+// order written out as three separate statements in two branches of `New` is an
+// order one of the branches can forget. `New` registers this list with chi's `Use`
+// when there is no pass-through and wraps the pass-through with it when there is;
+// both are the same chain, so a fourth middleware added to gateway's request path is
+// added in one place.
+//
+// ## THE SPAN IS FIRST, AND THAT IS A DELIBERATE POSITION IN THE ORDER
+//
+// Outermost means every request that reaches this process is in a span, including
+// one the pass-through forwards and including a 404 that matches no route — and the
+// requests worth understanding when something is wrong are exactly those.
+//
+// It also means the span exists while the header reduction runs, so a trace shows
+// the request as it arrived rather than as it arrived minus the duplicates.
 //
 // ## THE LIMITER IS WRAPPED AROUND THE PASS-THROUGH, AND THAT IS THE WHOLE FIX
 //
@@ -401,7 +413,7 @@ func New(options Options) (http.Handler, error) {
 // gate only when there are routes to gate, so `gate == nil` here means a gateway
 // with no verifier rather than one that refuses everything.
 func everyRequest(limiter, gate func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
-	chain := []func(http.Handler) http.Handler{collapseRepeatedHeaders}
+	chain := []func(http.Handler) http.Handler{telemetryMiddleware, collapseRepeatedHeaders}
 	if gate != nil {
 		chain = append(chain, gate)
 	}

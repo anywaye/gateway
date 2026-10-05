@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/cafaye/gateway/internal/httpapi"
+	"github.com/cafaye/gateway/internal/telemetry"
 )
 
 // healthcheckTimeout bounds the probe. Short, because a compose healthcheck that
@@ -142,6 +143,47 @@ func run() error {
 	config, err := httpapi.RuntimeOptions(httpapi.OSEnv)
 	if err != nil {
 		return err
+	}
+
+	// Telemetry FIRST, before the handler exists, and the reason is the shape of
+	// the no-op rather than a preference: the span middleware asks the SDK for the
+	// process-global tracer provider, so a provider installed after the first
+	// request would leave every request before it untraced.
+	//
+	// Everything telemetry reads is read HERE rather than through
+	// `httpapi.RuntimeOptions`, and that is deliberate rather than tidiness. That
+	// function's contract is an exhaustive, asserted list of the variables that
+	// configure the GATEWAY's behaviour — a list with a test holding it exact in
+	// both directions — and four variables that configure where telemetry goes are
+	// not gateway configuration. They are read from the generated package's own
+	// functions, which carry core's contract for them.
+	ctx := context.Background()
+	flush, err := telemetry.Install(ctx, telemetry.Options{
+		Endpoint:  telemetry.Endpoint(),
+		Disabled:  !telemetry.Enabled(),
+		LookupEnv: os.Getenv,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// A separate context: the one above is not cancelled on SIGTERM by anything
+		// in this function, and a telemetry flush must not be able to hold up a
+		// shutdown. Bounded by the SDK's own timeout.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := flush(flushCtx); err != nil {
+			log.Printf("gateway: flushing telemetry on the way out failed: %v", err)
+		}
+	}()
+	if reason := telemetry.NoOpReason(); reason != "" {
+		// One line, and ONLY on the disabled path. Silence is the contract there: a
+		// warning per export attempt fills the service's own log store with the fact
+		// that telemetry is off, which is how a self-hoster discovers that turning it
+		// off is not supported — the opposite of the intent. One line at startup is
+		// not that, and it is the difference between "telemetry is off" and "telemetry
+		// is broken", which look identical from outside.
+		log.Printf("gateway: telemetry is off (%s)", reason)
 	}
 
 	handler, err := httpapi.New(config.Options)
