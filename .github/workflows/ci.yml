@@ -28,18 +28,52 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# `GATEWAY_EQUIVALENCE_REQUIRED` is read by `internal/equivalence` and turns
-# "bun is not on PATH" from a skip into a failure at module load. It is here and
-# only here for the same reason the Redis job sets
-# `GATEWAY_REDIS_REQUIRED=true`: a skip nobody can see is a green run that
-# verified nothing, and this repository has been bitten by that twice — once on
-# the Redis tier and once by `docker build --target test` running 392 tests
+# `GATEWAY_EQUIVALENCE_REQUIRED` is read by exactly one place in this repository:
+# `bin/prime-go:172`, inside the branch that fires when the equivalence tier
+# prints its counted skip. It is here and only here for the same reason the Redis
+# job sets `GATEWAY_REDIS_REQUIRED=true`: a skip nobody can see is a green run
+# that verified nothing, and this repository has been bitten by that twice — once
+# on the Redis tier and once by `docker build --target test` running 392 tests
 # across 15 files where the host ran 399 across 16.
 #
-# It is a JOB-level env rather than a step-level one because `bin/prime` now runs
-# the Go tier itself, and the equivalence check is inside it. There is deliberately
-# no `prime-go` job: two jobs running two tiers would be the gate existing twice,
-# and the two could disagree about what "the Go tier is green" means.
+# KEPT, NOT REMOVED, and the reason is a measurement rather than a sentiment.
+# The packet's instruction was to grep before touching it, and the grep was run
+# over the whole worktree:
+#
+#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --exclude-dir=node_modules --exclude-dir=.git .
+#   bin/prime-go:172:  if [ "${GATEWAY_EQUIVALENCE_REQUIRED:-0}" = "1" ]; then
+#   bin/prime-go:173:    echo "bin/prime-go: GATEWAY_EQUIVALENCE_REQUIRED=1 and there is
+#                            nothing to compare against." >&2
+#   Dockerfile:83, gate.yml:347, README.md:947, CHANGELOG.md:639, AGENTS.md:408,
+#   REPORT-*.md, HANDOFF-docs-corrections-01.md  -- prose, all of it
+#   .github/workflows/ci.yml:31,44              -- this comment and this variable
+#
+#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --include='*.go' .
+#   (no output; rc=1)
+#
+# So: something reads it, therefore it stays. And the previous version of this
+# comment was WRONG about who — it said "`internal/equivalence` reads it", which
+# was true of the harness f87c891 deleted and is true of nothing now. Zero hits
+# in any `.go` file. The reader is a shell script, and the variable is a
+# documented interface to that script rather than to Go code. Corrected here
+# because a comment naming the wrong reader sends the next person to grep for a
+# Go symbol that has not existed since the cutover.
+#
+# WHAT IT IS WORTH NOW, honestly: not much, and that is a finding rather than a
+# hedge. `bin/prime-go`'s check runs in this order — it greps for the summary
+# line first, and if neither the summary nor a counted skip is present it exits
+# 1 before line 172 is ever reached. f87c891 removed the harness that printed
+# both. So `bin/prime-go` fails today with or without this variable set, and the
+# variable cannot rescue it. It is kept because the reader exists and a
+# documented interface is not mine to delete; whoever rewrites `bin/prime-go`
+# for the Go-only tree should decide whether the flag survives the rewrite, and
+# this comment is where they will look.
+#
+# It is a JOB-level env rather than a step-level one because `bin/prime` runs
+# the Go tier itself, and the equivalence check is inside it. There is
+# deliberately no `prime-go` job: two jobs running two tiers would be the gate
+# existing twice, and the two could disagree about what "the Go tier is green"
+# means.
 env:
   GATEWAY_EQUIVALENCE_REQUIRED: "1"
 
@@ -98,9 +132,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.12"
       # `go-version-file: go.mod` rather than a literal version, and that is the
       # point: the pin now lives in `go.mod` (which the compiler enforces) and in
       # `mise.toml` (which `bin/prime-go`'s first step checks against it), and a
@@ -108,10 +139,26 @@ jobs:
       # one of them checked by the gate at startup — the arrangement
       # `pantry/.github/workflows/ci.yml:35` states the same way.
       #
-      # The step order matters and it is not alphabetical: `setup-bun` before
-      # `setup-go` is irrelevant, but `setup-go` must come before `bin/prime`,
-      # because `bin/prime` now ends in `./bin/prime-go` and that script exits 127
-      # on a machine with no Go toolchain rather than skipping.
+      # The step order matters and it is not alphabetical: `setup-go` must come
+      # before `bin/prime`, because `bin/prime` ends in `./bin/prime-go` and that
+      # script exits 127 on a machine with no Go toolchain rather than skipping.
+      #
+      # WHAT WAS HERE: `oven-sh/setup-bun@v2` with `bun-version: "1.3.12"`,
+      # removed. Not because installing a toolchain is expensive -- it is cheap
+      # and it worked -- but because it was the only thing standing between this
+      # job and a claim it could not keep. With no `src/` there is no TypeScript
+      # for Bun to run; the step existed to make `bun install --frozen-lockfile`
+      # possible inside `bin/prime`, and a runner that cannot install a
+      # dependency graph that is no longer in the repository fails at the `require
+      # bun` on line 136 of that script rather than at the thing it was
+      # preparing for.
+      #
+      # `bin/prime` and `bin/prime-go` are still Bun-flavoured scripts TODAY and
+      # this job is still red because of it -- see the note at the end of this
+      # commit. Dropping the setup step here does not make that job green; it
+      # removes a step whose only remaining purpose was to serve a deleted
+      # `src/`, and leaves the real failure to be fixed in the script that owns
+      # it. That script belongs to another worker and was not edited here.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -119,7 +166,8 @@ jobs:
       - name: bin/prime
         run: bin/prime
       - name: go.mod and go.sum are untouched
-        # The Go half of the check the next step does for `bun.lock`.
+        # The lockfile guard for this repository, now that there is exactly one
+        # lockfile.
         #
         # `bin/prime-go` runs `go build ./...` and `go test ./...`, and neither
         # rewrites the manifests — but a plain `go get` or a `go mod tidy` left in
@@ -134,17 +182,16 @@ jobs:
         run: |
           git diff --exit-code -- go.mod go.sum \
             || { echo "bin/prime moved go.mod or go.sum — the build is no longer against the committed tree"; exit 1; }
-      - name: bun.lock is untouched
-        # `bin/prime` runs `bun install --frozen-lockfile`, which fails rather
-        # than rewriting the lock — so this is expected to be a no-op, and that is
-        # exactly why it is here. It is the check that survives a future edit to
-        # bin/prime that drops the flag: a plain `bun install` will happily
-        # resolve a different tree than the one that was committed, and the run
-        # stays green while doing it. Cheap, and it catches drift that is
-        # otherwise invisible.
-        run: |
-          git diff --exit-code -- bun.lock \
-            || { echo "bin/prime moved bun.lock — the gate is no longer frozen"; exit 1; }
+      # WAS: a second step, `bun.lock is untouched`, doing the same job for the
+      # Bun lockfile via `git diff --exit-code -- bun.lock`. Removed with the
+      # `setup-bun` step above, and for the same reason plus one more: a guard
+      # over a file the gate no longer installs from is a check that cannot fail
+      # for a reason anyone can act on. `git diff --exit-code -- bun.lock` against
+      # a repository where nothing runs `bun install` is a no-op that reports
+      # success, and a passing no-op in a gate file is worse than no step --
+      # it reads as coverage. The `go.mod`/`go.sum` guard above is now the whole
+      # of it, and it guards the whole of it.
+
 
   # ------------------------------------------------------------- the live tier
   # gateway's Redis backend is the one part of the suite that a transcription
