@@ -43,6 +43,47 @@ dependency versions follow npm's own rules.
   inverse of the header's: a shipped allowance is **not** operator-tunable in a
   deployment today. That raises the stakes on every number in the table slightly,
   and it is a packet rather than something to change here.
+- **What porting API-key management to Go would take: a contract change, not a
+  translation — and it obliges the TypeScript reference in the same commit.**
+  `REPORT-gateway-api-keys-01.md` §2 enumerates it. `openapi/v1.yaml` declares
+  seven operations and **zero** `api-keys` operations; the `apiKeyCredential`
+  security scheme describes how a caller *presents* a key and is not coverage for
+  managing one, and the document says so itself at lines 787-789. Three operations
+  would have to be **added** — `POST /v1/api-keys`, `GET /v1/api-keys`,
+  `DELETE /v1/api-keys/{id}` — with two new schemas and one new parameter.
+
+  The consequence that makes this the wrong shape for a port: `openapi/v1.yaml`
+  describes what **gateway** answers, and gateway answers it in TypeScript until
+  `src/` is deleted. Adding the operations makes
+  `test/openapiDocument.test.ts` demand matching routes in `src/`, so it is
+  "add a feature to the reference, then add it to the port" — contract first, then
+  reference, then Go.
+
+  Three questions in that change belong to the manager and are named rather than
+  answered:
+
+  - **Does the listing response carry `hash`?** `ApiKeyRecord` has six fields and
+    one is the digest. Rule 1 is about what is *stored* and rule 2 about what is
+    *shown*, so a display projection is required and neither tree builds one.
+  - **Is `DELETE` on a key that is not yours a `204` or a `404`?** `revoke` refuses
+    by not acting, and cross-tenant is absence — but every other operation in the
+    document 404s on a missing resource, so this needs the sentence saying why.
+  - **Is there a scope requirement on any of the three?** `requireScope` exists and
+    **no route in `createApp` uses it**, so today any valid credential could mint,
+    list and revoke. Whether revocation needs a weaker scope than issuance — a
+    compromised issuance-capable caller should not also be able to destroy the audit
+    trail — is an authorization policy question.
+
+  One reframe worth recording, because it is a third reason the Q1 number is
+  deliberate and the strongest of the three: **`/v1/api-keys` is a route that does
+  not exist yet.** `apiKey.ts`'s five exports are three helpers, a store, a
+  middleware, and three management operations that no route calls in either
+  language. So the row is an allowance declared for a surface that is not served
+  yet, and a number chosen *before* the question of traffic existed is what a
+  starting-point-not-a-measurement number looks like. It also means the row is
+  currently inert on the wire — nothing ever draws `gateway-api-keys` — so the four
+  Go assertions holding 60 are holding the resolution rule, not a live quota.
+
 - **The recorded reason for the missing Go session store was CHECKED, and it is
   CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01.md`
   verifies both halves against `cafaye/identity` at source rather than inheriting

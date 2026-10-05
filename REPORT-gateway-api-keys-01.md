@@ -264,12 +264,271 @@ the Go side follows.
 
 ## Q2. Can API-key management be ported to Go?
 
-**Not by porting. It is a contract change, it obliges both implementations in the
-same commit, and three of the shapes are not decided anywhere.** The audit's
-"structurally blocked" is correct; §2.4 is what "structurally" means and §2.5 is
-what it would cost.
+**No — and the reason is worth stating precisely, because "no generated server to
+hang handlers on" undersells it.** Three operations would have to be **added** to
+`openapi/v1.yaml`. That is a contract change, and it is the wrong shape for a port:
+a port makes two implementations agree about a contract that already exists.
 
-*(Section drafted in the Q2 commit.)*
+The packet asks for the operations if they are absent. They are absent, and §2.5
+enumerates all three. §2.6 says what else in the tree would have to move with them,
+which is the part that makes this a manager decision rather than a worker one.
+
+### 2.1 What `src/middleware/apiKey.ts` actually serves
+
+Five exports, and only **three** of them are HTTP operations. The distinction
+matters because a reader who counts five will over-scope the work.
+
+| export | kind | HTTP operation? |
+| --- | --- | --- |
+| `generateApiKey`, `hashApiKey`, `apiKeyPrefixOf` | helpers | no — pure functions, and `hashApiKey`/`apiKeyPrefixOf` have no route in either language |
+| `memoryApiKeyStore` | a store | no — a v0 implementation of the trait |
+| `createApiKeyAuth().authenticate` | **middleware** | **not a route** — mounted on `*` at `src/index.ts:184-188`, and it authenticates rather than serves |
+| `createApiKeyAuth().issue` | operation | **yes** — no route calls it in either language |
+| `ApiKeyStore.list` / `.revoke` | operations | **yes** — no route calls them in either language |
+
+So the file's three *management* operations have **no HTTP surface at all, in
+either language**. `grep -rn "api-keys"` across the repository returns the limit
+table entry, the tests, and the docs — never a registered route.
+`tenantIsolation.test.ts:326-327` says so as an assertion:
+
+```ts
+expect(app.routes.map((route) => `${route.method} ${route.path}`)).not.toContain("GET /v1/api-keys");
+expect((await app.request("/v1/api-keys")).status).toBe(401);
+```
+
+**This reframes Q1.** The `/v1/api-keys` row is not a rate limit for a live route.
+It is an **allowance declared for a route that does not exist yet** — a
+pre-declaration, held to 60 because the author was thinking about what the surface
+*would* deserve. That is a third reason the number is deliberate, and it is
+stronger than the two in §1.3 and §1.4: nobody mistypes a number for a route they
+have not written, because there is no request to have mistyped it on. It is a
+number chosen **before** the question of traffic existed, which is exactly what a
+starting-point-not-a-measurement number looks like.
+
+It also means the row is currently **inert on the wire**: no route claims
+`/v1/api-keys`, so nothing in either implementation ever draws
+`gateway-api-keys`. The four Go assertions that catch a `60`→`600` mutation are
+asserting the resolution *rule* produces that number for that path, not that any
+caller is throttled by it today.
+
+### 2.2 What `openapi/v1.yaml` declares: nothing
+
+The document declares seven operations across seven paths (`/healthz`, `/readyz`,
+`/v1/me`, `/auth/register`, `/auth/login`, `/auth/logout`, `/auth/me`) and **zero**
+`api-keys` operations. The `apiKeyCredential` **security scheme** at
+`openapi/v1.yaml:767-789` is a different thing and is easy to mistake for
+coverage: it declares how a caller *presents* a key, and it is referenced by
+`GET /v1/me`'s `security:` (line 389) — but there is no operation that *manages* one.
+
+The document even says so itself, at lines 787-789:
+
+> *"Nothing in gateway hands a key out yet — see 'Not built yet' in the repository
+> README. A client holding one today is talking to a deployment that issued it out
+> of band."*
+
+So the absence is **recorded, not accidental**. That is worth saying plainly: this
+is not an oversight the audit discovered, it is a deliberate state the document
+states.
+
+### 2.3 Why the Go router cannot have a route the document does not name
+
+Three mechanisms, and they compound:
+
+1. **The Go router IS the generated file.** `internal/api/api.gen.go` is
+   `oapi-codegen` output from `openapi/v1.yaml`, and `oapi-codegen` emits one
+   `r.Get(...)`-style registration per declared operation. `grep -c "ApiKey" internal/api/api.gen.go`
+   returns **0** — there is no identifier to grep for, because nothing in the
+   document produced one.
+2. **The route/document test holds both directions.**
+   `internal/httpapi/routes_test.go:136-180` walks chi's live router with
+   `chi.Walk` and compares it to the registrations parsed out of the generated
+   file. A route the document does not declare is "a gateway answering something
+   nobody contracted for"; a declaration the router does not serve is "a document
+   promising an answer the service will not give". Both are test failures.
+3. **The gate proves the generated file is current.** `bin/prime-go` regenerates
+   `api.gen.go` and diffs it. A hand-written route added beside the generated one
+   would be caught — and the `stripbaseurl` step, per AGENTS.md, means a
+   registration the recogniser cannot read is an *invisible* one, which is why the
+   parser at line 57 refuses to match nothing.
+
+The TypeScript side is held the same way: `test/openapiDocument.test.ts` reads
+`app.routes` and the document and fails in both directions, and its `EXCLUSIONS`
+list is exactly two entries — `ALL /v1/*` and `ALL /*`, both mounts — with an
+assertion at line 257 that no exclusion can match an operation, so a new route
+under `/v1/` cannot fall into a carve-out.
+
+### 2.4 The awkward consequence: it is not only the Go side
+
+This is the part that changes what the packet is.
+
+Adding operations to `openapi/v1.yaml` **obliges the TypeScript reference to grow
+matching routes in the same commit**, or `test/openapiDocument.test.ts` goes red on
+the tree that is currently the specification. The document does not describe what
+Go has implemented; it describes what *gateway* answers, and gateway answers it in
+TypeScript until `src/` is deleted.
+
+So this is not "port the missing piece to Go". It is **"add a feature to the
+reference, then add it to the port."** The order matters and cannot be reversed:
+the contract first (a deliberate change), then the reference implementation, then
+the Go one — with the equivalence tier gaining the ability to compare the new
+routes at each step.
+
+### 2.5 The operations that would have to be added
+
+Enumerated for a decision, **not written into the document.** Shapes come from
+`src/middleware/apiKey.ts`; the `RateLimit-*` headers on every success response are
+mandatory by `test/openapiDocument.test.ts`, which reads the header names from
+`RATE_LIMIT_HEADERS` rather than from a typed list — so all eight appear on each
+`2xx` as well as on the `429`.
+
+**1. `POST /v1/api-keys` — mint a key**
+
+```yaml
+/v1/api-keys:
+  post:
+    tags: [api]
+    operationId: createApiKey
+    security: [ { bearerToken: [] }, { apiKeyCredential: [] } ]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/CreateApiKeyRequest' }
+    responses:
+      '201':  # ApiKeySecret — the ONLY time `key` is ever returned
+        # + all eight RateLimit-* headers
+      '400': MalformedBody
+      '401': Unauthenticated
+      '422': ValidationFailed      # a blank or multi-word scope — `requireScopes`, apiKey.ts:373
+      '429': Throttled
+      '500': InternalError
+      '503': Unavailable
+```
+
+The request body is `{ scopes: string[] }`. **`accountId` is not a field** — it is
+taken from the verified principal, and its absence is the tenancy boundary. A
+document that let a caller name `accountId` would describe the cross-tenant bug as
+a feature.
+
+The response is `IssuedApiKey` (`apiKey.ts:47-54`): `{ key, prefix, id }`, with
+`key` the only time it exists and no endpoint anywhere able to print it again.
+
+**2. `GET /v1/api-keys` — list the caller's keys**
+
+```yaml
+    get:
+      tags: [api]
+      operationId: listApiKeys
+      security: [ { bearerToken: [] }, { apiKeyCredential: [] } ]
+      responses:
+        '200':  # ApiKeySummary[] — id, prefix, scopes, revokedAt. NOT `hash`.
+        # + all eight RateLimit-* headers
+```
+
+`204` is available for the empty case; the document would have to pick.
+
+**3. `DELETE /v1/api-keys/{id}` — revoke one**
+
+```yaml
+  /v1/api-keys/{id}:
+    delete:
+      tags: [api]
+      operationId: revokeApiKey
+      security: [ { bearerToken: [] }, { apiKeyCredential: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyId'   # `key_<uuid>`
+      responses:
+        '204':  # unconditional — see below
+        # + all eight RateLimit-* headers on the 204
+        '401': Unauthenticated
+        '429': Throttled
+        '500': InternalError
+```
+
+Two new schemas (`CreateApiKeyRequest`, `ApiKeySecret`/`ApiKeySummary`) and one new
+parameter. **`Problem.code` needs no change** — every refusal above maps onto the
+nine codes already at lines 966-975.
+
+### 2.6 Three decisions the packet cannot make, and why each is not a detail
+
+**1. Does the listing response carry `hash`?** `ApiKeyRecord` (`apiKey.ts:57-68`)
+has six fields, one of which is `hash`. Rule 1 at the top of the file says only the
+hash is *stored*; rule 2 says only a prefix is ever *shown*. `list`'s doc comment
+says it returns records "for display". Those are compatible only if `hash` is
+stripped at the wire boundary — so `ApiKeyRecord` needs a display projection, and
+nothing in either tree builds one. Serialising the record as-is would return a
+SHA-256 digest of every credential the account holds, which is not the secret but
+is not something an endpoint should hand over either. **A `404` here is the
+difference between a projection and a dump, and it is a schema decision.**
+
+**2. Is `DELETE` on a key that is not yours a `204` or a `404`?** `revoke` is
+specified to refuse **by not acting** — no error, no return value
+(`apiKey.ts:161-174`) — and `tenantIsolation.test.ts` asserts that a cross-tenant
+revoke leaves `revokedAt` at 0. The reference's rule is that cross-tenant is
+**absence**, not a distinguishable status, and `AGENTS.md` is explicit that a `403`
+here is a finding to fix. An unconditional `204` is the shape consistent with both.
+But **the document cannot say "there is no `404`" without the sentence explaining
+why**, because every other operation in this document 404s on a missing resource
+and a reader will assume the same here. This needs a stated decision.
+
+**3. Is there a scope requirement on any of the three?** `requireScope`
+(`src/middleware/jwt.ts:255`) exists and works, and `tenantIsolation.test.ts:491`
+mounts it on a test app — but **no route in `createApp` uses it.** A caller with
+any valid credential could otherwise mint, list and revoke keys. `AGENTS.md`'s
+step 5 says a new route adds `requireScope(...)` after the gate. Which scope, and
+whether revocation needs a *different, weaker* scope than issuance (an operator
+revoking a compromised key is a recovery path, and gating it on the same capability
+as minting means a compromised issuance-capable caller can also destroy the audit
+trail) — **that is an authorization policy question, and it is the manager's.**
+
+### 2.7 What else in the tree moves with it
+
+Not the code — the *guards*. This is the part that decides whether the packet is
+small or large.
+
+| guard | what it does today | what a new route does to it |
+| --- | --- | --- |
+| `test/openapiDocument.test.ts` | holds document ↔ `app.routes` both ways | requires matching routes in **`src/`** |
+| `internal/httpapi/routes_test.go` | holds router ↔ generated file both ways | the generated file grows 3 registrations; `len(declared) < 7` at line 179 must move |
+| `test/tenantEntryPoints.test.ts` | derives account-scoped routes, store methods, and every `403` from source; asserts the kind counts `{ read: 5, list: 1, update: 3, delete: 2 }` (line 176) | **`GET /v1/api-keys` joins the derived route set at line 334**, which currently asserts `["GET /v1/me"]`; three account-scoped routes and three new negative cases, and the counts move |
+| `test/noSkips.test.ts` | fails on any `skip`/`todo`/`only` outside a one-entry allowlist | unaffected — but the new Go tests must not reach for a skip to make the Redis-backed store pass |
+| `internal/equivalence` | derives its routes from the document | **three new routes become comparable for the first time** — the tier's own header (line 75) currently excludes them |
+| `README.md` "Not built yet" | lists "A Go gateway has no bearer-token verifier and no API keys" | must change, and a live worker owns README |
+
+The `tenantEntryPoints` row is the one to read twice. Its comment at line 168-174
+says `write` is "deliberately absent: gateway issues no key on any route, so there
+is no request that *creates* account-scoped state for a caller to be refused."
+**Adding `POST /v1/api-keys` makes that sentence false**, and the `OperationKind`
+union gains a fifth member — which is the guard telling a feature author that the
+feature has a tenancy surface. The derivation is what makes that automatic: a route
+that takes an account fails the gate until its negative case exists, and the case
+must be named in `tenantIsolation.test.ts`.
+
+### 2.8 What this costs, in the order the work would happen
+
+Stated so the decision can be weighed, and **not attempted here**:
+
+1. **A decision** on §2.6's three questions (projection, `404` or `204`, scopes).
+2. **The document** gains 3 paths, 2 schemas, 1 parameter — with the header's
+   "Open decisions" list extended, since all three are contract changes rather than
+   translations.
+3. **The reference** gains the routes and the handlers in `src/`, keeping
+   `openapiDocument.test.ts` green. `internal/ratelimit/limits.go` and
+   `limits.ts` **do not change** — the `/v1/api-keys` row stops being inert at this
+   point and starts being enforced, and the two sides already agree about that.
+4. **`tenantEntryPoints.test.ts`'s derived set and counts**, plus three negative
+   cases in `tenantIsolation.test.ts`.
+5. **The Go port**, once the reference is the thing being compared against.
+6. **A shared `ApiKeyStore`.** `memoryApiKeyStore` is per-process
+   (`apiKey.ts:124-129`), and `TODO(guard-07)` says so. A Go port inherits the same
+   problem, and the sibling packet already decided gateway **owns** its per-process
+   state in Redis over the RESP2 transport `internal/ratelimit` already speaks — so
+   this is one shared client with the limiter, not a fork.
+
+**The honest summary:** step 1 is the packet. Steps 2-5 are mechanical once 1 is
+answered, and 6 is already decided elsewhere. What makes this a contract change
+rather than a port is entirely step 1 plus the obligation in §2.4 to change the
+reference in the same commit.
 
 ---
 
@@ -277,12 +536,15 @@ what it would cost.
 
 | gate | result |
 | --- | --- |
-| `gofmt -l internal/ratelimit/` | clean |
-| `go vet ./internal/ratelimit/` | clean |
-| `go test ./internal/ratelimit/ ./internal/httpapi/` | pass |
-| `GATEWAY_EQUIVALENCE_REQUIRED=1 go test ./internal/equivalence/` | pass — **51 cases across 13 scenarios = 914 comparisons, 0 differences** |
+| `./bin/prime-go` | **ok** — 230 passed, 0 failed across 6 packages with tests |
+| generated server | `stripbaseurl` rewrote 7 registrations; `internal/api/api.gen.go` regenerates byte-identically from `openapi/v1.yaml` |
+| `gofmt -l internal/ cmd/` | clean |
+| `go vet ./...` | clean |
+| `go build ./...` | ok |
+| `GATEWAY_EQUIVALENCE_REQUIRED=1 go test ./internal/equivalence/` | pass — **51 cases across 13 scenarios = 914 comparisons, 0 differences** (status, Content-Type, 12 compared headers, body bytes; 22 also comparing the request the upstream received) |
 | planted mutation, Go tree (`60`→`600`) | **4 assertions fail**, as quoted in §1.7 |
 | planted mutation, reference (`60`→`600`) | **17 pass / 0 fail** — the gap §1.7 is about |
+| Redis tier | did not run — `GATEWAY_REDIS_URL` is unset on this machine. This packet does not touch `internal/ratelimit`'s store, and CI's `redis` job is the tier that runs it |
 
 `openapi/v1.yaml`, `internal/httpapi/httpapi.go`, `.github/workflows/ci.yml`,
 `README.md`, `AGENTS.md`, `cafaye.yml` and `src/**` were not modified. Both planted
