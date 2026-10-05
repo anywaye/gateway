@@ -195,21 +195,36 @@ jobs:
 
   # ------------------------------------------------------------- the live tier
   # gateway's Redis backend is the one part of the suite that a transcription
-  # cannot stand in for: `rateLimitRedis.test.ts` runs a JavaScript copy of
-  # GCRA_LUA, so the script itself has never been executed by any test in this
-  # repository. That tier is environment-gated on a real redis-server, so without
+  # cannot stand in for: `internal/ratelimit/live_test.go` runs GCRA_LUA against
+  # a real redis-server, so the script itself is executed by these tests and by
+  # nothing else in this repository. That tier is environment-gated, so without
   # this job it skips and the run is green without having run it.
   #
-  # It is a separate job, and a separate service, because kit's bun job has no
+  # It WAS the TypeScript file `src/middleware/rateLimitRedisLive.test.ts`, run
+  # under `bun test` after a `bun install --frozen-lockfile`. That file was
+  # deleted at f87c891, so this job could not pass: `bun install` had no
+  # dependency graph to install and `bun test` had no file to run. It now runs
+  # the Go tier, same Redis, same port, same image pin.
+  #
+  # It is a separate job, and a separate service, because kit's `go` job has no
   # way to start Redis and must not grow one: a reusable workflow that brought up
   # a datastore would be a reusable workflow that decides what every service in
   # the org needs. gateway's counter store is gateway's dependency.
   #
-  # `GATEWAY_REDIS_REQUIRED=true` is the load-bearing part. The tier skips when
-  # GATEWAY_REDIS_URL is unset, and a skip is a green run that verified nothing —
-  # the failure this packet exists to prevent. Setting the required flag turns
-  # "no Redis" from a skip into a failure, so this job cannot pass without having
-  # executed the script.
+  # `GATEWAY_REDIS_REQUIRED` is the load-bearing part, and its value is corrected
+  # from `"true"` to `"1"`. It was `"true"`, and `TestMain` compares
+  # `os.Getenv("GATEWAY_REDIS_REQUIRED") == "1"` -- so the flag this job has been
+  # setting was read as UNSET, every run, since it was written. The tier skipped
+  # silently on a runner where the URL was unusable, and the run stayed green.
+  # This is the same class of defect as the equivalence flag, arrived at from the
+  # other direction: a gate variable whose value is a string nothing ever parses.
+  #
+  # Which is why the job also asserts on the run's own output rather than
+  # trusting the flag. The tier skips when GATEWAY_REDIS_URL is unset, and a skip
+  # is a green run that verified nothing -- the failure this job exists to
+  # prevent. Setting the required flag turns "no Redis" from a skip into a
+  # failure, and the step below turns "ran and passed" from an assumption into a
+  # count. Either alone is half the guarantee.
   redis:
     name: redis (live tier)
     runs-on: ubuntu-latest
@@ -229,42 +244,119 @@ jobs:
           --health-retries 15
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v7
         with:
-          bun-version: "1.3.12"
-      - name: install
-        run: bun install --frozen-lockfile
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: the live tier runs
         env:
           GATEWAY_REDIS_URL: redis://127.0.0.1:6379
-          GATEWAY_REDIS_REQUIRED: "true"
-        run: bun test src/middleware/rateLimitRedisLive.test.ts
+          GATEWAY_REDIS_REQUIRED: "1"
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/live-tier.log"
+          # The tier is SELECTED BY NAME, and the names come out of the file that
+          # declares them. Two reasons, and the second is the real one.
+          #
+          # First: `./internal/ratelimit/` on its own runs 57 tests, not 14. The
+          # package holds the transcription tests as well as the live ones, and a
+          # floor checked against a package total is a floor that drifts upward
+          # every time somebody adds a unit test elsewhere in the file -- so it
+          # stops being a statement about this tier and becomes a statement about
+          # the package. Measured on go1.26.1: 57 `--- PASS` for the package,
+          # 14 for the tier.
+          #
+          # Second, and the reason this reads the source at all: a hardcoded list
+          # of fourteen names is a list that is wrong the day someone adds a
+          # fifteenth test, and it is wrong SILENTLY -- the new test runs, is not
+          # in the pattern, and the floor still passes on the fourteen it knows.
+          # Reading `^func Test` out of live_test.go means the thing being
+          # selected and the thing being counted are the same list by
+          # construction.
+          #
+          # `TestMain` matches the same `^func Test` pattern and is excluded
+          # explicitly, because `-run TestMain` is not a test and Go treats a
+          # `-run` match on it as an error rather than a filter.
+          pattern=''
+          declared=0
+          while read -r t; do
+            [ "$t" = "TestMain" ] && continue
+            declared=$((declared + 1))
+            if [ -n "$pattern" ]; then pattern="$pattern|$t"; else pattern="$t"; fi
+          done < <(grep -oE '^func Test[A-Za-z0-9_]+' internal/ratelimit/live_test.go | sed 's/^func //')
+          echo "live tests declared in internal/ratelimit/live_test.go: $declared"
+          # A tier whose selector matched nothing is a step that cannot fail, so
+          # the empty pattern is refused here rather than handed to `go test`,
+          # where `^()$` is a valid regex matching nothing and the run is green.
+          if [ -z "$pattern" ]; then
+            echo "::error::no test names were read out of internal/ratelimit/live_test.go." >&2
+            echo "::error::An empty -run pattern is a green run of zero tests." >&2
+            exit 1
+          fi
+          go test -count=1 -v -run "^($pattern)\$" ./internal/ratelimit/ 2>&1 | tee "$log"
+          # `pipefail` is already on, but the exit status is read explicitly
+          # rather than inherited: under pipefail the pipeline's status IS go
+          # test's, and a step that reports tee's status is a gate that can
+          # never fail.
+          exit "${PIPESTATUS[0]}"
       - name: the live tier reported passes, not skips
-        # `bun test` exits 0 on a fully skipped file, so a green step above is
-        # not by itself evidence that the tier ran. This reads the summary and
-        # fails on the shape that verifies nothing: `0 pass` and everything
-        # skipped. It is the difference between a checkmark and a claim, and
-        # PLAN.md §1 is explicit that a skipped test proves nothing.
+        # The property, unchanged: a green `go test` on a tier that ran nothing is
+        # not a pass. `go test` exits 0 on a package whose tests all skipped, so
+        # the run step being green is not evidence on its own -- and the run step
+        # CAN be green that way, because `GATEWAY_REDIS_REQUIRED` only escalates
+        # when the URL is also unset (see the two conditions in TestMain). A
+        # reachable-but-degraded Redis, or a typo in the URL that still resolves,
+        # skips rather than fails.
+        #
+        # RE-DERIVED FOR `go test -v`. The old assertion parsed `bun test`'s
+        # summary block (`^ *N pass *$`). That shape does not exist in Go: go
+        # test prints one `--- PASS: Name (0.00s)` line per test and no trailing
+        # count of passes at all. So the count comes from counting those lines,
+        # anchored whole-line with a colon and a space, which is what makes
+        # `--- PASS:` distinct from the `    --- PASS:` that subtests and
+        # benchmarks print indented. Counting `PASS` as a substring would count
+        # those too and inflate the floor past its own meaning.
+        #
+        # `grep -c` under pipefail exits 1 when it counts ZERO, which is the case
+        # this step exists to catch -- so `|| true` is there to let the zero
+        # through to the comparison rather than aborting on it. Without it the
+        # step fails for the right reason by accident and says nothing.
         env:
           GATEWAY_REDIS_URL: redis://127.0.0.1:6379
-          GATEWAY_REDIS_REQUIRED: "true"
+          GATEWAY_REDIS_REQUIRED: "1"
         run: |
-          summary="$(bun test src/middleware/rateLimitRedisLive.test.ts 2>&1)"
-          echo "$summary"
-          # `bun test` prints one count per line, so these are anchored whole-line
-          # matches rather than the substring grep that reads fine until the
-          # output has a second `pass` in it.
-          passed="$(printf '%s\n' "$summary" | sed -n 's/^ *\([0-9][0-9]*\) pass *$/\1/p' | tail -n 1)"
-          skipped="$(printf '%s\n' "$summary" | sed -n 's/^ *\([0-9][0-9]*\) skip *$/\1/p' | tail -n 1)"
-          if [ "${passed:-0}" -lt 14 ]; then
-            echo "the live Redis tier ran ${passed:-0} tests, expected 14 — a tier that did not run is not a pass"
+          set -euo pipefail
+          log="$RUNNER_TEMP/live-tier.log"
+          # MEASURED, not carried forward. live_test.go declares 15 `func Test`
+          # names; one of them is `TestMain`, which is not a test. So the tier is
+          # 14 -- which is the number the old `-lt 14` happened to state, and it
+          # is stated here again only because it was re-measured against
+          # go1.26.1 against a real redis-server rather than inherited.
+          #
+          # One of those 14 is `TestAnUnreachableServerThrowsRatherThanResolving`,
+          # which runs with the tier GATED OFF on purpose -- it asserts that an
+          # unreachable server throws rather than resolving, so it needs no
+          # server. That is why an ungated run below reports 1 pass and 13 skips
+          # and not 0 and 13: the floor is a statement about the tier, and the
+          # ungated run is measured below it, which is the intended failure.
+          floor=14
+          passed="$(grep -cE '^--- PASS: ' "$log" || true)"
+          skipped="$(grep -cE '^--- SKIP: ' "$log" || true)"
+          echo "passed=$passed skipped=$skipped floor=$floor"
+          if [ "$passed" -lt "$floor" ]; then
+            echo "::error::the live Redis tier reported $passed passes; the floor is $floor." >&2
+            echo "::error::A tier that did not run is not a pass. Either Redis was" >&2
+            echo "::error::unreachable -- in which case nothing above says so -- or the" >&2
+            echo "::error::tests moved out of live_test.go, in which case lower this" >&2
+            echo "::error::floor in the same commit as the move." >&2
             exit 1
           fi
-          if [ "${skipped:-0}" -ne 0 ]; then
-            echo "the live Redis tier skipped $skipped tests; CI is the only place it can be forced"
+          if [ "$skipped" -ne 0 ]; then
+            echo "::error::the live Redis tier skipped $skipped of its tests; CI is" >&2
+            echo "::error::the only place it can be forced, and it was not forced." >&2
             exit 1
           fi
-          echo "live Redis tier: $passed passed, ${skipped:-0} skipped"
+          echo "live Redis tier: $passed passed, $skipped skipped"
 
   # ------------------------------------------------------------------ manifest
   # `cafaye.yml` is `additionalProperties: false` against core's frozen schema, so
