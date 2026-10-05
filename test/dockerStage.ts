@@ -1,9 +1,29 @@
 // Reading a Dockerfile well enough to ask whether it copies what the suite needs.
 //
-// The check built on this is `dockerStage.test.ts`; this module is the part of it
-// that has to be right for that check to mean anything. It lives in gateway's own
-// `test/` rather than in a shared helper, so the next service with a test stage
-// copies one file and reads it.
+// ## WHAT USES THIS TODAY, AND WHAT DOES NOT
+//
+// `test/dockerStage.test.ts` was the check, and it was retired with the TypeScript
+// test stage: the Go image copies the whole build context (`COPY . .`), because
+// `go test ./...` finds a package by walking the tree and a named list of paths
+// would be a subset somebody maintains by hand. Two of that test's assertions were
+// about that COPY list and could not survive it, and the other two — "the test
+// stage copies every test file", "it copies every file the suite reads" — became
+// tautologies on a whole-context copy, which is what the file itself says a
+// whole-context copy does to a check.
+//
+// The PROPERTY did not go with the test, and this is not where it now lives: the
+// CI `image` job asks the built image which `*_test.go` files it holds and diffs
+// that against `find`. It is the only half, because with `COPY . .` there is no
+// COPY list for a local fast half to read — and it is the half that cannot be
+// argued with, since it reads the image rather than the file describing it.
+//
+// So the reader below is kept with no gateway consumer, deliberately rather than
+// pendingly: it is language-agnostic, it is documented for kit (see the last
+// section), and deleting a documented reader the moment its first caller retired
+// would throw away the part that took the care. Two tests here still use it —
+// `findFiles` and `findTestFiles`, the repository walk, which has nothing to do
+// with Dockerfiles. The reader half is not called by anything in this repository,
+// and saying so here is the difference between kept and believed-in.
 //
 // ## It is a reader, not a parser
 //
@@ -91,7 +111,7 @@ export function parseStages(dockerfile: string): Record<string, Stage> {
   const close = (): void => {
     // Reaching the first `FROM` with instructions already collected is the
     // pre-stage: an `ARG` that sets the base image or a build argument, and in
-    // gateway's Dockerfile it is where the Bun pin lives.
+    // gateway's Dockerfile it is where the Go pin lives.
     if (name === null) {
       if (instructions.length > 0) stages[PRE_STAGE] = { base: "", instructions };
     } else {

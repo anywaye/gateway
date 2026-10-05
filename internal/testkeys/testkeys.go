@@ -22,7 +22,7 @@
 //
 // Nothing outside a `_test.go` file imports this package, so the Go linker drops
 // it from `cmd/gateway`. `internal/equivalence` is in the same position today and
-// `Dockerfile.golang` copies the whole context either way — which is recorded in
+// `Dockerfile` copies the whole context either way — which is recorded in
 // that file's header rather than fixed here, because filtering a `COPY` is how a
 // test double reaches a shipped image.
 //

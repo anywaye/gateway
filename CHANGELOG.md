@@ -10,6 +10,49 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
+- **`docker build .` builds the Go gateway.** `Dockerfile` is now the Go image —
+  `golang:${GO_VERSION}` for the build, `gcr.io/distroless/static-debian12:nonroot`
+  for the runtime — and `Dockerfile.golang` is deleted rather than left beside it,
+  so there is exactly one shipped Dockerfile and no reader has to guess which one
+  `docker build .` uses. The test stage stays and is now Go: `go vet ./... && go
+  test -count=1 -v ./...`, run with `docker build --target test .`.
+
+  Two properties were moved rather than dropped, and where each went is written
+  down at both ends:
+
+  - **The image runs every test file the repository has.** The Bun test stage
+    copied an explicit list, and `test/dockerStage.test.ts` held that list to the
+    repository because a test file the image does not have does not fail, it is
+    not run. The Go test stage copies the whole build context — `go test ./...`
+    finds a package by walking the tree, and a named list would be a subset
+    somebody maintains by hand — which makes two of that test's assertions
+    impossible and its other two tautologies, so the file is retired. The
+    property it held is now asserted where the image can be seen: the CI `image`
+    job asks the built image which `*_test.go` files it holds and diffs that set
+    against `find`, and a new step exports the shipped image's filesystem and
+    fails if it carries any repository path. `gate.yml`'s exact test-file floor
+    moves 25 -> 24 with the deletion named in place. A Go-side *local* half of the
+    same check is not written yet; `HANDOFF-cutover-01.md` carries it.
+  - **The toolchain pin the image is built on is still asserted.** `pins.test.ts`'s
+    two Bun-image cases (`ARG BUN_VERSION`, compose's build arg) are false now that
+    the image is not built on Bun, so they are retargeted at the Go toolchain
+    rather than deleted: `ARG GO_VERSION` and compose's `GO_VERSION` must be the
+    same tag, and that tag must be the pin in `mise.toml` at a component boundary.
+
+- **`cmd/gateway` answers `-healthcheck`.** The compose healthcheck was
+  `bun -e …`, and the runtime image is distroless: no shell, no `curl`, no `wget`.
+  The binary now probes its own `/healthz` over the container loopback and exits 0
+  or 1, which is `identity`'s arrangement for the same reason. It probes
+  `/healthz` and **not** `/readyz` — where `identity`'s probes `/readyz` —
+  because a dependency outage must not restart the gateway, so the probe composes
+  `up --wait` waits on has to be liveness.
+
+- **`docker-compose.yml` builds the Go image** (`GO_VERSION` rather than
+  `BUN_VERSION`), drops `NODE_ENV`, which nothing reads any more, and carries the
+  `-healthcheck` probe above.
+
+### Added
+
 - **The recorded reason for the missing Go session store was CHECKED, and it is
   CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01.md`
   verifies both halves against `cafaye/identity` at source rather than inheriting

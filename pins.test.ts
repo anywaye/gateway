@@ -4,9 +4,9 @@
 // version number that will disagree with itself. `mise.toml` claims "three
 // places, one number" in a comment; this file is what makes that true or red.
 //
-// The failure this prevents is specific. CI installs Bun, the Dockerfile builds
-// on Bun, and a developer's `mise install` installs Bun — three different ways
-// to get a runtime, from three different copies of a number. When the copies
+// The failure this prevents is specific. CI installs a toolchain, the Dockerfile
+// builds on one, and a developer's `mise install` installs one — three different
+// ways to get a runtime, from three different copies of a number. When the copies
 // drift, the suite that passed on the contributor's machine does not pass in the
 // image that ships, and the only evidence is a failure somewhere else entirely.
 //
@@ -15,6 +15,13 @@
 // readers: `packageManager` is what any tool sees, and `mise.toml` is what a
 // contributor with mise sees. A pin in only one of them is a pin half the
 // contributors lose.
+//
+// TWO TOOLCHAINS, AND WHICH HALF BELONGS TO WHICH. The TypeScript cases are below;
+// the Go cases — the ones about the toolchain the IMAGE is built on, since the
+// Dockerfile no longer has a Bun stage — are their own `describe` further down.
+// They are split rather than interleaved because the two retire separately: the
+// Bun tier goes with `src/`, these Bun cases go with it, and the Go cases move
+// into the Go suite at that point. Neither half is a subset of the other.
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,12 +29,25 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The repository root, one level up from this file — and this file sits at the
-// root, deliberately, rather than in `src/`. It reads `Dockerfile`, `mise.toml`,
-// `.gitignore` and `docker-compose.yml`, and the Dockerfile's test stage copies
-// `src` and `test` only: a repository-consistency check that cannot run in the
-// image is a check that makes `docker build --target test` red for having been
-// thorough. `bun test` discovers the root, so it still runs everywhere the gate
-// does.
+// root, deliberately. It reads `Dockerfile`, `mise.toml`, `.gitignore` and
+// `docker-compose.yml`.
+//
+// WHY THE ROOT, restated because the reason moved rather than went away. It used
+// to be there because the image's Bun test stage copied `src` and `test` and a
+// file at the root was in neither — and a repository-consistency check that cannot
+// run in the image is a check that makes `docker build --target test` red for
+// having been thorough. The image is now Go and copies the whole build context,
+// so that constraint is gone and the file could move. It has not moved, for the
+// older reason: `bun test` discovers the repository root, and a pin check that
+// only ran when somebody named it would be a pin check nobody runs.
+//
+// WHICH IS ALSO THE WHOLE OF WHAT IT COSTS: `docker build --target test` no longer
+// runs this file, so the Bun tier's pin is asserted on the host and in CI's
+// `bun` job, and the Go toolchain's pin is asserted in the Go cases below plus
+// `bin/prime-go`. Nothing asserts the Bun cases from inside the image any more,
+// and that is stated here rather than left for a reader to discover from a missing
+// test file — the failure this repository's own `test/dockerStage.test.ts` used to
+// be about.
 //
 // One level up, not two. `new URL("../..")` resolves against a *file*, and a
 // directory URL drops the last segment, so `../..` lands in the parent of the
@@ -70,29 +90,58 @@ describe("the bun pin", () => {
     const pinned = /^bun\s*=\s*"(\d+\.\d+\.\d+)"$/m.exec(mise)?.[1];
     expect(pinned).toBe(PIN);
   });
+});
 
-  test("the Dockerfile builds on the same number", () => {
-    // The image is what ships. A Dockerfile on a different Bun than CI tests is a
-    // suite that passed against a runtime nothing will ever run.
+// ## THE IMAGE IS NOT BUILT ON BUN ANY MORE, AND THAT IS A DIFFERENT PIN
+//
+// The cases above are about the TypeScript tier, which still runs on the host
+// until the Bun toolchain is retired. Two of them used to be about the image: the
+// Dockerfile built `oven/bun:${BUN_VERSION}`, and compose passed the same number
+// through. Both are false as of the cutover's first quarter — `docker build .`
+// builds the Go binary into a distroless image — and they are RETARGETED below
+// rather than deleted, because the property behind them is still the property the
+// image has: **the toolchain the image is built on is the toolchain the
+// repository pins.** Deleting them would leave that claim unasserted and read as
+// agreement.
+describe("the image is built on the pinned Go toolchain", () => {
+  /** What `mise.toml` pins, which is the number the image's tag has to sit inside. */
+  const pinnedGo = (): string => {
+    const pinned = /^go\s*=\s*"(\d+\.\d+\.\d+)"$/m.exec(read("mise.toml"))?.[1];
+    expect(pinned).toBeDefined();
+    return pinned as string;
+  };
+
+  test("the Dockerfile builds on that toolchain", () => {
     const dockerfile = read("Dockerfile");
 
-    expect(dockerfile).toMatch(/^ARG BUN_VERSION=(\d+\.\d+\.\d+)$/m);
-    expect(/^ARG BUN_VERSION=(\d+\.\d+\.\d+)$/m.exec(dockerfile)?.[1]).toBe(PIN);
+    // `GO_VERSION` names the IMAGE TAG, and it is two components where the pin is
+    // three: `golang:1.26` is the series and `mise.toml` pins the patch inside it.
+    // The same gap `RUST_VERSION` had before this repository had a Go pin at all,
+    // and the check is therefore "the tag is the pin at a component boundary"
+    // rather than equality — `1.2` does not sit inside `1.26.1`, and neither does
+    // `1.261`.
+    const tag = /^ARG GO_VERSION=(\d+\.\d+)$/m.exec(dockerfile)?.[1];
+    expect(tag).toBeDefined();
+    expect(pinnedGo().startsWith(`${tag}.`)).toBe(true);
 
-    // And the stages that matter name the image through that one argument, so
-    // raising the pin cannot leave one stage behind.
-    const froms = [...dockerfile.matchAll(/^FROM oven\/bun:(\$\{BUN_VERSION\})?-?\S*/gm)];
+    // And the stage that matters names the image through that one argument, so
+    // raising the pin cannot leave one stage behind — the assertion this file made
+    // about `oven/bun`, and for the same reason.
+    const froms = [...dockerfile.matchAll(/^FROM golang:(\$\{GO_VERSION\})\S*/gm)];
     expect(froms.length).toBeGreaterThan(0);
-    for (const [, arg] of froms) expect(arg).toBe("${BUN_VERSION}");
+    for (const [, arg] of froms) expect(arg).toBe("${GO_VERSION}");
   });
 
   test("compose passes the pin through rather than repeating it", () => {
-    // compose is a dev loop, and a dev loop on a different runtime than the image
+    // compose is a dev loop, and a dev loop on a different toolchain than the image
     // is a bug report that reads as "it works locally". It is a build arg, so it
-    // has to be the same number the Dockerfile defaults to.
+    // has to be the same tag the Dockerfile defaults to: repeated here as a literal
+    // and changed there, that would be two numbers.
     const compose = read("docker-compose.yml");
-    expect(compose).toMatch(/BUN_VERSION:\s*"(\d+\.\d+\.\d+)"/);
-    expect(/BUN_VERSION:\s*"(\d+\.\d+\.\d+)"/.exec(compose)?.[1]).toBe(PIN);
+    expect(compose).toMatch(/GO_VERSION:\s*"(\d+\.\d+)"/);
+    expect(/GO_VERSION:\s*"(\d+\.\d+)"/.exec(compose)?.[1]).toBe(
+      /^ARG GO_VERSION=(\d+\.\d+)$/m.exec(read("Dockerfile"))?.[1],
+    );
   });
 });
 

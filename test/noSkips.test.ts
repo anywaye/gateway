@@ -87,8 +87,8 @@ function code(text: string): string {
 describe("the suite cannot skip itself", () => {
   test("at least one test file was found to check", () => {
     // A detector that found nothing reads as a pass, which is the exact failure
-    // mode it exists to catch. `dockerStage.test.ts` already reads `find`; this
-    // asserts the reader still reads.
+    // mode it exists to catch. `findTestFiles` — the walk in `dockerStage.ts` — is
+    // what found these sources, and this asserts it still finds them.
     expect(sources.length).toBeGreaterThan(10);
   });
 

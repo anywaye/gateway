@@ -18,7 +18,7 @@ import "net/http"
 // packages to import, so `internal/ratelimit` cannot see one. The cost of this file
 // is that it ships in the source tree rather than only in the test build; nothing
 // outside a `_test.go` file calls it, so the linker drops it from `cmd/gateway`, and
-// `Dockerfile.golang` copies the whole context either way — recorded in that file's
+// `Dockerfile` copies the whole context either way — recorded in that file's
 // header rather than fixed here, because filtering a `COPY` is how a test double
 // reaches a shipped image.
 

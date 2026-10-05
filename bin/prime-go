@@ -27,7 +27,7 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
 # THE TOOLCHAIN ASSERTION, and it is this script's first step and its only
 # precondition: this repository pins a Go version in TWO files (mise.toml's `go`
-# and Dockerfile.golang's ARG GO_VERSION), and nothing makes the go command
+# and the Dockerfile's ARG GO_VERSION), and nothing makes the go command
 # enforce either. Without the check a developer on a newer Go silently produces a
 # binary CI never built, and reads the difference as a defect in the code under
 # test — the cafaye-rb lesson, in a second language.
@@ -51,7 +51,7 @@ mod_go="$(sed -n 's/^go *\([0-9][0-9.]*\).*/\1/p' go.mod)"
 if [ -n "$mod_go" ] && [ "$mod_go" != "$pinned_go" ]; then
   echo "bin/prime-go: go.mod declares go $mod_go and mise.toml pins $pinned_go." >&2
   echo "  One language version, two files (go.mod, mise.toml) plus the ARG" >&2
-  echo "  GO_VERSION in Dockerfile.golang that names the image tag. Fix whichever is" >&2
+  echo "  GO_VERSION in the Dockerfile that names the image tag. Fix whichever is" >&2
   echo "  wrong rather than the one you read first." >&2
   exit 127
 fi

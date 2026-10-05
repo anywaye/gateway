@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -28,6 +29,73 @@ import (
 
 	"github.com/cafaye/gateway/internal/httpapi"
 )
+
+// healthcheckTimeout bounds the probe. Short, because a compose healthcheck that
+// takes thirty seconds to fail is a healthcheck whose interval is a lie, and this
+// one runs every few seconds for the life of the container.
+const healthcheckTimeout = 2 * time.Second
+
+// healthcheck reports this process's own liveness as an exit status: 0 answering,
+// 1 not.
+//
+// `/healthz` and NOT `/readyz`, and the difference is this repository's rule rather
+// than a preference. `identity`'s compose healthcheck probes `/readyz`, because
+// there readiness is the one that consults the database and a probe that reports
+// healthy against a database that is gone is reporting a service that answers 503
+// to everybody. gateway's `/readyz` consults identity and Redis, and **a
+// dependency outage must not restart the gateway**: `/healthz` is the one probe a
+// restart can usefully act on, because it asks whether this process is answering
+// and nothing else. The same reasoning as `docker-compose.yml`'s healthcheck
+// paragraph, which is where an operator reads it.
+//
+// So this reports liveness, and a gateway whose identity is unreachable is a
+// gateway `/healthz` calls healthy and `/readyz` names the dependency in. That is
+// the split, and putting it in the probe is what keeps it from being decided again
+// by whoever writes the next health check.
+func healthcheck() int {
+	// `PORT` rather than a hardcoded 8080, because a container started on another
+	// port has to be probeable and a probe aimed at 8080 reports a perfectly healthy
+	// service as dead.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = httpapi.DefaultPort
+	}
+	return probeHealthz("http://127.0.0.1:" + port + "/healthz")
+}
+
+// probeHealthz asks one URL whether it is alive, and answers 0 or 1.
+//
+// Split from `healthcheck` so a test can point it at an `httptest.Server` and read
+// both answers — a check that has only ever refused is indistinguishable from one
+// that is broken, which is the same argument the Redis tier's "a test that has never
+// run its commands proves nothing" makes.
+//
+// The body is read and discarded rather than the connection simply closed: closing
+// without draining shows up in the server's own logs as a broken pipe on a request
+// it already answered, every few seconds, forever.
+func probeHealthz(url string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), healthcheckTimeout)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 1
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return 1
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+
+	// Any 2xx, not `== 200`: what is being asserted is "this process is answering",
+	// and a probe that hardcodes one status code breaks the day the liveness route
+	// is allowed to answer something else.
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return 1
+	}
+	return 0
+}
 
 // The two timeouts, and both are non-zero.
 //
@@ -52,6 +120,18 @@ const (
 )
 
 func main() {
+	// `-healthcheck` is the container health probe, and it is a flag on this binary
+	// rather than a request from outside the container for one reason: the runtime
+	// image is `gcr.io/distroless/static-debian12:nonroot`, which has no shell and
+	// no HTTP client. The alternatives were a `build:` stanza adding curl — a supply
+	// chain in the image of the service every caller's credential crosses — or no
+	// healthcheck at all, which is worse than either: `docker compose up --wait`
+	// would then report the service up the instant the process starts, which is
+	// before anything is listening.
+	if len(os.Args) == 2 && os.Args[1] == "-healthcheck" {
+		os.Exit(healthcheck())
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "gateway: %v\n", err)
 		os.Exit(1)

@@ -254,7 +254,19 @@ gate:
       # It is the same set the `image` CI job diffs against `find`; this is the
       # cheap half, running everywhere the gate runs, and the image job is the
       # half that reads the built tree rather than the source.
-      minimum: 25
+      #
+      # LOWERED 25 -> 24, and this is the FIRST time this floor has gone DOWN, so
+      # the deletion is named here rather than left to be discovered as a red gate:
+      # `test/dockerStage.test.ts` retired with the TypeScript test stage. The Go
+      # image's test stage copies the whole build context, because `go test ./...`
+      # finds a package by walking the tree, so that file's two assertions about
+      # the COPY list could not survive and its other two had become tautologies on
+      # a whole-context copy. It is not a weakened check either: the property it
+      # held is asserted in the `image` CI job, which asks the built image which
+      # `*_test.go` files it holds and diffs that set against `find`. What is NOT
+      # written yet is a Go-side LOCAL half of the same check; `HANDOFF-cutover-01.md`
+      # carries that as remaining work.
+      minimum: 24
     # ---------------------------------------------------------------------
     # The step markers, and the reason there are three of them.
     #
@@ -422,7 +434,7 @@ external:
       # the check the gate performs itself is the one that counts.
       name: >-
         go 1.26.1 on PATH, the pin in mise.toml, go.mod's own go directive, and
-        Dockerfile.golang's ARG GO_VERSION. Without it bin/prime exits 127 in
+        the Dockerfile's ARG GO_VERSION. Without it bin/prime exits 127 in
         ./bin/prime-go before any Go test runs.
       satisfy:
         command: [go, version]
