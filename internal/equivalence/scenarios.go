@@ -580,11 +580,23 @@ func canSignIn(scenario string) bool {
 // browserSurface is a gateway with the four `/auth` routes mounted and identity
 // scripted.
 //
-// The store is `sessiontest`, the fixture — this packet ships no session store and
-// `internal/session` records why. So what these scenarios compare is the PORT's
-// answers given a working store, and they cannot say anything about what a
-// deployment would put behind one. That limit is stated here rather than
-// discovered by a reader who assumed more.
+// The store is STILL `sessiontest`, the fixture, and the reason is a property of
+// the COMPARISON rather than an absence.
+//
+// A browser scenario here drives the Go gateway and `test/equivalence/reference.ts`
+// — the TypeScript implementation — at the same requests and compares the bytes. The
+// reference's store is `memorySessionStore()`, a `Map`. So for the two sides to be
+// comparable the Go side must also be a per-process map: swapping in Redis here would
+// make the Go side depend on a server the reference does not have, and a scenario
+// that cannot run is not a comparison.
+//
+// So these scenarios compare the PORT's answers given a working store, and they still
+// cannot say what a deployment would put behind one. That limit is unchanged by
+// `internal/sessionredis` existing, and it is stated here rather than discovered by a
+// reader who assumed more: the shipped store is proved in
+// `internal/httpapi/runtime_session_test.go`, against a real `redis-server`, and it is
+// proved on its own terms rather than by comparison — because comparison is the one
+// method that cannot reach it while the reference is a `Map`.
 func browserSurface(overrides map[string]identityAnswer) (httpapi.Options, error) {
 	return httpapi.Options{BFF: &httpapi.BffOptions{
 		IdentityURL: fixtureIdentity,

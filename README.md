@@ -742,11 +742,11 @@ environment, so a test can build two differently configured apps in one process.
 | `IDENTITY_JWKS_URL`      | derived from the issuer     | Full key-set URL, for a key set served somewhere other than the issuer's own well-known path. |
 | `IDENTITY_JWKS_TTL_MS`   | `300000`                    | How long a fetched key set is reused, in milliseconds.              |
 | `GATEWAY_CLIENT_ID`        | `gateway`                     | The `aud` gateway accepts — gateway's own client id.                   |
-| `IDENTITY_URL`           | `http://localhost:8080`     | identity's base URL for the `/auth` calls: where a session is *requested*, as against `IDENTITY_ISSUER`, which is where tokens are *verified*. http(s), no path. |
+| `IDENTITY_URL`           | `http://localhost:8080`     | identity's base URL for the `/auth` calls: where a session is *requested*, as against `IDENTITY_ISSUER`, which is where tokens are *verified*. http(s), no path. **The browser surface needs this AND `REDIS_URL`** — one without the other serves no `/auth/*` route, because a per-process session store is the shape that would sign a browser out on the next restart. |
 | `RATE_LIMIT_REQUESTS`    | `600`                       | Requests per window on the general allowance. Integer ≥ 1; `0` is a startup error, not "unlimited". |
 | `RATE_LIMIT_WINDOW_MS`   | `60000`                     | Length of that window in milliseconds. Integer ≥ 1. |
 | `TRUSTED_PROXIES`        | `0`                         | How many proxies append to `X-Forwarded-For`, and therefore how much of it is believed. `0` believes none of it and keys on the socket peer. |
-| `REDIS_URL`              | unset                       | `redis://` or `rediss://` — host and port, no path. Set it and the counters are shared by every replica and survive a restart. Unset and they are this process's memory. |
+| `REDIS_URL`              | unset                       | `redis://` or `rediss://` — host and port, no path. Set it and the counters are shared by every replica and survive a restart, **and browser sessions live here too**. Unset and they are this process's memory, and no browser surface is served. |
 | `REDIS_PREFIX`           | `gateway:rl`                  | Sub-namespace inside gateway's own, so two gateways or two environments sharing one Redis do not read each other's buckets. |
 | `ROUTE_TABLE`            | unset                       | One JSON object of path prefix → `{baseUrl, token?, public?, principal?}`: where each prefix goes, whether it is caller-anonymous, and which of the caller's claims the upstream is declared to need. Unset and gateway forwards nothing. Every prefix must be under `/v1/`, and every value in it is validated at startup — see [Routing](#routing). |
 | `ASSERTION_SIGNING_KEY_FILE` | unset                    | Path to a PKCS#8 RSA PEM. Unset means **no assertion is minted on any route**, which is the default and the reason the feature cannot change a deployment that has not asked for it. A **path**, never the PEM itself: a private key in an environment value turns up in `docker inspect`, in `/proc/<pid>/environ` and in any crash dump. |
@@ -997,7 +997,7 @@ equivalence check stands them up side by side on every run.
 | bearer-token verification, JWKS cache, scopes | ✅ | **not ported** — Wave 3 |
 | API keys | ✅ | **not ported** — Wave 3 |
 | rate limiting, `RateLimit-*` headers, the `429` | ✅ | ✅ **ported** — GCRA, `internal/ratelimit`; the refusal and the fail-open path are compared against the reference |
-| the BFF's session store | ✅ | **deliberately not ported** — see below |
+| the BFF's session store | ✅ | **ported, and in Redis** — see below |
 
 (The pass-through, the route table and the principal assertion are ported — see
 the row above. An earlier revision of this table carried a second, contradictory
@@ -1010,7 +1010,6 @@ so the reference answers `404` there with nothing configured — and so does the
 service. A `501` would have been more truthful about the code and less true about
 the contract, and where the two disagree the TypeScript answer is the correct one.
 
-### One known divergence: the Go gateway does not count routed traffic
 
 The limiter is ported and its refusal is compared against the reference, and the
 comparison found this. With the allowance exhausted, on a path a route table
@@ -1036,48 +1035,97 @@ before it, so an unverifiable token must not be counted — and that is a change
 the order of the whole chain in `internal/httpapi`.
 
 ### The browser surface is ported, and the session store is not
+### The browser surface is served, and the session store is Redis
 
-`Options.BFF` is nil by default, so `cmd/gateway` serves probes only and the four
-`/auth` routes decline with the reference's `404` — the same answer
-`createApp({})` gives. Set it, and the four routes are served: the origin gate, the
-`__Host-bff-session` cookie, the fixed `401` sentence, the `423` with its
-`Retry-After`, and the rule that the browser never receives identity's token.
+`Options.BFF` is nil by default, so a Go gateway with no browser surface configured
+serves probes only and the four `/auth` routes decline with the reference's `404` —
+the same answer `createApp({})` gives. Configure it, and the four routes are served:
+the origin gate, the `__Host-bff-session` cookie, the fixed `401` sentence, the `423`
+with its `Retry-After`, and the rule that the browser never receives identity's token.
 
-**There is no session store in this repository's Go code, and that is the decision
-rather than the gap.** `src/bff/session.ts` has one — a `Map`, per process, marked
-`TODO(guard-06)`/`TODO(guard-07)` — and it was not ported, because
-`identity/internal/sessions/store.go` is the better design and cannot be used here.
-Not "cannot be reached", cannot be *used*: it is keyed by `token_digest` and
-resolves a *token* to a session, and what the gateway needs is the opposite
-direction — hand it the browser's opaque id, get back the token. Nothing in identity
-performs that direction and nothing can, because the digest is one-way by
-construction, which is precisely why `NewSession` takes a digest at all. Go's
-`internal/` rule forbids the import across modules, and identity exposes no endpoint
-that does the inverse lookup either.
+**`internal/sessionredis` is the store, and gateway owns it.** It was a decision,
+and the recorded reason for it was *checked rather than inherited* before anything
+was built on it — a claim in a document is a reader's premise, and both halves of
+the old justification turned out to be facts about *another repository's schema*:
 
-So the interface is declared in `internal/session`, nothing implements it in the
-binary, and `NewBff` **refuses to construct** a browser surface with a nil store —
-four routes that cannot tell a signed-in user from a stranger are not a gateway. The
-tests stand in with `internal/sessiontest`, and
-`TestNoProductionFileImportsTheSessionDouble` runs `go list -deps ./cmd/...` to
-prove the fixture is not linked into the binary. The deferral is therefore something
-a reader can run rather than a promise in a comment.
+- identity's `sessions` table **has no column for the presented value**. It is keyed
+  on `token_digest` with a unique index, `migrations/00003_sessions.sql` says the
+  token is stored as "only its SHA-256", and `ByToken` is the table's only read and
+  takes a *token*, which it hashes. So the inverse lookup the gateway needs
+  (browser id → identity token) is not merely absent, it is unimplementable from
+  that table: **the value is not stored.** `/v1/session` carries `post` and `delete`
+  only, so there is no HTTP route either.
+- Go's `internal/` rule forbids the import, **answered by the compiler rather than
+  by reading**: a scratch module with a `replace` onto the identity checkout fails
+  with `use of internal package github.com/cafaye/identity/internal/sessions not
+  allowed` — on its own line, *after* unrelated missing-`go.sum` errors rather than
+  instead of them, which is what makes it easy to skim past as something else.
 
-A partial migration would have been worse than none: two services that each believe
-they own the session. `internal/session`'s package comment has the measurement, and
-`REPORT-gateway-go-bff-01.md` has the rest of it.
+So the justification in `internal/session` and the port reports stands as written,
+and only its conclusion moved. What it wrongly implied is that nothing could be
+built: it closed the route to *identity's* store, which was never going to be the
+right one — that would hand the service that mints credentials the job of
+remembering them in the clear, which is the exact property identity's schema is
+built to prevent.
 
-A started Go gateway still reads exactly one environment variable, `PORT`, and
-serves `{"deps":{}}` on `/readyz`. The other six the TypeScript `runtimeOptions`
-reads belong to subsystems that are not ported; a variable an operator sets that
-changes nothing is worse than one they cannot set, because `IDENTITY_ISSUER` in a
-compose file looks configured and configures a `404`. `IDENTITY_URL` is the one this
-surface needs, and it belongs to the packet that teaches `RuntimeOptions` to build a
-`BFF` — which is also the packet that can register the `identity` readiness probe,
-because `createApp({bff})` on its own answers `{"deps":{}}` and a BFF that
-auto-registered one would differ from the reference at byte 9.
+**The store is Redis, over the transport the limiter already speaks.** It is built
+on `internal/ratelimit`'s client and `RuntimeOptions` hands the limiter and the
+session store the *same* `*LazyRedis`, so a deployment has one socket to Redis
+rather than two, one command-in-flight lock rather than two, and one implementation
+of RESP2 rather than two implementations that will disagree. Forking `resp.go` is
+how two implementations of one protocol start disagreeing — the defect this
+repository just fixed in the limiter. The rejected alternative is the reference's own
+`Map`: a per-process store signs a browser out on the next restart and on whichever
+replica it did not sign in to, which would make the Go gateway *less* capable than
+the TypeScript one while looking identical in a diff.
 
-| the BFF and the session store | ✅ | **not ported** — Wave 3 |
+Two properties the reference's `Map` does not need and a shared store does:
+
+- **A session id is caller input on `Get` and `Delete`**, because it arrives in the
+  cookie. An id that is not the canonical lowercase UUID `login` mints is *absent*
+  and issues no Redis command at all, so caller bytes cannot reach a key — the same
+  hazard `AssertBucket` exists for, in a place the old record did not mention. On
+  `Put` the asymmetry runs the other way: that id is gateway's, so a bad one is a
+  defect in this repository and is refused.
+- **The store holds the token in the clear**, because `Get` must return it to put in
+  a `Bearer` header for `/v1/me`. That is the reference's posture (`Map<id, token>`)
+  and a different one from identity's, so it is named rather than glossed: a Redis
+  readable by the wrong principal is a credential store that has leaked. Error
+  messages report a reply by *shape*, never by contents, so an error path cannot log
+  a credential.
+
+**Configuration is `IDENTITY_URL` and `REDIS_URL` together, or not at all.** The
+session store is built only when both are set, and this is the one place the two
+variables are read together:
+
+| `IDENTITY_URL` | `REDIS_URL` | the four `/auth` routes |
+| --- | --- | --- |
+| — | — | `404` — `createApp({})`, and not a gap |
+| set | — | `404` — **a per-process store is the shape this exists to stop** |
+| — | set | `404` — a shared counter and no browser surface is a valid configuration |
+| set | set | served |
+
+The middle row is the honest refusal. `NewBff` still **refuses to construct** a
+browser surface with a nil store — four routes that cannot tell a signed-in user
+from a stranger are not a gateway — and an `IDENTITY_URL` that is not an http(s)
+base URL is a **refusal to boot**, because `/auth/*` answering `404` under a
+mistyped URL looks like a routing bug and gets debugged as one.
+
+The fixtures are still fixtures, and both directions are guarded:
+`internal/sessiontest`'s `TestNoProductionFileImportsTheSessionDouble` runs
+`go list -deps ./cmd/...` to prove the map-backed double is not in the binary, and
+`internal/sessionredis`'s `TestTheShippedBinaryLinksThisStore` asserts the real one
+**is**. A guard that only ever says "no" cannot notice that the "yes" stopped
+happening, and that is the shape of the gap this closed.
+
+The store is proved against a **real `redis-server`**, started in-process on a free
+port by `internal/httpapi`'s runtime tests — no `GATEWAY_REDIS_URL` and no skip,
+because a tier that can pass by not running is a green about nothing. Those tests
+sign in, read `/auth/me` with the cookie, sign out, watch the stale cookie get a
+`401`, and — the property a `Map` cannot have — build a **second gateway from the
+same environment and read a session the first one created**.
+
+| the BFF and the session store | ✅ | **ported** — `internal/sessionredis`, Redis |
 
 "Declines with the reference's `404`" is a decision and not a gap that was left
 open by accident. `createApp({})` does not register `/v1/me` without a verifier
@@ -1290,26 +1338,26 @@ It is renamed to `Dockerfile` in the commit that deletes `src/`, not before.
 Each line is a packet, not a plan. The stubs that stand in for them are marked in
 the source with the packet that replaces them.
 
-- **The Go rewrite has three operations and no session store.** `GET /healthz`,
-  `GET /readyz`, the error envelope, and now the four `/auth` routes behind
-  `Options.BFF` — see [The Go rewrite](#the-go-rewrite) for the table, for why the
-  session store is a deferral rather than a port, and for what the equivalence check
+- **The Go rewrite is a partial implementation and `src/` is the reference.** `GET
+  /healthz`, `GET /readyz`, the error envelope, the pass-through, and now the four
+  `/auth` routes with a real Redis-backed session store — see
+  [The Go rewrite](#the-go-rewrite) for the table and for what the equivalence check
   does and does not compare. This line is the honest one and it sits at the top of
   the list because it is the thing a reader is most likely to get wrong: `src/` is
   **not** legacy here, it is the reference the Go service is measured against, and
   the packet that deletes it is a later one.
-- **A Go gateway has nowhere to put a browser session.** The BFF is ported and there
-  is no store behind it, by decision and with the measurement in
-  `internal/session`. `identity`'s store is keyed by `token_digest` and resolves a
-  *token* to a session; the gateway needs the opposite direction and nothing performs
-  it. So this is not "wire up a map" — it is a design question about where a browser
-  session id maps back to an identity token, and the answer has to not be
-  `identity` holding a second copy of every cookie in the fleet.
-- **A Go gateway cannot be pointed at an identity from the environment.** It reads
-  `PORT` and nothing else, so `/auth/*` is unreachable in a started process even
-  though it is served in-process. `IDENTITY_URL` belongs to the packet that also
-  registers the `identity` readiness probe, because `createApp({bff})` on its own
-  answers `{"deps":{}}` and the two must not come apart.
+- **A Go gateway has no bearer-token verifier and no API keys.** `internal/auth` does
+  RS256 with a JWKS cache, so `/v1/*` authenticates, but `src/middleware/apiKey.ts`
+  has no Go counterpart at all. A Go gateway is therefore *less strict* than the
+  TypeScript one on those routes, which is a different kind of gap from the session
+  store and worth stating separately: that one made `/auth/*` unreachable, this one
+  makes a class of caller un-refused.
+- **A Go gateway cannot be pointed at an identity for the `identity` readiness probe.**
+  It reads `IDENTITY_URL` and builds the browser surface, but registering the
+  `identity` probe still belongs to the packet that also owns the remaining
+  `runtimeOptions` variables, because `createApp({bff})` on its own answers
+  `{"deps":{}}` and a probe added in the wrong place makes `/readyz` differ from
+  the reference at byte 9.
 
 - **The service registry.** Routing exists and is a **static configured table**:
   `ROUTE_TABLE` says which prefix goes where, it is validated at startup, and it
@@ -1421,12 +1469,15 @@ the source with the packet that replaces them.
 - **One error shape.** `404` and `500` still answer `{ error, message }`; the
   `429` moved onto the envelope with the limiter that writes it. See
   [Errors](#errors).
-- **Shared sessions.** The session store is a `Map` in one process, so a
-  browser's session dies with the replica it signed in on and is lost on restart.
-  The `SessionStore` interface is the seam; Redis-backed sessions are the deploy
-  packet, marked `TODO(guard-06)` in the source. A CSRF *token* is also not here —
-  the origin gate is the defence, and a double-submit token would be a second
-  thing to get right for the same protection.
+- **Redis is now a hard requirement for the browser surface.** The session store is
+  Redis rather than a `Map`, so a browser's session survives a restart and is shared
+  by every replica — but a Go gateway serving `/auth/*` needs `REDIS_URL`, and one
+  without it serves no browser surface at all rather than a degraded one. The
+  TypeScript reference still uses its `Map` (`TODO(guard-06)` in
+  `src/bff/session.ts`), so the two implementations differ here and the Go one is the
+  stronger: nothing is lost on restart, and nothing dies with the replica it signed
+  in to. A CSRF *token* is also not here — the origin gate is the defence, and a
+  double-submit token would be a second thing to get right for the same protection.
 - **OIDC at the edge.** No redirect flow, no authorization-code exchange, no
   `/.well-known` discovery for a browser. A browser signs in with an email and a
   password through gateway today; the OIDC packets replace that with a redirect to
