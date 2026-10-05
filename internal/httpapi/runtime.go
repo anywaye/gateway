@@ -256,6 +256,15 @@ func (c Config) CloseResources() {
 // defaultPort is what an unset `PORT` means, and it is `src/index.ts`'s number.
 const defaultPort = "8080"
 
+// DefaultPort is `defaultPort`, exported for one caller: `cmd/gateway`'s
+// `-healthcheck`, which has to know where to aim its probe.
+//
+// It is exported rather than written a second time in `cmd/gateway` because two
+// copies of a port number is the shape this repository's pin checks exist for — and
+// the failure here is not a failing test but a container healthcheck aimed at a
+// port nothing is listening on, reporting a healthy service as dead.
+const DefaultPort = defaultPort
+
 // defaultClientID is the audience gateway accepts when nothing says otherwise:
 // gateway itself. `DEFAULT_CLIENT_ID` in `src/index.ts`.
 const defaultClientID = "gateway"

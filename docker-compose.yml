@@ -63,15 +63,15 @@
 # WHY THERE IS NO `postgres:` BLOCK HERE, and it is the first thing a reader will
 # look for — all three other adopters have one, and this file has none on purpose.
 #
-# gateway runs no database. Not "has not got to it yet": `package.json` declares two
-# runtime dependencies, `hono` and `jose`, and the tree holds no driver, no pool,
-# no `DATABASE_URL` and no migrations. What gateway keeps it fits in this process
-# (rate-limit counters, until `REDIS_URL` names a Redis) or in the caller's own
-# cookie (`__Host-bff-session`). So there is nothing for a database here to hold,
-# and `gateway` in `KIT_POSTGRES_DATABASES` would be a role and a database created
-# for a service that never opens either — a name in a shared list describing no
-# fact about the world, which is the same defect kit's own template refuses to
-# commit one layer up when it hardcoded `courier`.
+# gateway runs no database. Not "has not got to it yet": the tree holds no driver,
+# no pool, no `DATABASE_URL` and no migrations, and it did not have any before the
+# TypeScript implementation was deleted either — what gateway keeps it fits in this
+# process (rate-limit counters, until `REDIS_URL` names a Redis) or in the caller's
+# own cookie (`__Host-bff-session`). So there is nothing for a database here to
+# hold, and `gateway` in `KIT_POSTGRES_DATABASES` would be a role and a database
+# created for a service that never opens either — a name in a shared list
+# describing no fact about the world, which is the same defect kit's own template
+# refuses to commit one layer up when it hardcoded `courier`.
 #
 # WHAT THAT COSTS, stated rather than left for the first developer on a new
 # machine to find. kit's `10-cluster.sh` opens with `:?` on the variable (line 82)
@@ -106,10 +106,13 @@
 #   the moment `kit.ref` exists, that failure has no discretion left in it.
 #
 # WHY THERE IS NO `GATEWAY_OTEL_ENDPOINT` EITHER, and that is a real absence rather
-# than an oversight. Nothing under `src/` opens an OTLP exporter yet, so the one
-# variable that is the contract — point gateway's telemetry at any endpoint and the
-# shipped collector goes quiet — has nothing at this end of it. Declaring the
-# variable would be a claim about instrumentation this repository does not have.
+# than an oversight. Nothing in this repository opens an OTLP exporter — not the Go
+# service, and not the TypeScript one that preceded it — so the one variable that is
+# the contract — point gateway's telemetry at any endpoint and the shipped
+# collector goes quiet — has nothing at this end of it. Declaring the variable
+# would be a claim about instrumentation this repository does not have. It is not
+# the same absence twice: the Go rewrite carried no exporter with it either, which
+# is why the sentence above names one implementation and not two.
 # The crash layer below is not that claim: it is Docker's log driver rather than
 # an SDK, and it works whether or not gateway ever exports a span.
 #
@@ -145,7 +148,7 @@ services:
     build:
       context: .
       args:
-        BUN_VERSION: "1.3.12"
+        GO_VERSION: "1.26"
     image: cafaye/gateway:dev
 
     # ON KIT'S `platform` NETWORK, and this line is not optional tidiness.
@@ -204,7 +207,6 @@ services:
 
     environment:
       PORT: "8080"
-      NODE_ENV: production
       # Issuer-only base URL — gateway appends /.well-known/jwks.json itself. The
       # default is the compose stack's identity, which is not in this file, so
       # /v1/* answers 503 until it is; /healthz and /readyz do not care.
@@ -251,8 +253,9 @@ services:
       # ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"http://pantry:8080","token":"..."}}'
 
     # THE CRASH LAYER, and it is the reason a panic reaches an operator with no
-    # per-language log SDK in this repository — gateway's `package.json` has two
-    # runtime dependencies and neither is one.
+    # logging SDK in this repository — gateway is four dependencies and a standard
+    # library, and none of them is one. `log.Printf` to stderr is what a Go process
+    # has, and this is where it goes.
     #
     # Every one of the six languages writes a fatal error to stderr; in a container
     # that is the log stream. Docker's `syslog` driver ships it over the compose
@@ -291,13 +294,25 @@ services:
       # /readyz's to report and must not restart the gateway — see the
       # `depends_on` paragraph at the top of this file for why that is a rule here
       # rather than a preference.
-      test:
-        - CMD
-        - bun
-        - -e
-        - "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-      interval: 5s
-      timeout: 3s
-      retries: 3
+      #
+      # `/app/service -healthcheck`, and NOT a request from outside the container,
+      # because the runtime image is `gcr.io/distroless/static-debian12:nonroot`:
+      # no shell, no curl, no wget. The binary probes its own `/healthz` over the
+      # container loopback and exits 0 or 1, which is the same arrangement
+      # `identity`'s compose file uses and for the same reason.
+      #
+      # The path is the image's own entrypoint path, not a bare name: WORKDIR is
+      # /app and there is no PATH entry for it in a distroless image, so
+      # `/app/service` alone is "executable file not found".
+      #
+      # It probes /healthz and NOT /readyz, where identity's probes /readyz. There
+      # is a dependency behind gateway's /readyz that is not behind its /healthz,
+      # and a healthcheck that consulted it would take the gateway down over
+      # identity's outage. `cmd/gateway`'s `healthcheck` says the same thing about
+      # itself, which is why it is written down in both places.
+      test: ["CMD", "/app/service", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
       start_period: 5s
     restart: unless-stopped

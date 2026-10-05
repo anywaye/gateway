@@ -18,7 +18,7 @@
 # The Go pin is TWO files and the gate checks both. 1.26.1 is the toolchain the
 # build and the tests run on, and it is the SAME number `pantry/go.mod` and
 # `identity/go.mod` state — a fleet that pins three copies of a toolchain needs
-# them to agree, and this gate is what makes them. `Dockerfile.golang`'s
+# them to agree, and this gate is what makes them. `Dockerfile`'s
 # ARG GO_VERSION is 1.26, the tag the image builds with, the same way
 # RUST_VERSION used to name an image rather than a patch. go.mod's `go` directive
 # is the third copy and is the one the compiler enforces.

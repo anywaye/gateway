@@ -1,6 +1,11 @@
-# Keep the build context to what the image actually needs. node_modules is
-# reinstalled inside the image (frozen lockfile) and must never leak the host's
-# platform-specific tree into it.
+# Keep the build context to what the image actually needs. It is shared by all
+# three stages — `source`, and through it `test` and `build` — so what is dropped
+# here is dropped from the tests as well as from the build.
+#
+# `node_modules` and `.git`: the Go build resolves modules through `go mod
+# download` against the committed `go.sum`, and `node_modules` is not read by
+# anything the image does. It is also the largest thing in this tree, and copying
+# it in on every build is the cost this line exists to avoid.
 node_modules
 .git
 .gitignore
@@ -18,7 +23,34 @@ coverage.*
 .idea
 .vscode
 
-# Docs and local-only files: not needed to run the service
+# Docs, the gate's own scripts and the files that describe the image. None of it
+# is read by the binary, by `go vet` or by `go test`, so none of it needs to be in
+# the context — and `Dockerfile` and `docker-compose.yml` in particular are read
+# by Docker and by compose, not by the build, which is why excluding them here is
+# not the build error it would be if a stage tried to `COPY` one.
+#
+# THE NEGATIONS THAT USED TO BE AT THE BOTTOM OF THIS FILE ARE GONE, and their
+# removal is the point rather than a tidy-up. They existed because `pins.test.ts`
+# reads four of these files and the Bun test stage could not copy a path the
+# context had dropped. The image is built on Go now, the Go test stage copies the
+# whole context, and no Go test in this repository reads a file at the repository
+# root — `internal/sessiontest/guard_test.go` and `internal/sessionredis` walk
+# `cmd/` and their own packages, and that is the whole of it. So the exclusions
+# stand without an exception list, which is the state where the list cannot go
+# stale: a file added here is dropped, and a Go test that later needs it fails
+# loudly with "no such file" rather than running without it.
+#
+# What replaced the tripwire, for the record, is `test/dockerStage.test.ts`'s
+# check on the COPY list — retired, because the test stage is `COPY . .` now and
+# two of its assertions were about that list while the other two had become
+# tautologies on it. The property it held is asserted where the image can be seen:
+# the CI `image` job diffs the `*_test.go` files the built image holds against
+# `find`. A Go-side local half — this file, read the way `dockerStage.test.ts` read
+# the Dockerfile — is not written yet, and `HANDOFF-cutover-01.md` says so.
+#
+# `src/` and `test/` are deliberately NOT here: `internal/equivalence` reads
+# `test/equivalence/reference.ts` and stands it up, so the TypeScript tree is in
+# the context until that harness retires with it.
 README.md
 AGENTS.md
 CLAUDE.md
@@ -27,24 +59,3 @@ cafaye.yml
 bin
 docker-compose.yml
 Dockerfile
-
-# The four files above that `pins.test.ts` reads, un-ignored so the test stage
-# can copy them. The test stage's COPY list is explicit (see the Dockerfile's
-# strictness notes and `test/dockerStage.test.ts`), so putting them back in the
-# context does not put them in the runtime image — nothing there names them, and
-# `dockerStage.test.ts` fails if that ever stops being true.
-#
-# This is the second half of a bug the first half of that file found: the list
-# could not name these four while this file excluded them, and the symptom is a
-# hard `"/x": not found` at build time rather than a silent skip. Loud beats
-# silent, but a list that names a path the context does not contain is still a
-# wrong list, and the fix belongs in both files.
-!.gitignore
-!docker-compose.yml
-!Dockerfile
-# `bin/` for the same reason, and with one more edge: it is a DIRECTORY, so
-# excluding it above excludes everything under it and the Dockerfile's
-# `COPY bin ./bin` cannot name a file inside a directory the context has dropped.
-# The negation has to be here rather than in the Dockerfile, because this file is
-# what decides what the context contains.
-!bin

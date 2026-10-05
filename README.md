@@ -973,7 +973,7 @@ by `bin/prime-go` at startup.
 workflow's `versions` input. `pins.test.ts` asserts all of them agree, so a bump
 in one fails the gate instead of quietly testing one runtime and shipping another.
 `engines.bun` is deliberately a floor (`>=1.3.0`), not a pin. Go 1.26.1 is stated
-in `mise.toml`, `go.mod` and `Dockerfile.golang`'s `ARG GO_VERSION`, and
+in `mise.toml`, `go.mod` and the `Dockerfile`'s `ARG GO_VERSION`, and
 `bin/prime-go` asserts the first two against each other before it runs anything.
 
 ## The Go rewrite
@@ -1450,7 +1450,8 @@ go run ./cmd/gateway            # http://localhost:8080
 curl localhost:8080/healthz     # {"status":"ok"}
 curl localhost:8080/readyz      # {"deps":{"identity":"unavailable"}} with no identity
                                  # running; "redis" joins it when REDIS_URL is set
-docker build -f Dockerfile.golang -t cafaye/gateway-go .
+docker build -t cafaye/gateway:dev . # the image this repository ships
+docker run --rm -p 8080:8080 cafaye/gateway:dev   # then curl localhost:8080/healthz
 
 ROUTE_TABLE='{"/v1/pantry":{"baseUrl":"http://pantry:8080"}}' \
   go run ./cmd/gateway          # and now /v1/pantry/* goes there
@@ -1463,11 +1464,16 @@ that is `public` *and* carries a `token` are each a refusal to boot naming the r
 that fired. `ASSERTION_SIGNING_KEY_FILE` is a **path**, never the PEM in an
 environment value; unset means no assertion is minted on any route.
 
-`Dockerfile.golang` is not named `Dockerfile` because `Dockerfile` is the
-TypeScript image and is not being replaced. It is at the repository root and it is
-not named `*.go`, because `go build ./...` compiles every `.go` file in the tree
-and a file called `docker/Dockerfile.go` is a Go source file to the go command.
-It is renamed to `Dockerfile` in the commit that deletes `src/`, not before.
+`Dockerfile` builds the Go binary into a `distroless/static` image, and
+`docker build .` builds it. There is no second Dockerfile and no
+`docker build -f`: for one quarter there were two, and the one named
+`Dockerfile.golang` is gone rather than left as a duplicate of this one, because
+two files building the same binary is the arrangement where a reader has to guess
+which `docker build .` uses.
+
+It is at the repository root and it is not named `*.go`, because `go build ./...`
+compiles every `.go` file in the tree and a file called `docker/Dockerfile.go` is a
+Go source file to the go command. `pantry/Dockerfile` records the same measurement.
 
 ## Not built yet
 
@@ -1670,7 +1676,7 @@ internal/equivalence/        the Go side of the equivalence check, and the scena
 test/equivalence/reference.ts the TypeScript side, stood up on a port by the same check
 test/proxyMutations.sh      27 mutations, each removing one property to show its test goes red
 bin/prime-go                 the Go tier of the gate
-Dockerfile.golang            distroless/static; NOT named Dockerfile, which is the TypeScript image
+Dockerfile                   distroless/static; the Go image, and the only one
 
 src/index.ts                 createApp + runtimeOptions + the Bun.serve bootstrap
 src/problem.ts               core's error envelope, the one rejection path

@@ -59,7 +59,7 @@ internal/httpapi/        Options, New, probes, the problem envelope, the one env
 internal/equivalence/    the Go side of the equivalence check, and the scenarios it compares
 test/equivalence/reference.ts   the TypeScript side, stood up on a port by the same check
 bin/prime-go             the Go tier of the gate
-Dockerfile.golang        distroless/static; NOT `Dockerfile`, which is the TypeScript image
+Dockerfile               the Go image: distroless/static, a `test` stage that runs `go vet` and `go test`, and `docker build .` as the runtime target
 
 src/index.ts            the app factory (createApp), env parsing, Bun.serve bootstrap
 src/problem.ts          core's error envelope — the one rejection path
@@ -319,9 +319,9 @@ bin/prime                    # THE GATE: frozen install, typecheck, bun test, th
 bin/prime-go                 # the Go tier alone: gofmt, build, vet, test, codegen currency
 bin/prime --no-go            # everything but the Go tier, and it prints that it skipped
 bun run typecheck            # tsc --noEmit, must print nothing
-docker build --target test . # the suite inside the image, the same tree CI builds
+docker build --target test . # the Go suite inside the image, the same tree CI builds
 docker compose build         # the runtime image itself
-docker build -f Dockerfile.golang .   # the Go runtime image
+docker build .               # the runtime image, same answer, no compose
 ```
 
 All of them before a commit lands.
@@ -343,8 +343,10 @@ asserts both that the banner appears and that an unknown argument is still
 refused.
 
 **The Go pin is stated in three files and enforced by none of them.**
-`mise.toml`'s `go`, `go.mod`'s own `go` directive and `Dockerfile.golang`'s
-`ARG GO_VERSION` all say 1.26.1, which is what `pantry` and `identity` say.
+`mise.toml`'s `go`, `go.mod`'s own `go` directive and `Dockerfile`'s
+`ARG GO_VERSION` all say 1.26 — the ARG names the image tag, so it carries the
+series and not the patch, which is what `pantry` does with its `RUST_VERSION` —
+and the pin itself, 1.26.1, is what `pantry` and `identity` say.
 `bin/prime-go` compares mise.toml against go.mod **before it runs anything**, and
 compares both against the running toolchain, because the cafaye-rb lesson is that
 a developer on a newer compiler silently produces a binary CI never built and
