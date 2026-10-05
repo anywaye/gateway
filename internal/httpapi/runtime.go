@@ -165,11 +165,33 @@ func RuntimeOptions(env Env) (Config, error) {
 		return Config{}, err
 	}
 
+	// THE PER-ROUTE TABLE, and this is the line that was missing.
+	//
+	// `Options.Policy` and `Options.Resolve` both existed and nothing set them, so
+	// the limiter fell back to `DefaultPolicy` for every path: `/auth/login` was
+	// served at 600/min rather than the 10/min it is supposed to be, and the audit
+	// found the gap silent. The seam is here; these two lines are what make the
+	// table reachable from the shipped binary.
+	//
+	// Validated at construction rather than per request, so a bad number is a
+	// refusal to boot and not a surprise on the first request of the week —
+	// `NewLimiter` refuses for the same reason.
+	table, err := ratelimit.ValidateLimitTable(ratelimit.DefaultLimitTable())
+	if err != nil {
+		return Config{}, err
+	}
+	policy, resolve, err := ratelimit.PolicyResolver(table)
+	if err != nil {
+		return Config{}, err
+	}
+
 	limiter, err := ratelimit.NewLimiter(ratelimit.Options{
 		Limit:          limit,
 		Window:         window,
 		Store:          store,
 		TrustedProxies: proxies,
+		Policy:         policy,
+		Resolve:        resolve,
 		Exempt:         isProbePath,
 	}, RateLimitRefuser)
 	if err != nil {

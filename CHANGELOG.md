@@ -10,6 +10,55 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **The per-route allowance table, in Go.**
+  `internal/ratelimit/limits.go` ports `src/middleware/limits.ts`: the six shipped
+  entries, the policy names, the longest-prefix-on-a-segment-boundary resolution and
+  the `limitTable()` validation. `internal/httpapi/runtime.go` now supplies the
+  resolver, so the table is reachable from the shipped binary.
+
+  `REPORT-gateway-go-port-audit-01` found this gap and found it **silent**:
+  `httpapi.Options.Policy` and `Options.Resolve` were already on the limiter and
+  nothing ever set them, so every request drew the `gateway-api` default. `/auth/login`
+  was answered at 600/min rather than the 10/min it is specified at, and a cutover
+  shipping that would have quietly widened the most attacked surface on the edge.
+
+  The policy names are part of the wire contract — they go into `RateLimit-Policy`
+  and are half the counter key — so they are asserted directly, not only through the
+  resolver. The allowances are asserted **by name** and by enforcement, not by
+  announcing them: `TestTheLoginAllowanceIsEnforcedAndNotJustAnnounced` admits ten
+  logins and refuses the eleventh, because a header assertion alone cannot tell a
+  table that is wired from a table that is merely present.
+
+  Two things are worth knowing about how it was ported:
+
+  - **`/auth/login/extra` DOES draw the `/auth/login` allowance.** The packet asked
+    for a test asserting the opposite. The reference's `claims` accepts
+    `path === prefix || startsWith(prefix + "/")` and its own suite asserts the same
+    shape, so inverting that here would have the Go gateway draw a different
+    allowance from the service it replaces, on the surface this port tightens.
+    `TestASubpathUnderAPrefixDrawsThatPrefix` pins the reference's behaviour and the
+    non-match case is asserted with `/auth/loginfoo`.
+  - **A policy name claimed by two entries with DIFFERENT numbers is refused at
+    construction.** The reference's `byPolicy` map resolves that case by insertion
+    order, which a Go map does not have — so which numbers a request drew would be
+    per-iteration. Two entries sharing a name while disagreeing about the numbers is a
+    table contradicting itself, and a startup failure is the only answer that does not
+    depend on iteration order. Identical numbers under one name are accepted; the
+    shipped `/v1/` row relies on that.
+
+  Every shipped window is 60s, which was checked per entry rather than assumed. The
+  window stays a per-ENTRY field regardless, because a table whose window lived
+  elsewhere could not express an entry with a different one.
+
+  Not changed: the default allowance, the default window, and the limiter's
+  fail-open behaviour. `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_MS` remain the
+  allowance for a policy the table does not name, and
+  `TestTheConstructorAllowanceDoesNotOverrideAnEntryTheTableNames` holds that setting
+  them does not widen a route the table names.
+
+  Still not configurable: the table is code and the prefixes are configuration, so
+  [a per-prefix allowance](README.md#not-built-yet) is still a later packet.
+
 - **The limiter's refusal and its store-down behaviour, compared: the two
   equivalence scenarios `worker/gateway-go-auth-01` declared and never built.**
   `ScenarioLimitsExhausted` and `ScenarioCounterStoreDown` were constants in
