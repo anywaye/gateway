@@ -108,16 +108,20 @@ consumes: []
 # >     than a comment — so the fact that TWO implementations of this manifest's
 # >     service are live right now is recorded here and nowhere else in the
 # >     manifest. `src/` is the TypeScript reference and still what serves
-# >     traffic; `cmd/gateway` and `internal/` are the Go rewrite and currently
-# >     serve two operations of seven, the two probes. Everything below about
-# >     dependencies, configuration and the contract describes the reference; the
-# >     Go service reads exactly one environment variable, `PORT`.
+# >     traffic; `cmd/gateway` and `internal/` are the Go rewrite and serve all
+# >     seven operations of the contract. Everything below about dependencies,
+# >     configuration and the contract describes the reference; the Go service
+# >     reads fifteen environment variables, listed exhaustively by
+# >     `TestTheRuntimeReaderReadsExactlyTheseVariables`.
 # >
 # >  8. Nothing in this manifest can be right for both implementations for long.
-# >     `DEPENDENCY` is the sharpest case: identity is `required: true`, and the Go
-# >     service cannot use it yet because the bearer-token verifier is Wave 3 — so
-# >     a Go gateway that cannot authenticate anybody is declared to require the
-# >     service that would let it. The alternative, a second manifest, is worse: two
+# >     `DEPENDENCY` was the sharpest case and no longer is: identity is
+# >     `required: true` and the Go service *can* use it now — `internal/auth`
+# >     verifies RS256 against a JWKS cache and `RuntimeOptions` builds it
+# >     unconditionally. What the Go service still cannot do is the part of the
+# >     manifest with no HTTP surface in either language (API-key management,
+# >     which `openapi/v1.yaml` does not declare), so the divergence has moved
+# >     rather than closed. The alternative, a second manifest, is worse: two
 # >     files describing one service is how they come to disagree. Requested: either
 # >     a field core's schema defines for "which implementation is being built", or
 # >     a ruling that the manifest describes the reference until `src/` is deleted.
