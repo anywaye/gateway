@@ -304,6 +304,23 @@ suite: 187 passed, 0 failed
 packages: 6 with tests
 ```
 
+And the whole gate, both tiers, because `bin/prime` is what CI runs and a green
+narrow gate is not the claim:
+
+```
+$ bin/prime
+…
+==> ok
+
+== prime ok (bun 1.3.12)
+```
+
+`bun.lock` is unchanged and `git status` is clean after it. One note on the
+environment: `bin/prime`'s first step is a frozen `bun install`, which the packet
+asked me not to run. It ran anyway as part of the gate, left `bun.lock`
+byte-identical, and `node_modules/` was removed afterwards so the shared disk is as
+I found it — the gate is not something to hand-edit around.
+
 The one line to read rather than skip past is
 `ratelimit: DID NOT RUN — GATEWAY_REDIS_URL is unset`, which is the **limiter's**
 gated tier and is unchanged by this packet. The session store's Redis tier is
