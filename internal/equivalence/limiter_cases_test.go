@@ -45,19 +45,20 @@ import (
 // would compare two `200`s — which is the fail-open decision being compared, but
 // through the wrong case, and a reader would have to work out which.
 //
-// # THE PATHS ARE NOT ROUTED, AND THAT IS A FINDING RATHER THAN A CHOICE
+// # ONE OF THESE PATHS IS CLAIMED BY THE ROUTE TABLE, AND THAT USED TO BE THE FINDING
 //
-// The refusal is compared on `/v1/unknown` and `POST /auth/login`, neither of
-// which any route table claims, because the Go gateway's limiter is a chi `Use`
-// middleware INSIDE the router while the pass-through wraps the router from
-// outside (`httpapi.New`: `credentialGate → pass-through → router`). Routed
-// traffic therefore never reaches the limiter on the Go side, where on the
-// reference `app.use("*", limiter)` is registered before `app.use("/v1/*", proxy)`
-// and counts it.
+// The refusal is compared on `/v1/unknown`, `POST /auth/login` and
+// `/v1/pantry/items`. The first two no route table claims; the third one is
+// forwarded to a service, and asking it here is what caught the defect this
+// packet closes: the Go gateway's limiter was a chi `Use` INSIDE the router
+// while the pass-through wrapped the router from outside, so a path the table
+// claims never reached it and was relayed uncounted. The reference registers
+// `app.use("*", limiter)` before `app.use("/v1/*", proxy)` and counts it.
 //
-// That divergence is not walked past: `TestTheGoSideDoesNotCountRoutedTraffic` asks
-// the routed burst directly and holds the difference in place, so the case can be
-// moved here when it is fixed rather than forgotten here.
+// It was held in place by `TestTheGoSideDoesNotCountRoutedTraffic` rather than
+// fixed, so this case could be added here instead of forgotten. A routed refusal
+// compared like every other case is where a fixed divergence belongs: a test
+// that keeps naming a closed bug outlives its reason.
 //
 // The burst is `limit + 1` and not `limit`, because the last request is the one
 // that crosses: with the clock frozen, requests 1..3 are served and the fourth is
@@ -77,66 +78,70 @@ func limiterCases() []caseSpec {
 		{name: "a burst against the auth prefix", method: http.MethodPost, path: "/auth/login",
 			headers: relayed, scenarios: []string{ScenarioLimitsExhausted}, burst: equivalenceLimit + 1},
 
+		// The routed one, and the case this file did not have. `/v1/pantry/items` is
+		// claimed by the table, so on the reference it is spent by the limiter and
+		// never reaches the upstream; on the Go side it used to be relayed with no
+		// rate-limit headers at all, which is a `200` where the reference refuses.
+		//
+		// Asked LAST on purpose, because the allowance is one bucket per identity
+		// rather than one per path: the first two cases have already spent it, so
+		// this case compares a `429` the routed path spent. A case that asked it
+		// first would spend the allowance ON the routed path and the two cases above
+		// would then compare a `429` on a path the limiter never saw — a green that
+		// reads as coverage of routed traffic while proving nothing about it.
+		{name: "a burst on a routed path", method: http.MethodGet, path: "/v1/pantry/items",
+			headers: relayed, scenarios: []string{ScenarioLimitsExhausted}, burst: equivalenceLimit + 1},
+
 		// And the fail-open case, which is the same shape of request under the store
 		// that cannot be reached. Compared under this scenario only, so "served" is
 		// an answer here rather than an absence of a comparison.
 		//
-		// This one IS routed, and it agrees on both sides precisely because neither
-		// side can count a request it cannot reach: the reference fails open and the
-		// Go gateway never gets as far as its limiter. Two implementations reaching
-		// the same answer by different routes is the shape a green comparison can
-		// hide, so it is said here rather than left to be discovered.
+		// It is on a routed path deliberately: a fail-open decision that is compared
+		// only on paths the router answers is a decision that would look identical if
+		// the limiter were never reached at all, which is what the routed refusal
+		// above now rules out.
 		{name: "a request the limiter could not count", method: http.MethodGet, path: "/v1/pantry/items",
 			headers: relayed, scenarios: []string{ScenarioCounterStoreDown}, burst: equivalenceLimit + 1},
 	}
 }
 
-// TestTheGoSideDoesNotCountRoutedTraffic is the finding, held in place.
+// TestTheGoSideCountsRoutedTraffic is the finding, INVERTED.
 //
-// Measured on this tree, with both sides frozen at 2026-01-01T00:00:00Z and an
+// This test used to be named `TestTheGoSideDoesNotCountRoutedTraffic` and asserted
+// the defect, because a divergence that is only described gets closed by the next
+// reader's assumption. It failed the moment the mount was fixed, which was the
+// signal to replace it rather than adjust it.
+//
+// What it measured then, with both sides frozen at 2026-01-01T00:00:00Z and an
 // allowance of three per minute:
 //
 //	GET /v1/pantry/items   typescript 429 + the rate-limit family
 //	                       go         200 + no rate-limit headers at all
 //
-// The reference counts routed traffic and the Go gateway does not, and the reason
-// is the mount order `httpapi.New` documents as deliberate: the limiter is a chi
-// `Use` middleware inside the router, and the pass-through wraps the router, so
-// traffic the table claims never reaches it. The reference registers
-// `app.use("*", limiter)` BEFORE `app.use("/v1/*", proxy)` and therefore counts
-// it — which is what `src/routes/table.ts`'s own comment claims gateway does
-// ("the limiter still counts the traffic") and what `src/index.ts`'s does ("an
-// anonymous request still spends the `gateway-api` bucket").
+// The cause was the mount order: the limiter was a chi `Use` INSIDE the router and
+// the pass-through wrapped the router, so traffic the table claims never reached
+// it. The reference registers `app.use("*", limiter)` BEFORE
+// `app.use("/v1/*", proxy)` and therefore counts it — which is what
+// `src/routes/table.ts`'s own comment claims gateway does ("the limiter still
+// counts the traffic") and what `src/index.ts`'s does ("an anonymous request still
+// spends the `gateway-api` bucket"). Two comments in the reference said so, and the
+// Go port contradicted both.
 //
-// This is a real gap and not a documentation disagreement: an edge whose limiter
-// does not run on forwarded traffic is not limiting the traffic that costs it
-// money. It is reported rather than fixed here, and the reason is in its own
-// section below.
+// # WHY IT IS STILL A TEST AND NOT JUST A CASE IN `limiterCases`
 //
-// # WHY IT IS A TEST AND NOT A NOTE
+// The routed burst is in `limiterCases` now, and this asks the same question for a
+// different reason: not "does the comparison agree" but "does the Go gateway COUNT
+// it", on a request whose bucket was spent on an unrouted path. That is the property
+// the whole comparison rests on and cannot see on its own — a Go side with no limiter
+// at all would also agree with the reference on a 200, and a Go side whose limiter
+// counted everything twice would agree on a status while spending twice the
+// allowance. Both of those were measured here while the mount was being fixed, and
+// this is the test that would catch them again.
 //
-// As a note, the next reader believes the comparison covers routed traffic and the
-// coverage list in `equivalence_test.go`'s own comment stays wrong. As a test it is
-// a difference that CANNOT be forgotten and cannot be silently closed: this fails
-// the moment the Go side starts counting, at which point the answer is no longer
-// a finding but a fix, and the routed burst moves into `limiterCases` to be
-// compared like every other case.
-//
-// # WHY IT IS NOT FIXED HERE
-//
-// The obvious fix — move the limiter out of the router and wrap the pass-through
-// with it — moves the position of the credential gate relative to the limiter. On
-// the reference the `/v1/*` verifier runs BEFORE the limiter; here it is a chi
-// middleware that would end up after it, so a request carrying a token that does
-// not verify would start being counted, which is the one thing `AGENTS.md` says
-// about the ordering: "a token that does not verify is answered 401 and counted
-// against nothing."
-//
-// So fixing this moves the gate too, and that is a change to the order of the
-// whole chain in `internal/httpapi` with its own suite to keep honest. It belongs
-// to the packet that owns that chain, not to one whose job was to make two
-// scenarios reachable.
-func TestTheGoSideDoesNotCountRoutedTraffic(t *testing.T) {
+// So it asserts the refusal AND the announced remaining, because those two are
+// different claims: a `429` says the limiter ran, and a remaining that tracks the
+// reference's says it ran once.
+func TestTheGoSideCountsRoutedTraffic(t *testing.T) {
 	bun, err := exec.LookPath("bun")
 	if err != nil {
 		skipOrFail(t, "bun is not on PATH, so the TypeScript reference cannot be stood up")
@@ -154,19 +159,37 @@ func TestTheGoSideDoesNotCountRoutedTraffic(t *testing.T) {
 	goServer := httptest.NewServer(mustHandler(t, options))
 	defer goServer.Close()
 
-	// The routed request is asked against an ALREADY-SPENT allowance: both sides
-	// are exhausted on a path neither route table claims first, which is what makes
-	// the answer the limiter's decision rather than the router's.
+	// The routed request is asked against an ALREADY-SPENT allowance, and the
+	// spending is compared request by request rather than counted. Both sides spend
+	// it on a path neither route table claims, which is what makes the routed answer
+	// below the limiter's decision rather than the router's.
+	//
+	// # THE SPENDING IS COMPARED, NOT JUST PERFORMED
+	//
+	// Each of these three requests is checked against the reference's own
+	// `RateLimit-Remaining`, which is what makes this catch a limiter mounted in
+	// BOTH places — on the router and around the pass-through. Such a limiter still
+	// refuses the routed request below, and still refuses it with `Remaining: 0`,
+	// so every assertion after this loop passes on a gateway that spends twice what
+	// it says it spends. Only the arithmetic on the way here shows it. That was
+	// measured: planting the double mount left this test green while the main
+	// comparison went to 4 differences, which is why the spending is compared here
+	// and not merely performed.
 	spend := caseSpec{name: "spending the allowance", method: http.MethodGet, path: "/v1/unknown",
 		headers: map[string]string{"Accept": "application/json"}}
 	for i := 0; i < equivalenceLimit; i++ {
-		ask(t, referenceURL, spend)
+		want := ask(t, referenceURL, spend)
+		service.take(t)
+		got := ask(t, goServer.URL, spend)
+		service.take(t)
+
+		if want.status != got.status {
+			t.Fatalf("spending the allowance, request %d: the reference answered %d and the Go gateway answered %d on the SAME unrouted path. The limiter is not counting one request once on this side.", i+1, want.status, got.status)
+		}
+		if want, got := want.headers.Get("RateLimit-Remaining"), got.headers.Get("RateLimit-Remaining"); want != got {
+			t.Fatalf("spending the allowance, request %d: the reference announced %q remaining and the Go gateway announced %q. Both sides serve this path from the same bucket at the same allowance, so they cannot differ unless a request is counted a different number of times — the signature of a limiter mounted in both places.", i+1, want, got)
+		}
 	}
-	service.take(t)
-	for i := 0; i < equivalenceLimit; i++ {
-		ask(t, goServer.URL, spend)
-	}
-	service.take(t)
 
 	routed := caseSpec{name: "a routed request", method: http.MethodGet, path: "/v1/pantry/items",
 		headers: map[string]string{"Accept": "application/json"}}
@@ -175,27 +198,52 @@ func TestTheGoSideDoesNotCountRoutedTraffic(t *testing.T) {
 	goAnswer := ask(t, goServer.URL, routed)
 	service.take(t)
 
+	// The reference refusing is the PREMISE, not the finding, and it is checked
+	// because a test that cannot see the behaviour it is testing passes for the
+	// wrong reason: if the reference served this request the fixture is wrong
+	// (a different bucket, a different allowance) and every assertion below would
+	// be vacuous.
 	if referenceAnswer.status != http.StatusTooManyRequests {
-		t.Fatalf("the reference answered %d on a routed request with an exhausted bucket, so it is not exhibiting the finding this test holds and the test cannot see it. Ask the reference standalone to find out why.", referenceAnswer.status)
-	}
-	if goAnswer.status != http.StatusOK {
-		t.Fatalf("the Go gateway answered %d on a ROUTED request with an exhausted bucket. It is counting routed traffic now, which RESOLVES the finding: move the routed burst in `limiterCases` so it is compared like every other case, and delete this test.", goAnswer.status)
+		t.Fatalf("the reference answered %d on a routed request with an exhausted bucket, so the premise this test rests on does not hold and nothing below can mean anything. Ask the reference standalone to find out why.", referenceAnswer.status)
 	}
 
-	// "No headers" alone could be a limiter that answered without announcing, and a
-	// 200 WITH headers would be a limiter working. Both halves of the shape, read
-	// off the same list the comparison above uses.
+	// The refusal, and not "no headers".
+	//
+	// The old version of this test asserted the ABSENCE of the rate-limit headers,
+	// because a `200` with none was the defect's shape. The fixed direction is the
+	// opposite assertion: a limiter that ran announces the bucket it spent. A `200`
+	// with headers on it is a limiter working and something else refusing, which is
+	// a different defect and would pass a bare status check.
+	if goAnswer.status != http.StatusTooManyRequests {
+		t.Fatalf("the Go gateway answered %d on a ROUTED request whose bucket was spent by the two sides above, so it is not counting routed traffic. The limiter is mounted around the pass-through (`httpapi.New`, `everyRequest`) and a path the route table claims is answered by that pass-through — read `everyRequest`'s comment before changing the mount.", goAnswer.status)
+	}
+
+	// And the announced remaining, which is the half a status cannot see. A Go side
+	// whose limiter counted this request TWICE would refuse here exactly as a
+	// correct one does, and would differ only in this number. That is not
+	// hypothetical: mounting the limiter in both places — on the router and around
+	// the pass-through — did precisely this during this packet's fix, and the
+	// comparison stayed green on status alone while the two sides' arithmetic
+	// parted company by one request per case.
 	for _, header := range headerValuesComparedByValue {
-		if value := goAnswer.headers.Get(header); value != "" {
-			t.Errorf("the Go gateway wrote %s: %q on a routed request, so it is announcing a bucket it is not counting. The finding's shape has changed and this test should say so rather than keep passing.", header, value)
+		if want, got := referenceAnswer.headers.Get(header), goAnswer.headers.Get(header); got != want {
+			t.Errorf("on a routed request the Go gateway wrote %s: %q and the reference wrote %q. The refusal agrees, so this is the limiter counting routed traffic a different number of times than the reference does — the signature of a limiter mounted in both places.", header, got, want)
 		}
 	}
 
-	// The evidence is printed, not just asserted, because a reader who arrives at this
-	// test to check whether the finding still holds should not have to add a print to
-	// find out — and a finding that is only visible in a `t.Logf` on a passing run is
-	// a finding that gets lost the first time someone filters test output.
-	t.Logf("FINDING HELD: the reference refuses routed traffic (%d, rate-limit headers written) and the Go gateway serves it (%d, none written). Reported, not fixed — see this test's comment.", referenceAnswer.status, goAnswer.status)
+	// And the upstream, which is the consequence rather than the arithmetic. The
+	// spending case above spent three on a path no table claims; a routed request
+	// that is refused must not reach the service, because a relayed 4th request is
+	// an upstream call this gateway just decided not to make.
+	if answer, reached := service.take(t); reached {
+		t.Errorf("the Go gateway reached the upstream with %s %s while refusing the same request on the reference. A refusal that still spends an upstream call is a limiter mounted after the pass-through rather than in front of it.", answer.Method, answer.Path)
+	}
+
+	// The evidence is printed, not just asserted, because a reader who arrives at
+	// this test to check that routed traffic is counted should not have to add a
+	// print to find out — and a property that is only visible in a `t.Logf` on a
+	// passing run is one that gets lost the first time someone filters test output.
+	t.Logf("ROUTED TRAFFIC IS COUNTED: a routed request against an allowance spent on an unrouted path is refused %d on both sides, with the same %d announced headers, and the upstream was not contacted.", goAnswer.status, len(headerValuesComparedByValue))
 }
 
 // TestTheReferenceAndTheGoSideReadTheSameFrozenClock holds the fixture the whole

@@ -1011,28 +1011,37 @@ service. A `501` would have been more truthful about the code and less true abou
 the contract, and where the two disagree the TypeScript answer is the correct one.
 
 
-The limiter is ported and its refusal is compared against the reference, and the
-comparison found this. With the allowance exhausted, on a path a route table
-claims:
+The limiter is ported, and its refusal is compared against the reference on a path
+the route table claims as well as on two it does not. With the allowance exhausted,
+`GET /v1/pantry/items` is a `429` with the whole `RateLimit-*` family on **both**
+sides. That was not true, and the reason is worth stating because chi's middleware
+model invites it: **`Mux.Use` wraps the routes registered on the router it is called
+on.** The pass-through is mounted *on top of* that router and, for a path a table
+claims, never calls it — so a limiter mounted with `Use` counted gateway's own
+routes and forwarded nothing at all. An edge whose limiter does not run on forwarded
+traffic is not limiting the traffic that costs it money, because that traffic is the
+kind that reaches an upstream and does work.
 
-| | reference | Go |
-| --- | --- | --- |
-| `GET /v1/pantry/items` | `429` with the whole `RateLimit-*` family | `200`, **no** rate-limit headers |
+`httpapi.New` therefore builds the chain once, in `everyRequest`: the repeated-header
+reduction, then the credential gate, then the limiter. It is registered with `Use`
+when there is no pass-through and wrapped around the pass-through when there is.
 
-The cause is the mount order. `httpapi.New` registers the limiter as a chi `Use`
-middleware **inside** the router and wraps the pass-through around it, so traffic
-the table claims never reaches the limiter; the reference registers
-`app.use("*", limiter)` **before** `app.use("/v1/*", proxy)` and counts it. An edge
-whose limiter does not run on forwarded traffic is not limiting the traffic that
-costs it money.
+Two things about that are load-bearing rather than incidental:
 
-`TestTheGoSideDoesNotCountRoutedTraffic` in `internal/equivalence` holds the
-difference in place rather than as a note: it fails the moment the Go side starts
-counting, at which point the answer is a fix rather than a finding and the routed
-burst moves into the comparison. It is **not fixed here** because the obvious fix
-moves the credential gate relative to the limiter — the `/v1/*` verifier must run
-before it, so an unverifiable token must not be counted — and that is a change to
-the order of the whole chain in `internal/httpapi`.
+- **The limiter is in one of the two placements, never both.** The pass-through calls
+  the router for a path no table claims, so a limiter in each place counts those
+  requests twice. That was measured while fixing this: the Go side reported
+  `RateLimit-Remaining: 1` where the reference reported `2` on the first request of
+  a run. A bucket spent twice per request is a limiter with half the allowance it
+  announces — and a comparison that reads statuses only calls that agreement.
+- **Authentication still resolves before the limiter**, because the gate is above it
+  in the same list. A request refused by the gate is still refused *and* counted
+  against nothing, which is the amplifier `AGENTS.md` is about: a flood of forged
+  tokens must not exhaust the shared anonymous bucket.
+
+`TestTheGoSideCountsRoutedTraffic` asserts the property the comparison cannot see on
+its own — that the Go gateway *counts* a routed request, once, rather than merely
+answering the same status — and the routed burst is one of `limiterCases` besides.
 
 ### The browser surface is ported, and the session store is not
 ### The browser surface is served, and the session store is Redis
@@ -1188,6 +1197,14 @@ show only in the `RateLimit-Remaining` on the way there. Those headers are compa
 **by value** rather than by presence, which is the one place this check goes beyond
 the header names, and a 429 that omits `Retry-After` or carries a stale
 `RateLimit-Reset` tells a client something different from one that does not.
+
+One of the bursts is on a path the **route table claims**, and it is asked last
+on purpose. The allowance is one bucket per identity rather than one per path, so
+the two unrouted bursts spend it first and the routed one compares a 429 that the
+routed path spent. Asked first it would spend the allowance *on the routed path*,
+and the two above would then be comparing a 429 against a path the limiter never
+saw — a green that reads as coverage of forwarded traffic while proving nothing
+about it.
 
 The two limiter scenarios assert their decisions in **opposite** directions:
 `limitsExhausted` must have refused something, and `counterStoreDown` — the same
