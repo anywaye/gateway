@@ -111,10 +111,12 @@ jobs:
             || { echo "bin/prime moved go.mod or go.sum — the build is no longer against the committed tree"; exit 1; }
       - name: the equivalence tier compared something, and said how much
         # The env var above turns "bun is not on PATH" into a failure, so a green
-        # run of `bin/prime` in this job means the reference was stood up and 72
-        # request/scenario pairs were compared. This step makes the CLAIM
-        # legible: it reads the count out of the run's own output and fails if it
-        # is not there.
+        # run of `bin/prime` in this job means the reference was stood up and the
+        # comparison count on the last line below is a number of real answers.
+        # This step is the CLAIM made legible: it reads that count out of the run's
+        # own output and holds it to four things — that the line is there, that the
+        # per-scenario rows agree with it, that the rows' own arithmetic produces it,
+        # and that it has not shrunk.
         #
         # It is a second assertion on the same evidence rather than a third
         # mechanism, and the redundancy is the point — `gate.yml` deliberately
@@ -122,25 +124,194 @@ jobs:
         # bun never prints the line), so the only place the count is held to a
         # number is here, where `GATEWAY_EQUIVALENCE_REQUIRED=1` guarantees it is
         # printed at all.
+        #
+        # WHAT CHANGED, AND WHY THE OLD VERSION WAS DEAD IN BOTH DIRECTIONS
+        #
+        # It compared against a literal 72, which was correct when the tier compared
+        # 6 cases. The tier now compares 51 cases across 13 scenarios = 912
+        # comparisons, so a floor of 72 passed for every outcome the tier has ever
+        # produced and for every regression between 72 and 911. A check that cannot
+        # fail is not a check.
+        #
+        # It was WORSE than that, and this was measured before it was changed: the
+        # `sed` matched `cases x \([0-9]+\) scenarios`, and the tier has printed
+        # `cases ACROSS` since 5947d8f — the commit that made the browser half a
+        # function of the scenario, which turned the count from a product into a
+        # sum. The pattern matched nothing, so `comparisons` was empty and the step
+        # exited on its "printed no comparison count" branch before reaching the
+        # floor. The guard was red on every green run and had been for a while, and
+        # the red was being read as the known-red kit job rather than as this one.
+        # So the parser is now checked against the string the runner actually
+        # prints, and — see below — the count is checked against a SECOND tally of
+        # the same run rather than against one number that a reworded `t.Logf`
+        # can take away entirely.
         run: |
-          summary="$(bin/prime-go 2>&1)"
+          set -o pipefail
+
+          # The gate's exit status is captured HERE, before any of its numbers are
+          # read, and the numbers are discarded if it failed. A partial run still
+          # prints a summary line, so a count from a red `bin/prime-go` would be a
+          # count of half a comparison.
+          #
+          # IN AN `if`, and that is not a style preference. Actions runs a `run:`
+          # block as `bash --noprofile --norc -eo pipefail {0}`, and under `-e` a
+          # bare `summary="$(bin/prime-go 2>&1)"` ABORTS the step the moment the
+          # gate fails: the step would die on that line with the gate's own status
+          # and print nothing at all. The previous version of this step had exactly
+          # that shape, so a failing gate was a red with no sentence attached. Found
+          # by running this block against a stub that fails, under the same shell
+          # Actions uses — reading the code would not have shown it.
+          if summary="$(bin/prime-go 2>&1)"; then
+            gate_exit=0
+          else
+            gate_exit=$?
+          fi
           echo "$summary"
-          comparisons="$(printf '%s\n' "$summary" |
-            sed -n 's/.*equivalence: \([0-9][0-9]*\) cases x \([0-9][0-9]*\) scenarios = \([0-9][0-9]*\) comparisons.*/\3/p' |
+
+          # `gate_exit` AND NOT `gate-exit`: bash does not accept a hyphen in a
+          # variable name, so `gate-exit=$?` is a command lookup that fails with
+          # 127 — under `-e` the step dies on that line before it has checked
+          # anything, and without `-e` it dies on the next one instead, because
+          # `$gate-exit` expands to the empty `$gate` followed by the literal
+          # `-exit`. Found by the same harness: a name that cannot be assigned
+          # looks exactly like a name that holds zero.
+          if [ "$gate_exit" -ne 0 ]; then
+            echo "bin/prime-go exited $gate_exit, so the counts below would describe a run that failed."
+            echo "  They are not evidence that anything was compared."
+            exit "$gate_exit"
+          fi
+
+          # `across`, and not `x`: that is the previous version's failure, and the
+          # runner stopped saying `x` when the browser half became a function of
+          # the scenario and the count stopped being a product. The `.*` before
+          # `equivalence:` is carried forward rather than reinvented — `go test -v`
+          # prefixes a log line with `    file.go:403: `, so an anchored pattern
+          # matches nothing, which is what the first draft of this step did.
+          summary_line="$(printf '%s\n' "$summary" |
+            sed -n 's/.*equivalence: \([0-9][0-9]*\) cases across \([0-9][0-9]*\) scenarios = \([0-9][0-9]*\) comparisons.*/\1 \2 \3/p' |
             tail -n 1)"
-          # `.*` before `equivalence:` and not `^`: `go test -v` prefixes a log
-          # line with `    file.go:403: `, so an anchored pattern matches nothing
-          # and this step would fail on every green run. Measured — the anchored
-          # version is what shipped in the first draft of this step.
-          if [ -z "$comparisons" ]; then
+          if [ -z "$summary_line" ]; then
             echo "the equivalence tier printed no comparison count; a check that cannot say what it compared is a check that cannot be read"
             exit 1
           fi
-          if [ "$comparisons" -lt 72 ]; then
-            echo "the equivalence tier compared $comparisons pairs, expected 72 — fewer means the derived case list shrank"
+          cases="$(printf '%s' "$summary_line" | cut -d' ' -f1)"
+          scenarios="$(printf '%s' "$summary_line" | cut -d' ' -f2)"
+          comparisons="$(printf '%s' "$summary_line" | cut -d' ' -f3)"
+
+          # THE PER-SCENARIO ROWS: the same run, counted a second way.
+          #
+          # `comparisons` is incremented once per comparison inside the loop;
+          # `asked` is incremented once per case in the same loop, and printed as
+          # one row per scenario. Two tallies of one run that cannot both be right
+          # unless the runner compared what it says it compared — which is the
+          # property the floor below cannot have on its own, because the floor is a
+          # number and this is arithmetic that moves with the cases.
+          rows="$(printf '%s\n' "$summary" |
+            sed -n 's/.*equivalence: scenario \([A-Za-z0-9]*\) *\([0-9][0-9]*\) case(s) asked.*/\1 \2/p')"
+          row_count="$(printf '%s\n' "$rows" | grep -c '[^[:space:]]' || true)"
+          if [ "$row_count" -ne "$scenarios" ]; then
+            echo "the summary claims $scenarios scenarios and the run printed $row_count per-scenario rows."
+            echo "  One of the two is a number this step read rather than counted, so the floor"
+            echo "  below would be held against a count nothing else in the run corroborates."
             exit 1
           fi
-          echo "equivalence: $comparisons comparisons, every one of them answered identically by both sides"
+
+          asked_total=0
+          asked_nothing=""
+          while read -r name asked; do
+            [ -n "$name" ] || continue
+            asked_total=$((asked_total + asked))
+            if [ "$asked" -eq 0 ]; then
+              asked_nothing="$asked_nothing $name"
+            fi
+          done <<<"$rows"
+          if [ -n "$asked_nothing" ]; then
+            echo "scenario(s)$asked_nothing asked no case at all, so every comparison under them"
+            echo "  passed vacuously. The runner asserts this too; this step reads the rows it"
+            echo "  now depends on, so it cannot depend on a row set that is allowed to be empty."
+            exit 1
+          fi
+
+          # TWO COMPARISONS PER ASKED CASE, and this is the whole derivation: the
+          # loop compares the FIRST request of a burst and the LAST one, and counts
+          # each (`comparisons++` appears twice in `equivalence_test.go`, `asked++`
+          # once). It is a number about the tier's SHAPE rather than about its case
+          # list, so it does not need raising when a case is added — and a change
+          # to the burst comparison is a change to this, which the failure below
+          # says out loud.
+          comparisons_per_case=2
+          expected=$((asked_total * comparisons_per_case))
+          if [ "$comparisons" -ne "$expected" ]; then
+            echo "the tier reported $comparisons comparisons; its own per-scenario rows add up to"
+            echo "  $expected ($asked_total cases asked x $comparisons_per_case comparisons each)."
+            echo "  Those are two counts of the same loop, so one of them is wrong. If the runner"
+            echo "  compares more or fewer than the first and last request of a burst, fix"
+            echo "  comparisons_per_case above in this commit rather than loosening the equality."
+            exit 1
+          fi
+
+          # THE FLOOR, AND WHY IT IS A NUMBER RATHER THAN A DERIVATION
+          #
+          # Every quantity above is produced by the run whose case list shrank: the
+          # summary's cases, its scenarios, its comparisons and its per-scenario
+          # rows all come from the same execution, so they shrink together and
+          # agree with each other. NO WITHIN-RUN QUANTITY CAN SEE SHRINKAGE, and
+          # the scenario inventory cannot substitute for one — the two arms are
+          # held equal by `TestTheInventoryIsEveryScenarioBothSidesDeclareAndNothing
+          # Twice`, so a run that drove fewer scenarios than the last one is caught
+          # there, but a run that drove all thirteen over a case list with three
+          # fewer cases in it is not, and that is the regression this floor is for.
+          #
+          # So the cross-run half needs a recorded number, and this file is where it
+          # is recorded. What makes that survivable — and what the old literal was
+          # not — is that it is a FLOOR and nothing else. The 72 was not a floor
+          # that had stopped being true; it was a number that had to be RAISED every
+          # time a case was added, and `b7dff5b` alone took the tier from 405 to
+          # 912, so it rotted by never being raised. A floor is never wrong by
+          # being too low as long as it fires — it is only ever too high, and being
+          # too high is a loud red the author can see. Additions pass it without
+          # touching this file; only a removal can fail it.
+          #
+          # SHRINKAGE, NOT ANY CHANGE — deliberately. `b7dff5b` added two scenarios
+          # and the limiter work adds cases inside an existing one, so a guard that
+          # fired on every change would fire on every legitimate packet and get
+          # deleted rather than fixed. The property worth holding is the count going
+          # DOWN. When it goes down legitimately, the author lowers this number in
+          # the same commit that removed the case, which puts the removal on the
+          # record in the diff rather than in a comment nobody reads.
+          #
+          # IT HAS BEEN SHOWN TO FAIL, ON THIS TREE AND NOT ONLY ON FIXTURES
+          #
+          # Two mutations were planted and reverted, both with `bin/prime-go` GREEN
+          # underneath, which is the condition that matters: a tier that fails on its
+          # own has already been reported on by the step above.
+          #
+          # Six cases deleted from `edgeCases`. The tier reported 756 comparisons and
+          # this step failed on the floor. A floor of 72 passed it four times over.
+          #
+          # `comparisons++` changed to `comparisons += 2`, so the summary claimed
+          # 1368 against 912 real comparisons — fifty percent INFLATED, which is
+          # ABOVE the floor, so the floor passed it silently and the arithmetic above
+          # is the only thing that caught it. That is the argument for deriving the
+          # count rather than trusting it: a number a human typed cannot tell an
+          # honest 1368 from a dishonest one, and a row-by-row tally can.
+          floor=912
+          if [ "$comparisons" -lt "$floor" ]; then
+            echo "the equivalence tier compared $comparisons request/case pairs and this floor says $floor."
+            echo "  Its own rows agree: $asked_total cases asked across $scenarios scenarios."
+            echo
+            echo "  If a commit in this range REMOVED a case or a scenario, lower the floor in"
+            echo "  that same commit so the removal is in the diff. If nothing was removed, this"
+            echo "  is unexplained shrinkage and the guard is the only thing that saw it."
+            exit 1
+          fi
+
+          # `cases` AND `asked_total` both, because the two differing IS the shape of
+          # the tier and a reader who sees one number will guess wrong about the
+          # other: `cases` is the base list every scenario starts from, and the
+          # browser and limiter halves are added PER SCENARIO, so a case asked under
+          # six scenarios is counted once in the list and six times in the sum.
+          echo "equivalence: $comparisons comparisons over $asked_total cases asked across $scenarios scenarios, from a base case list of $cases (floor $floor), every one of them answered identically by both sides"
       - name: bun.lock is untouched
         # `bin/prime` runs `bun install --frozen-lockfile`, which fails rather
         # than rewriting the lock — so this is expected to be a no-op, and that is
