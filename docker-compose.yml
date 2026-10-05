@@ -105,16 +105,29 @@
 #   kit's `tests/fleet_check.py` fails this repository over any of the three, and
 #   the moment `kit.ref` exists, that failure has no discretion left in it.
 #
-# WHY THERE IS NO `GATEWAY_OTEL_ENDPOINT` EITHER, and that is a real absence rather
-# than an oversight. Nothing in this repository opens an OTLP exporter — not the Go
-# service, and not the TypeScript one that preceded it — so the one variable that is
-# the contract — point gateway's telemetry at any endpoint and the shipped
-# collector goes quiet — has nothing at this end of it. Declaring the variable
-# would be a claim about instrumentation this repository does not have. It is not
-# the same absence twice: the Go rewrite carried no exporter with it either, which
-# is why the sentence above names one implementation and not two.
-# The crash layer below is not that claim: it is Docker's log driver rather than
-# an SDK, and it works whether or not gateway ever exports a span.
+# WHY `GATEWAY_OTEL_ENDPOINT` IS SET EXPLICITLY BELOW, and what it changed
+#
+#   This paragraph used to say there was no such variable, and name the reason: no
+#   exporter existed at this end of it. That is no longer true —
+#   `internal/telemetry` is `caf gen telemetry` output plus an OTLP/gRPC exporter,
+#   and the serving path opens one server span per request — so the absence became
+#   a claim the file contradicted three hundred lines later. The variable is the
+#   endpoint contract core's schemas define: `<SERVICE>_OTEL_ENDPOINT`, with
+#   `OTEL_EXPORTER_OTLP_ENDPOINT` honoured as a fallback.
+#
+#   It is a LITERAL and not a `${GATEWAY_OTEL_ENDPOINT:-...}`, and the reason is the
+#   same one `PORT` below is a literal: this is gateway's own address inside the
+#   compose network, not a kit-shipped one, and the value is the collector that is
+#   already on the `platform` network. Unsetting it does NOT turn telemetry off —
+#   it falls back to the same address, because core's contract makes the shipped
+#   collector the DEFAULT so a developer with nothing configured still gets traces.
+#   The switches that do turn it off are `OTEL_SDK_DISABLED=true` and
+#   `OTEL_TRACES_EXPORTER=none`, and they are deliberately not set here.
+#
+#   4317 is the collector's gRPC receiver and it is the value
+#   `telemetry/otel-endpoint.json` declares, which is a generated file this
+#   repository may not hand-edit. It is not `depends_on`: see the paragraph below
+#   for why a service must not wait for the collector to serve traffic.
 #
 # WHY THERE IS NO `depends_on` AT ALL — neither the collector, nor the services
 # gateway actually calls
@@ -207,6 +220,15 @@ services:
 
     environment:
       PORT: "8080"
+      # Where gateway's spans go: the collector's gRPC receiver on the `platform`
+      # network above. See the paragraph at the top of this file for why it is a
+      # literal, why unsetting it does not turn telemetry off, and which variables
+      # do.
+      GATEWAY_OTEL_ENDPOINT: "http://otel-collector:4317"
+      # The tenant this process serves, on the RESOURCE and never on a span.
+      # Unset means a single-tenant deployment, and it is the honest default: a
+      # value nobody configured is not a value to invent.
+      # GATEWAY_TENANT_ID: "acme"
       # Issuer-only base URL — gateway appends /.well-known/jwks.json itself. The
       # default is the compose stack's identity, which is not in this file, so
       # /v1/* answers 503 until it is; /healthz and /readyz do not care.
