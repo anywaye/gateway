@@ -416,11 +416,13 @@ jobs:
         run: docker build --target test --tag cafaye-gateway:test .
       - name: the image ran the repository's tests, not a subset of them
         # The step above is a green build, and a green build is a claim about a
-        # file set nobody in this job has read. `docker build --target test`
-        # reported 392 tests across 15 files while the host ran 399 across 16:
-        # `pins.test.ts` sits at the repository root and the test stage's COPY
-        # list never named it, so the one test that checks the image and the
-        # repository agree on the toolchain pin was not in the image that ran.
+        # file set nobody in this job has read. It used to name its own evidence:
+        # `docker build --target test` reported 392 tests across 15 files while the
+        # host ran 399 across 16, because `pins.test.ts` sits at the repository
+        # root and the test stage's COPY list never named it -- so the one test
+        # checking that image and repository agreed on the toolchain pin was not
+        # in the image that ran. Both numbers are TypeScript-tree numbers and the
+        # file is gone; see the note below for what replaced that sentence.
         #
         # This step is the half that cannot be argued with: the image is asked what
         # test files it actually holds, and that set is compared against what
@@ -438,10 +440,40 @@ jobs:
         # and so this diff is what stands between a green build and a green build
         # that never ran a test file the repository has.
         #
+        # THE STEP ITSELF IS STILL RIGHT, and it was read rather than assumed. It
+        # counts `*_test.go` on both sides, asks the built image what it holds
+        # rather than reading the Dockerfile's COPY list, and diffs the two sets.
+        # All three properties hold for the Go tree, and the third is the one that
+        # matters: `COPY . .` is not a tautology when the check reads the IMAGE,
+        # because a `.dockerignore` rule that drops a directory leaves buildkit
+        # copying the rest and staying green. Reading the Dockerfile could not see
+        # that; `docker run ... find` can.
+        #
+        # WHAT WAS HERE, and it described a file that no longer exists: this
+        # comment block explained that `pins.test.ts` sits at the repository root
+        # and the test stage's COPY list never named it, so the image ran 392
+        # tests across 15 files where the host ran 399 across 16. That was a real
+        # finding about the TypeScript tree. `pins.test.ts` was deleted at
+        # f87c891 along with `test/`, and with it the only test file that lived
+        # outside a test directory -- so the specific gap this step was written to
+        # catch no longer exists.
+        #
+        # The check is kept anyway, and the reason is worth stating because it is
+        # the difference between a check and a relic. The property is not "the
+        # image holds pins.test.ts"; it is "the image holds every test file the
+        # repository has". The first instance of that property was about one
+        # file, and this is about all of them. A check that has lost its original
+        # subject is still measuring the thing it was written to measure.
+        #
         # Counting files and not tests, deliberately. The live Redis tier skips in
         # here by design, so the pass count legitimately differs from a host run
         # that has Redis; the file count cannot. `*_test.go` and not `*.test.ts`:
         # the two are disjoint sets, and the TypeScript suite is not in this image.
+        # The `-not -path './node_modules/*'` exclusion is likewise now historical
+        # -- there is no node_modules in this image -- and is kept because it is
+        # correct for the case where one is present, which is the only case it
+        # costs anything in.
+
         run: |
           set -o pipefail
           in_image="$(docker run --rm --entrypoint /bin/sh cafaye-gateway:test -c \
@@ -458,6 +490,25 @@ jobs:
             exit 1
           fi
           echo "image and repository agree on $(printf '%s\n' "$in_image" | wc -l | tr -d ' ') test files"
+      - name: the runtime image builds
+        # MOVED UP, and this was a real ordering bug rather than tidiness.
+        # `docker compose build` is what puts the tag `cafaye/gateway:dev` in the
+        # local image store -- compose reads `image:` off the `gateway` service,
+        # and that line in docker-compose.yml says `cafaye/gateway:dev`. This step
+        # used to be LAST, after the step that creates a container from that very
+        # tag. `docker create` does not pull and does not build: on a runner where
+        # nothing has produced the tag, it fails with "Unable to find image ...
+        # locally", so the job was red and the failure named a missing image
+        # rather than the missing build.
+        #
+        # It has to stay ahead of the test-stage steps too? No -- and that is worth
+        # being precise about, because the two look related. `docker build
+        # --target test --tag cafaye-gateway:test .` and `docker compose build`
+        # are separate builds with separate tags. The test steps read
+        # `cafaye-gateway:test`; only the contents check below reads
+        # `cafaye/gateway:dev`. So the only ordering constraint is that this
+        # precedes the contents check, and it is placed immediately before it.
+        run: docker compose build
       - name: the shipped image carries the binary and nothing else of ours
         # `test/dockerStage.test.ts` asserted that the runtime stage copies no test
         # tree. That assertion retired with the rest of that file — there is no COPY
@@ -493,5 +544,3 @@ jobs:
             exit 1
           }
           echo "the image carries app/service and $(wc -l < /tmp/image-paths.txt | tr -d ' ') base files, and none of ours"
-      - name: the runtime image builds
-        run: docker compose build
