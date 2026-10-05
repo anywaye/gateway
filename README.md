@@ -775,14 +775,18 @@ listed in [Routing](#routing), which is the same rule for the same reason —
 `ROUTE_TABLE={"/v1/p*":"http://pantry"}` is a routing decision that would never
 fire, and a gateway that started anyway would answer 404 for it forever.
 
-**Which of these the Go service reads.** Five: `PORT`, `ROUTE_TABLE` and the three
-`ASSERTION_*` that configure the pass-through. The other six belong to subsystems
-that are not ported yet, and a variable an operator sets that changes nothing is
-worse than one they cannot set — `IDENTITY_ISSUER` in a compose file looks
-configured and configures a `404`.
-`TestTheRuntimeReaderReadsNoOtherVariable` reads `runtime.go`'s own source and holds
-that as an **exhaustive set**, so an unexpected variable and a variable that stopped
-being read are both failures.
+**Which of these the Go service reads.** All of them but one. `RuntimeOptions`
+reads fifteen variables; the reference's `runtimeOptions` reads sixteen, and the one
+it does not read is `REDIS_PREFIX` — a key prefix the reference takes from the
+environment and Go hard-codes empty, because the reference's own value is a
+compile-time constant that `runtimeOptions` merely forwards (`runtime.go:480-482`
+says so, and says why an empty prefix is the deliberate choice rather than a
+missing one). The Go service therefore *does* read `IDENTITY_ISSUER`, and setting
+it in a compose file now configures a verifier rather than a `404`.
+`TestTheRuntimeReaderReadsExactlyTheseVariables` reads `runtime.go`'s own source and
+holds the list as an **exhaustive set**, so an unexpected variable and a variable
+that stopped being read are both failures. (It was `…ReadsNoOtherVariable`, which
+asserted the opposite for the first two packets that grew the reader.)
 
 ## Why Hono and Bun
 
@@ -813,10 +817,12 @@ bin/prime                        # the gate: frozen install, typecheck, bun test
 bin/prime-go                     # the Go tier alone
 bin/prime --no-go                # everything but the Go tier, and it says so
 bun run src/index.ts             # http://localhost:8080 — the TypeScript reference
-go run ./cmd/gateway             # http://localhost:8080 — the Go rewrite, PORT only
+go run ./cmd/gateway             # http://localhost:8080 — the Go rewrite, 15 variables
 curl localhost:8080/healthz
-curl localhost:8080/v1/me        # 401 from the reference: no bearer token. 404 from Go: not ported.
-curl localhost:8080/readyz       # {"deps":{"identity":"unavailable"}} from the reference; {"deps":{}} from Go
+curl localhost:8080/v1/me        # 401 on both: no bearer token. The Go gate is ported,
+                                 # so this is a refusal and not a missing route.
+curl localhost:8080/readyz       # {"deps":{"identity":"unavailable"}} from both; plus
+                                 # "redis" from Go when REDIS_URL is set
 ```
 
 Point it at a real identity to get past either refusal:
@@ -946,6 +952,16 @@ printed on a run that found `bun`, so a `minimum` on it would turn every
 developer's machine without bun into a red gate. A floor on something a legitimate
 environment cannot print is not a floor.
 
+**That floor is also very low, and the workflow is not mine to edit.** A run on
+this tree prints `51 cases across 13 scenarios = 912 comparisons`, so 72 is under
+8% of the work it is a floor on: a hand-written case list that lost nine tenths of
+itself would pass it. It was correct when the tier ran three scenarios and was
+raised as packets landed, and it stopped being raised. The derived half of the
+list is protected independently — the cases are read out of the generated
+registrations — so the exposure is the hand-written remainder. Recorded as a
+finding in `HANDOFF-docs-corrections-01.md` §1.3; it is a one-line change in
+`.github/workflows/ci.yml`, which a live worker owns.
+
 **There is no `prime-go` CI job, and that is deliberate.** Two jobs running two
 tiers would be the gate existing twice, and the two could disagree about what
 "the Go tier is green" means. `setup-go` uses `go-version-file: go.mod` rather
@@ -972,7 +988,7 @@ read either.
 ### Why side by side, and for how long
 
 The TypeScript implementation is the **reference**, not the thing being
-discarded: it has the documented HTTP contract, a 578-test suite, and a security
+discarded: it has the documented HTTP contract, a 580-test suite, and a security
 core whose behaviour is reasoned about line by line in its own comments. So the
 Go service lands **next to** `src/`, and `src/` is deleted in a later packet —
 once equivalence has been proven rather than asserted.
@@ -984,32 +1000,92 @@ equivalence check stands them up side by side on every run.
 
 ### What is Go today
 
+**A Go gateway started by `cmd/gateway` is not a partial gateway**, and the table
+below used to say it was. `RuntimeOptions` builds a verifier, a counter store, a
+limiter with the per-route table and an `identity` readiness probe *unconditionally*,
+exactly as `runtimeOptions` in `src/index.ts` passes `jwt:` with no "unset issuer"
+state (`internal/httpapi/runtime.go:97-104`). The shape with none of that is
+`New(Options{})`, which is a library constructor — the one `internal/equivalence`'s
+`bare` scenario builds — and not what ships. Three of the rows below therefore
+understated the Go side, and one of them was the reason a cutover plan read off
+this table would mis-size the work.
+
 | | TypeScript (`src/`) | Go (`cmd/`, `internal/`) |
 | --- | --- | --- |
 | `GET /healthz` | ✅ | ✅ |
-| `GET /readyz` | ✅, with `identity` and `redis` probes | ✅, with **no** probes registered |
+| `GET /readyz` | ✅, with `identity` and `redis` probes | ✅, with an `identity` probe always and a `redis` probe when `REDIS_URL` is set (`runtime.go:441-447`) |
 | `HEAD` on the two probes | ✅ (Hono routes it to the `GET` handler) | ✅ (registered explicitly — chi does not) |
 | the v0 `404` / `500` envelope | ✅ | ✅ |
 | core's `problem+json` envelope | ✅ | ✅ reachable: the pass-through's 401, two 503s, and the limiter's 429 |
-| an anonymous caller refused on a private route (`401`) | ✅ | ✅ — the gate is a seam; verification is not ported |
-| `GET /v1/me` | ✅ | declines with the reference's `404` |
-| the four `/auth` routes | ✅ | ✅ **ported** — behind `Options.BFF`, which is nil by default |
-| bearer-token verification, JWKS cache, scopes | ✅ | **not ported** — Wave 3 |
-| API keys | ✅ | **not ported** — Wave 3 |
+| an anonymous caller refused on a private route (`401`) | ✅ | ✅ **ported** — RS256 verification, the JWKS cache and the gate are all real (`internal/auth`, mounted at `httpapi.go:263-265`) |
+| `GET /v1/me` | ✅ | ✅ **ported and served** — with a verifier it renders the principal in the reference's key order (`principal.go:60-81`); only `New(Options{})`, which has no verifier, declines with the reference's `404` |
+| the four `/auth` routes | ✅ | ✅ **ported** — behind `Options.BFF`, which is nil by default, and built from the environment when `IDENTITY_URL` **and** `REDIS_URL` are both set |
+| bearer-token verification, JWKS cache | ✅ | ✅ **ported** — `internal/auth` (`verifier.go`, `jwks.go`, `claims.go`, `middleware.go`); the algorithm is pinned before any key fetch, the cache is bounded by its TTL and by one forced refresh per window, and a key set that cannot be fetched is a `503` |
+| scopes (`requireScope` / `RequireScope`) | ✅ | 🟡 **implemented, not mounted** — `auth.RequireScope` exists and is tested, and `httpapi.go:139-142` says a later packet mounts it. No Go route carries a scope check today |
+| API keys | ✅ | ❌ **not ported, and not yet portable** — see below |
 | rate limiting, `RateLimit-*` headers, the `429` | ✅ | ✅ **ported** — GCRA, `internal/ratelimit`; the refusal and the fail-open path are compared against the reference |
+| the per-route allowance table | ✅ | ✅ **ported and live in the shipped binary** — `internal/ratelimit/limits.go`, wired at `runtime.go:196-213`. `/auth/login` draws 10/min under policy `gateway-auth-login`, not the 600/min default |
 | the BFF's session store | ✅ | **ported, and in Redis** — see below |
 
-(The pass-through, the route table and the principal assertion are ported — see
-the row above. An earlier revision of this table carried a second, contradictory
-row saying "not ported", which had been true before the proxy packet and stopped
-being true without the row being removed.)
+(The pass-through, the route table and the principal assertion are ported, and so
+are the probes, the problem envelope and `GET /v1/me`. An earlier revision of this
+table carried a second, contradictory row saying "not ported" for the first three,
+which had been true before the proxy packet and stopped being true without the row
+being removed.)
 
-"Declines with the reference's `404`" is a decision and not a gap that was left
-open by accident. `createApp({})` does not register `/v1/me` without a verifier,
-so the reference answers `404` there with nothing configured — and so does the Go
-service. A `501` would have been more truthful about the code and less true about
-the contract, and where the two disagree the TypeScript answer is the correct one.
+**"Not ported" for API keys is a document blocker before it is a code one.** There
+is no `ApiKeyStore` in Go at any depth, no hashing, no prefix check and no gate;
+the only Go trace is the *seam* the limiter reads — `auth.WithAPIKeyID` /
+`APIKeyIDOf` (`internal/auth/middleware.go:81-88`) consumed by
+`internal/ratelimit/key.go` — and nothing sets it, so `KeySource.APIKeyID` is
+always empty and a caller cannot authenticate with a key. It cannot be closed by
+porting the store alone: Go's router is generated from `openapi/v1.yaml`, and that
+document declares seven paths and **zero** `api-keys` operations
+(`grep -c api-keys openapi/v1.yaml` → `0`). The key store has no HTTP surface in
+*either* language today — `src/index.ts` mounts only the `app.use("*")` gate and
+never a route, and `/v1/api-keys` appears in `src/` solely as a limit-table entry.
+**The document comes first, and the document is manager-owned.**
 
+### How each row above was checked
+
+Three of the rows were wrong in the direction that matters, and reading was not
+enough to settle them, so they were measured on the binary this repository ships.
+`go build -o /tmp/gw ./cmd/gateway && PORT=8099 /tmp/gw`:
+
+```
+$ curl -s localhost:8099/readyz
+{"deps":{"identity":"unavailable"}}            # the identity probe IS registered
+$ curl -s -o /dev/null -w '%{http_code}\n' localhost:8099/v1/me
+401                                             # not 404: the gate runs
+$ curl -s -H 'Authorization: Bearer not.a.token' localhost:8099/v1/me
+{"type":"https://errors.cafaye.com/unauthorized",…,"detail":"token is malformed",…}
+```
+
+and the allowance table, which is the row a grep cannot settle because the wiring
+is two files and a resolver:
+
+```
+$ for i in $(seq 1 11); do curl -s -D- -o /dev/null -X POST -d '{}' localhost:8099/auth/login; done
+1..10  404  RateLimit-Limit: 10  RateLimit-Policy: "gateway-auth-login";q=10;w=60
+11     429  {"type":"https://errors.cafaye.com/rate_limited",…,"detail":"too many requests for this window",…}
+```
+
+The `404`s are correct and are not the row above: `IDENTITY_URL` is unset, so
+`Options.BFF` is nil and the route declines — and the limiter still counts it,
+because `/auth/*` is gateway-owned and lives inside the router where the limiter is
+mounted. **That distinction is the one the next section is about**, and the
+refusal above is drawn from a path the limiter does reach. Forwarded traffic is a
+different answer, below.
+
+"Declines with the reference's `404`" is still a decision and not a gap, but it is
+narrower than it was stated to be: it describes `New(Options{})`, and the shipped
+binary has a verifier. `createApp({})` does not register `/v1/me` without one, so
+the reference answers `404` there with nothing configured — and so does the Go
+constructor. A `501` would have been more truthful about the code and less true
+about the contract, and where the two disagree the TypeScript answer is the
+correct one.
+
+### The limiter does not count forwarded traffic, and that is still true
 
 The limiter is ported, and its refusal is compared against the reference on a path
 the route table claims as well as on two it does not. With the allowance exhausted,
@@ -1043,14 +1119,24 @@ Two things about that are load-bearing rather than incidental:
 its own — that the Go gateway *counts* a routed request, once, rather than merely
 answering the same status — and the routed burst is one of `limiterCases` besides.
 
-### The browser surface is ported, and the session store is not
+**Read this next to the table's allowance row, not against it.** The two are about
+different traffic. `/auth/*` and `/v1/me` are gateway-owned, live *inside* the
+router, and are counted — which is why the `/auth/login` burst above refuses on the
+eleventh request and carries `RateLimit-Policy: "gateway-auth-login";q=10;w=60`.
+Traffic a route table *claims* is relayed by the pass-through, which wraps the
+router from the outside, and never reaches a `Use` mounted within it. So the
+allowance table is live and the limiter is mounted and the forwarded traffic is
+still uncounted; all three are true at once, and only the third is the finding.
+
 ### The browser surface is served, and the session store is Redis
 
-`Options.BFF` is nil by default, so a Go gateway with no browser surface configured
-serves probes only and the four `/auth` routes decline with the reference's `404` —
-the same answer `createApp({})` gives. Configure it, and the four routes are served:
-the origin gate, the `__Host-bff-session` cookie, the fixed `401` sentence, the `423`
-with its `Retry-After`, and the rule that the browser never receives identity's token.
+`Options.BFF` is nil by default, so a Go gateway started without `IDENTITY_URL` and
+`REDIS_URL` declines the four `/auth` routes with the reference's `404` — the same
+answer `createApp({})` gives, and *only* those four: the probes, `/v1/me`, the
+limiter and the pass-through are all still served, because none of them needs a
+browser surface. Configure it, and the four routes are served: the origin gate, the
+`__Host-bff-session` cookie, the fixed `401` sentence, the `423` with its
+`Retry-After`, and the rule that the browser never receives identity's token.
 
 **`internal/sessionredis` is the store, and gateway owns it.** It was a decision,
 and the recorded reason for it was *checked rather than inherited* before anything
@@ -1134,29 +1220,43 @@ sign in, read `/auth/me` with the cookie, sign out, watch the stale cookie get a
 `401`, and — the property a `Map` cannot have — build a **second gateway from the
 same environment and read a session the first one created**.
 
-| the BFF and the session store | ✅ | **ported** — `internal/sessionredis`, Redis |
+The row above is the whole of it; an earlier revision of this section repeated it
+as a loose line after a paragraph, where it read as a fourth table.
 
-"Declines with the reference's `404`" is a decision and not a gap that was left
-open by accident. `createApp({})` does not register `/v1/me` without a verifier
-and does not register `/auth/*` without an identity to ask, so the reference
-answers `404` on all five with nothing configured — and so does the Go service. A
-`501` would have been more truthful about the code and less true about the
-contract, and where the two disagree the TypeScript answer is the correct one.
+The `/auth/*` half of "declines with the reference's `404`" belongs here rather
+than in the table's own note, because it is `IDENTITY_URL` that decides it and not
+a verifier: `createApp({})` does not register `/auth/*` without an identity to
+ask, so the reference answers `404` on all four with nothing configured — and so
+does the Go service.
 
-A started Go gateway reads five environment variables — `PORT`, `ROUTE_TABLE`,
-`ASSERTION_SIGNING_KEY_FILE`, `ASSERTION_TTL_MS` and `ASSERTION_ISSUER` — and
-serves `{"deps":{}}` on `/readyz` because no dependency is registered yet. The
-other six the TypeScript `runtimeOptions` reads belong to subsystems that are not
-ported; a variable an operator sets that changes nothing is worse than one they
-cannot set, because `IDENTITY_ISSUER` in a compose file looks configured and
-configures a `404`.
+**A started Go gateway reads fifteen environment variables, not five.** `PORT`;
+`ROUTE_TABLE`; the four `ASSERTION_*` (`ISSUER`, `SIGNING_KEY_FILE`,
+`SIGNING_KEY_ID`, `TTL_MS`); `IDENTITY_URL`; `IDENTITY_ISSUER`,
+`IDENTITY_JWKS_URL`, `IDENTITY_JWKS_TTL_MS` and `GATEWAY_CLIENT_ID`;
+`REDIS_URL`; and the limiter's three, `RATE_LIMIT_REQUESTS`,
+`RATE_LIMIT_WINDOW_MS` and `TRUSTED_PROXIES`. The list is written out rather than
+counted because `TestTheRuntimeReaderReadsExactlyTheseVariables` holds it as an
+exhaustive set in both directions — a variable that starts being read and a
+variable that stops are both failures. So there is no longer a class of variable
+an operator can set that changes nothing, which was the reason that test exists.
 
-With no `ROUTE_TABLE` the Go gateway forwards nothing, and it has **no
-credential gate**: `createApp({routes})` does not register the token gate when no
-`jwt` option was configured either, so an anonymous request to a private route is
-relayed on both sides. That is the reference's behaviour reproduced on purpose, and
-it is why the equivalence check's gated scenario compares a *refusal* the two sides
-already agree on rather than pretending the verifier exists.
+`/readyz` is no longer `{"deps":{}}` either: it names `identity` always, because
+the verifier's key set is a dependency whether or not anything has asked it for a
+token yet, and it names `redis` as well when `REDIS_URL` is set. A probe list that
+claimed a Redis no store was using would report `redis: unavailable` for a limiter
+counting in memory, which is a readiness endpoint lying about a healthy deployment.
+
+With no `ROUTE_TABLE` the Go gateway forwards nothing — but it **does** have a
+credential gate, and this paragraph used to say the opposite. `credentialGate` is
+mounted whenever a verifier is configured (`gate.go:107-110`, mounted at
+`httpapi.go:334`), and `RuntimeOptions` always configures one, so an anonymous
+caller on a private route is refused `401` with the fixed sentence *"a bearer token
+is required"*. A gateway with neither a verifier nor a table still relays
+everything, which is `createApp({routes})`'s behaviour reproduced on purpose, and
+it is the configuration the equivalence check's `routedUpstream` scenario builds.
+The `gatedUpstream` scenario goes one step further and stands up a gate that
+**refuses without verifying** (`scenarios.go:62-72`), so the comparison is the
+refusal and its position rather than the token check behind it.
 
 ### The equivalence check, and what it does not cover
 
@@ -1236,8 +1336,10 @@ yet — so there is nothing to compare, and a case would compare two `404`s and 
 agreement about API keys. `TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe`
 reads the status enum out of the generated file and fails on any status that is
 neither producible nor named with a reason, so that gap is asserted rather than left
-for a reader to discover. Rate limiting and the upstream pass-through are Wave 3 and
-are absent for the same reason.
+for a reader to discover. Rate limiting and the pass-through were listed here as
+"Wave 3" until this section was corrected: both are ported, and both are compared —
+the limiter by `limitsExhausted` and `counterStoreDown`, the pass-through by
+`routedUpstream` and `gatedUpstream`.
 
 **What it found, twice.** First: `json.Encoder.Encode` appends a newline to every
 value it writes and Hono's `c.json()` does not, so 63 of 72 comparisons failed on
@@ -1255,10 +1357,23 @@ reaches is an envelope nothing has compared.** The substrate packet ported
 `problem+json` for five operations that all declined, so the ordering was never
 exercised until this packet made a rejection reachable.
 
-**What it is not:** a claim that the rewrite is done. Three operations of seven are
-Go, and the four that are Go cannot be reached from the environment yet.
+**What it is not:** a claim that the rewrite is done. It is a claim that **these**
+two implementations agree on **these** cases. All seven operations are Go now, and
+the suite prints what it actually compared on every run, so the two cannot drift
+apart quietly:
 
-for byte**, across 51 cases × 5 configurations — **255 comparisons**.
+```
+equivalence: 51 cases across 13 scenarios = 912 comparisons, 0 differences
+(status, Content-Type, 12 compared headers, body bytes; 22 of them also compared
+the request the upstream received)
+```
+
+That sentence is output, not arithmetic. **Thirteen scenarios**, not five:
+`bare`, `oneProbeOk`, `probesDegraded`, `routedUpstream`, `gatedUpstream`, the six
+`bff*` browser scenarios, `limitsExhausted` and `counterStoreDown`
+(`internal/equivalence/scenarios.go:122-137`), with the count asserted by
+`TestTheInventoryIsEveryScenarioBothSidesDeclareAndNothingTwice` rather than
+written down here.
 
 The contract cases are derived: every operation `openapi/v1.yaml` declares is read
 out of the generated registrations, which `bin/prime-go` holds in step with the
@@ -1271,11 +1386,10 @@ prove almost nothing about a proxy.
 
 ### Both sides talk to ONE upstream, so what was sent is compared too
 
-The five configurations are `bare`, `oneProbeOk`, `probesDegraded`,
-`routedUpstream` and `gatedUpstream`. The last two point **both** sides at the same
-recording upstream, and for 21 of the 255 comparisons the check then compares the
-request that upstream received: method, escaped path, query, body and every header
-that is not the client's own.
+`routedUpstream` and `gatedUpstream` point **both** sides at the same recording
+upstream, and for 22 of the comparisons the check then compares the request that
+upstream received: method, escaped path, query, body and every header that is not
+the client's own.
 
 That is the half that matters for a security core. "The caller's `Authorization`
 never crossed", "`set-cookie` was dropped", "the path was rebuilt rather than
@@ -1296,12 +1410,15 @@ gaps.** It does not compare the **principal assertion**: no route table in eithe
 scenario declares `principal`, because a minted `jti` differs per mint and cannot be
 compared byte for byte. MD19's four properties are covered by
 `internal/httpapi`'s own suite, where the claim set can be read. It does not
-compare a token that **verifies** — that is the auth packet's comparison, and it
-needs a key set both sides can reach. Two things are taken *out* of the byte
-comparison and only two: `trace_id` inside a problem document, which both sides mint
-freshly and which is replaced with a fixed token so nothing else in the body is
-loosened; and `X-Trace-Id`'s value across sides, which is compared for presence
-only — the header-equals-body property is asserted on each side separately.
+compare a token that **verifies**. Verification is ported — `internal/auth` is the
+real implementation and `RuntimeOptions` builds it — but no scenario supplies an
+`Options.Verifier`: `optionsFor` sets `options.Authenticate` to a gate that refuses
+(`scenarios.go:319`), so what `gatedUpstream` compares is the refusal and its
+position, never a key fetched and a signature checked. Two things are taken *out* of
+the byte comparison and only two: `trace_id` inside a problem document, which both
+sides mint freshly and which is replaced with a fixed token so nothing else in the
+body is loosened; and `X-Trace-Id`'s value across sides, which is compared for
+presence only — the header-equals-body property is asserted on each side separately.
 `TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe` reads the status enum
 out of the generated file and fails on any status that is neither producible nor
 named with a reason.
@@ -1321,8 +1438,9 @@ ever notice and every port would have shipped:
   Both are the same trap `/readyz` hit, for the same reason: `encoding/json`
   honours struct field order and the generator writes fields sorted.
 
-**What it is not:** a claim that the rewrite is done. Two operations of seven are
-Go, and the credential gate refuses without ever verifying.
+**What it is not:** a claim that the rewrite is done. Every operation in the
+document is Go, and the comparison is still thirteen scenarios wide: it says the two
+agree about the cases listed here and about nothing else.
 
 ### Running the Go service
 
@@ -1330,7 +1448,8 @@ Go, and the credential gate refuses without ever verifying.
 bin/prime-go                    # the Go tier alone: gofmt, build, vet, test, codegen
 go run ./cmd/gateway            # http://localhost:8080
 curl localhost:8080/healthz     # {"status":"ok"}
-curl localhost:8080/readyz      # {"deps":{}}
+curl localhost:8080/readyz      # {"deps":{"identity":"unavailable"}} with no identity
+                                 # running; "redis" joins it when REDIS_URL is set
 docker build -f Dockerfile.golang -t cafaye/gateway-go .
 
 ROUTE_TABLE='{"/v1/pantry":{"baseUrl":"http://pantry:8080"}}' \
@@ -1355,26 +1474,32 @@ It is renamed to `Dockerfile` in the commit that deletes `src/`, not before.
 Each line is a packet, not a plan. The stubs that stand in for them are marked in
 the source with the packet that replaces them.
 
-- **The Go rewrite is a partial implementation and `src/` is the reference.** `GET
-  /healthz`, `GET /readyz`, the error envelope, the pass-through, and now the four
-  `/auth` routes with a real Redis-backed session store — see
-  [The Go rewrite](#the-go-rewrite) for the table and for what the equivalence check
-  does and does not compare. This line is the honest one and it sits at the top of
-  the list because it is the thing a reader is most likely to get wrong: `src/` is
-  **not** legacy here, it is the reference the Go service is measured against, and
-  the packet that deletes it is a later one.
-- **A Go gateway has no bearer-token verifier and no API keys.** `internal/auth` does
-  RS256 with a JWKS cache, so `/v1/*` authenticates, but `src/middleware/apiKey.ts`
-  has no Go counterpart at all. A Go gateway is therefore *less strict* than the
-  TypeScript one on those routes, which is a different kind of gap from the session
-  store and worth stating separately: that one made `/auth/*` unreachable, this one
-  makes a class of caller un-refused.
-- **A Go gateway cannot be pointed at an identity for the `identity` readiness probe.**
-  It reads `IDENTITY_URL` and builds the browser surface, but registering the
-  `identity` probe still belongs to the packet that also owns the remaining
-  `runtimeOptions` variables, because `createApp({bff})` on its own answers
-  `{"deps":{}}` and a probe added in the wrong place makes `/readyz` differ from
-  the reference at byte 9.
+- **The Go rewrite is a partial implementation and `src/` is the reference.** All
+  seven operations are Go, with the limiter and the per-route allowance table, the
+  RS256 verifier and its JWKS cache, the pass-through, the route table, the principal
+  assertion, and the four `/auth` routes on a real Redis-backed session store — see
+  [The Go rewrite](#the-go-rewrite) for the row-by-row table and for what the
+  equivalence check does and does not compare. This line is the honest one and it
+  sits at the top of the list because it is the thing a reader is most likely to get
+  wrong in the *other* direction: `src/` is **not** legacy here, it is the reference
+  the Go service is measured against, and the packet that deletes it is a later one.
+  What is still missing is listed below, not in the size of the table.
+- **A Go gateway has no API keys.** `src/middleware/apiKey.ts` has no Go counterpart
+  at all — no store, no hashing, no prefix check, no gate — so a Go gateway is
+  *less strict* than the TypeScript one for a caller holding a key, which is a
+  different kind of gap from the session store and worth stating separately: that one
+  made `/auth/*` unreachable, this one makes a class of caller un-refused. This is a
+  **document** gap before it is a code gap: `openapi/v1.yaml` declares zero
+  `api-keys` operations, so there is nothing for the generated router to mount.
+- **No Go route carries a scope check.** `auth.RequireScope` is implemented and
+  tested, and `httpapi.go:139-142` says a later packet mounts it; until one does,
+  `requireScope` is a method nothing calls, so the capabilities half of what the
+  verifier proves about a caller is unused in Go.
+- **The limiter does not count forwarded traffic.** Gateway-owned routes are counted
+  and refused correctly; traffic a route table claims is relayed by the pass-through,
+  which wraps the router from the outside, and never reaches the limiter mounted
+  inside it. Held open by `TestTheGoSideDoesNotCountRoutedTraffic` — see
+  [The Go rewrite](#the-go-rewrite) for why it is not fixed yet.
 
 - **The service registry.** Routing exists and is a **static configured table**:
   `ROUTE_TABLE` says which prefix goes where, it is validated at startup, and it
@@ -1516,25 +1641,30 @@ the source with the packet that replaces them.
 ## Layout
 
 Two implementations live here. `src/` is the TypeScript reference and is still
-what serves traffic; `cmd/` and `internal/` are the Go rewrite, which serves the
-same contract, and is two operations of seven plus the pass-through. See
-[The Go rewrite](#the-go-rewrite).
+what ships; `cmd/` and `internal/` are the Go rewrite, which serves the same
+contract and serves **all seven operations** — the probes, the error envelope, the
+pass-through and the route table, `/v1/me`, the limiter with its per-route
+allowance table, the RS256 verifier, and the four `/auth` routes on Redis. What it
+does not have is in [Not built yet](#not-built-yet), not in the size of the tree.
+See [The Go rewrite](#the-go-rewrite).
 
 ```
-cmd/gateway/main.go          the Go binary: reads PORT, hands the result to httpapi.New, listens
+cmd/gateway/main.go          the Go binary: reads the environment through httpapi.RuntimeOptions, hands the result to httpapi.New, listens
 internal/api/api.gen.go      GENERATED from openapi/v1.yaml by oapi-codegen — committed, and gated
 internal/api/generate.go     the //go:generate lines, with the generator pinned to an exact version
 internal/api/oapi-codegen.yaml   models + chi-server, and why not strict-server
 internal/api/stripbaseurl/   makes the route registrations readable to core's account-scope checker
+internal/auth/               the bearer verifier: RS256, the JWKS cache and its refresh budget, scopes, ordered claims
 internal/httpapi/httpapi.go  Options, New, the chi wiring, and which operations are served
 internal/httpapi/table.go    the route table, validated at boot; the path rebuild; the URL parser's dot segments
 internal/httpapi/proxy.go    the pass-through: the header allowlists, the relay, the two 503s
 internal/httpapi/assertion.go the principal assertion: RS256, bound to the upstream, minimal claims
-internal/httpapi/gate.go     the credential seam and the 401 — nil in every configuration today
+internal/httpapi/gate.go     the credential gate and the 401 — nil only when no verifier is configured
 internal/httpapi/probe.go    NamedProbe and the bounded probe runner
 internal/httpapi/problem.go  core's error envelope, ported from src/problem.ts
 internal/httpapi/env.go      the ONLY os.Getenv in the module, and it is a named function
 internal/ratelimit/limits.go the per-route allowance table, ported from src/middleware/limits.ts
+internal/sessionredis/       the browser surface's session store, in Redis
 internal/httpapi/runtime.go  RuntimeOptions — the only function that reads the environment
 internal/equivalence/        the Go side of the equivalence check, and the scenarios it compares
 test/equivalence/reference.ts the TypeScript side, stood up on a port by the same check

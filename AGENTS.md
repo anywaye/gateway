@@ -14,12 +14,32 @@ service.
 **TWO IMPLEMENTATIONS ARE LIVE AND BOTH ARE CURRENT.** `src/` is TypeScript on
 Bun >= 1.3 and is the **reference** — not legacy, not scheduled for deletion on
 this packet's say-so. `cmd/gateway` and `internal/` are the Go rewrite, which
-serves the same contract and is currently **two operations of seven**: the two
-probes and the error envelope. `src/` is deleted in a later packet, once
-`internal/equivalence` has proven equivalence rather than asserted it. The README's
+serves the same contract and **serves all seven operations**: the two probes, the
+error envelope, the pass-through and the route table, `/v1/me`, the limiter with
+its per-route allowance table, the RS256 verifier, and the four `/auth` routes on a
+Redis session store. It used to be described here as "two operations of seven",
+which understated it by five; **the honest measure of the Go side is not the size
+of the tree, it is the "Not built yet" list**, and there are four things on it:
+no API keys (blocked on the OpenAPI document), no scope check mounted on any
+route, the limiter not counting forwarded traffic, and no per-service readiness
+probes. `src/` is deleted in a later packet, once `internal/equivalence` has proven
+equivalence rather than asserted it. The README's
 [Go rewrite](README.md#the-go-rewrite) section is the table of which is which,
-and its "Not built yet" list is the source of truth for what this repository does
-not claim.
+and its [Not built yet](README.md#not-built-yet) list is the source of truth for
+what this repository does not claim.
+
+**A Go gateway started by `cmd/gateway` is not `New(Options{})`.** This distinction
+is the one that made every claim above go stale, so it is stated here rather than
+left to the reader to infer from the table. `RuntimeOptions` builds a verifier, a
+counter store, the limiter with the allowance table and an `identity` readiness
+probe **unconditionally** (`internal/httpapi/runtime.go:97-104`), exactly as
+`runtimeOptions` in `src/index.ts` passes `jwt:` with no unset-issuer state. The
+nil-verifier shape — where `/v1/me` declines with the reference's `404` and the
+limiter counts nothing but its own defaults — is a library constructor, and it is
+what `internal/equivalence`'s `bare` scenario builds. **When you are about to write
+that the Go side does not do something, check which of the two you are describing**;
+a claim about `New(Options{})` is true and useless, and one about the shipped
+binary is the one a reader will act on.
 
 The rules below are written for the TypeScript implementation because it is the
 one that has the security core. They bind the Go rewrite too — the security
@@ -32,8 +52,9 @@ TWO TREES. Everything under `src/`, `test/` and `pins.test.ts` is TypeScript and
 is the reference. Everything under `cmd/` and `internal/` is the Go rewrite.
 
 ```
-cmd/gateway/main.go      the Go binary — reads PORT, hands the result to httpapi.New, listens
+cmd/gateway/main.go      the Go binary — reads the environment through httpapi.RuntimeOptions, hands the result to httpapi.New, listens
 internal/api/            oapi-codegen output, the //go:generate lines, and stripbaseurl
+internal/auth/           the bearer verifier: RS256, the JWKS cache and its refresh budget, scopes, ordered claims
 internal/httpapi/        Options, New, probes, the problem envelope, the one env reader
 internal/equivalence/    the Go side of the equivalence check, and the scenarios it compares
 test/equivalence/reference.ts   the TypeScript side, stood up on a port by the same check
@@ -384,7 +405,14 @@ That is not a theory: the Redis tier did exactly this in TypeScript here.
 Therefore `bin/prime-go` runs `go test -v`, filters the output, and counts the
 skip at the GATE; `GATEWAY_EQUIVALENCE_REQUIRED=1` turns it into a failure inside
 the test; the CI `prime` job sets it and additionally reads the comparison count
-and fails under 72.
+and fails under 72. **That number is the gate's weakest number and it is not mine
+to raise**: a run on this tree prints `51 cases across 13 scenarios = 912
+comparisons`, so the floor is under 8% of what it is a floor on, and a hand-written
+case list that lost nine tenths of itself would pass. Recorded in
+`HANDOFF-docs-corrections-01.md` §1.3. The rule this paragraph exists to teach —
+*a tier that can pass by not running is a green about nothing* — is why the skip is
+caught; the floor is a second, weaker mechanism against a different failure, and it
+is the one that drifted.
 
 Three details that were measured rather than reasoned, and each was wrong first:
 
