@@ -856,16 +856,23 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 			// and a fail-open path that appended "redis is down" to it would be a
 			// leak dressed as helpfulness.
 			//
-			// Both sides are checked, and both are checked against values this package
-			// declared rather than against a substring of the message.
+			// Both sides are checked, and against the ONE list of the parts of the
+			// reason — declared in `store.go` beside the message they come from, so a
+			// change to that message and a change to what is forbidden from leaking
+			// are one edit rather than two.
+			//
+			// Read out of the answer rather than compared between the two sides on
+			// purpose: two sides leaking the same secret is byte equality and would
+			// pass the ordinary diff. This is checked against a list of forbidden
+			// substrings precisely because agreement is not the property.
 			if scenario == ScenarioCounterStoreDown {
 				for _, side := range []struct {
 					which  string
 					answer answer
 				}{{"typescript", want}, {"go", got}, {"typescript (first request of the burst)", first}, {"go (first request of the burst)", goFirst}} {
-					for _, secret := range []string{theSecretBothSidesMustNotLeak, theHostBothSidesMustNotLeak, "redis.internal", "REDIS_URL"} {
-						if strings.Contains(side.answer.body, secret) {
-							t.Errorf("scenario %s: the %s response body carries %q, which is part of the counter store's failure. The reason goes to the log; a caller gets nothing.", scenario, side.which, secret)
+					for _, part := range thePartsOfTheReasonNeitherSideMayEcho {
+						if strings.Contains(side.answer.body, part) {
+							t.Errorf("scenario %s: the %s response body carries %q, which is part of the counter store's failure. The reason goes to the log; a caller gets nothing.", scenario, side.which, part)
 						}
 					}
 				}
