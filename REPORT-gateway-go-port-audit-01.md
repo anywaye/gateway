@@ -189,12 +189,31 @@ not compared (the scenarios run on the `sessiontest` double).
    parses the Dockerfile's test-stage `COPY` chain and fails if a test file is not in
    it. Both are about the Bun image and both are void the day `src/` goes —
    `dockerStage.test.ts` in particular is a gate that would pass over nothing.
-9. **`account_scope.yml` records 7 rows against `src/index.ts`** and 1 against
-   `src/middleware/jwt.ts`, with line-number references (`src/index.ts:251`, `:278`)
-   and a `HANDLER_WINDOW` of 3 lines that `src/index.ts:218-248` argues at length.
-   All of it is TypeScript-shaped and has no Go counterpart: core's checker reads
-   Hono's `app.use` mounts and `requireJwt` by name. The Go ratchet rows are a
-   separate list. Deleting `src/` means re-pointing every row.
+9. **`account_scope.yml` carries both sides, and that changes the work.**
+   Counting `file:` entries: **7 rows against `src/index.ts`** and **1 against
+   `src/middleware/jwt.ts`**, against **7 rows against
+   `internal/api/api.gen.go`**. So the Go side is already ratcheted, not
+   unrecorded — deleting `src/` means **deleting 8 TypeScript rows**, not
+   re-pointing them. Two details make that more than a delete:
+   - The TypeScript rows use **line numbers and a 3-line `HANDLER_WINDOW`**
+     (`src/index.ts:251`, `:278`), and `src/index.ts:218-248` is a long comment
+     arguing that the window is exactly zero-margin. The Go rows point at
+     `internal/api/api.gen.go` registrations instead, because `stripbaseurl` exists
+     to make those readable to core's chi recogniser (`account_scope.yml:42`).
+   - `account_scope.yml:331-350` records a standing `accountScope.undeclared` on
+     the Go `/v1/me` registration and explains why it is **not** fixable here:
+     `chain_gate` looks for `app.use(`/`.use(` and chi mounts middleware with
+     `r.Use(`, so **no middleware added to the Go router can ever satisfy it**, and
+     the row was deliberately written as `undeclared` rather than as a red
+     `accountScoped` row, because "a ratchet row red forever with a condition whose
+     end is unreachable is the switch rule 2 exists to refuse". The same block
+     records a **DECISION NEEDED in `core`**: every `go-*` row is verified against
+     the generated file and not the code it describes, since `handler_for` cannot
+     follow `wrapper.GetCurrentPrincipal` across a package boundary. Harmless
+     today (`internal/httpapi` contains no account evidence) and "a silent hole the
+     day it does". **Neither is a cutover blocker and neither is mine to fix** —
+     I am recording them because they are the two places a reader sizing this work
+     would otherwise mistake for unfinished business.
 10. **`AGENTS.md` and `README.md` are both wrong about the Go side's size** (§0).
     The README's "What is Go today" table claims rate limiting, API keys and bearer
     verification are "not ported — Wave 3". Two of those three *are* ported and one
@@ -204,6 +223,15 @@ not compared (the scenarios run on the `sessiontest` double).
     floating after a paragraph). **Sequencing off this table will mis-size the work
     in both directions** — it overstates three subsystems as absent and understates
     one as absent. I did not edit either file; that is a documentation packet.
+
+11. **README "Not built yet" is stale in the same direction, twice.** Its first
+    bullet says the Go rewrite "has three operations"; its third says a started Go
+    gateway "reads `PORT` and nothing else". Both are out of date:
+    `internal/httpapi/runtime_variables_test.go:36-64` asserts `RuntimeOptions` reads
+    exactly **fourteen** named variables, and the Go side serves all seven operations
+    (six behind configuration). The section is otherwise careful and its session-store
+    and `IDENTITY_URL` bullets are still accurate — it is specifically the
+    "how much Go is there" lines that have drifted.
 
 ### One thing that is *not* a blocker, recorded because it looks like one
 
@@ -219,15 +247,10 @@ inferring it. The ordering rule transfers; the trap does not.
 ## 4. What I deliberately did not do
 
 - **Did not port, change, move or delete anything under `src/`**, or any other
-  file. `git diff master...HEAD --stat` shows exactly one added file.
+  file in this repository. `git diff master...HEAD --stat` shows exactly one added
+  file — see §5.
 - **Did not run `bun test`, `bin/prime` or `bin/prime-go`** as gates. There is no
-  `node_modules` here and I was told the disk is at 93%. **This means every claim
-  above is from reading code, not from a green run**, and the manager should read
-  the rows accordingly. I ran one read-only command that does not need
-  `node_modules`: `grep`. I did not run the Go tier either — so I cannot say whether
-  `go test ./...` is currently green. Per the brief I am reporting CI's known red
-  causes (the `oapi-codegen@v2.8.0` fetch in `bin/prime`'s codegen step, and the
-  `image` job's `docker compose config`) without touching either.
+  `node_modules` here and I was told the disk is at 93%.
 - **Did not run any linter, dead-code sweep, or repo-wide search for unused
   exports.** The one exception is the targeted `grep` calls above, each aimed at a
   named behaviour (`ApiKeyStore`, `LimitTable`, `Policy`, `LimitsExhausted`) rather
@@ -236,11 +259,56 @@ inferring it. The ordering rule transfers; the trap does not.
 - **Did not edit `CHANGELOG.md`**, though I found a factual error in it (§2: the
   two scenario constants are described as being in the tree and are not). That is a
   finding, not an edit.
-- **Did not verify the `RateLimit-*` header set behaviourally.** I confirmed no
-  equivalence scenario mounts a limiter; whether the Go limiter emits all eight
-  headers is covered by `internal/ratelimit/limiter_test.go`, which I read only in
-  outline. If the manager needs that asserted rather than assumed, it is a row to
-  confirm.
+- **Did not edit `README.md` or `AGENTS.md`**, though §0 and §3 item 10 record four
+  factual errors between them. Both are documentation, and correcting them is a
+  change this packet was not briefed to make.
+- **Did not verify anything by running it.** No `bun test`, no `bin/prime`, no
+  `bin/prime-go`, no `go test`. **Every claim in this report is from reading
+  source**, and each row's evidence is a test *name* I read in the file — I did not
+  confirm that name currently passes. There is no `node_modules` in this worktree
+  and I was told the disk is at 93%. Per the brief I am not touching CI's two known
+  red causes (the `oapi-codegen@v2.8.0` fetch in `bin/prime`'s codegen step, and the
+  `image` job's `docker compose config`). If a row's evidence is load-bearing for a
+  sequencing decision, run the named test before committing to the plan.
+- **Did not run `account-scope`, the mutation gate, or `measure-findings.sh`.** I
+  read `account_scope.yml` to establish what it records and read its own comments
+  about its standing findings (§3 item 9). I did not execute the checker, so I
+  cannot say whether it currently reports clean.
+- **Did not measure the equivalence count.** The brief says 11 scenarios / 405
+  comparisons; `README.md` says "24 base cases × 9 configurations = 306". I did
+  not run the suite, so **I did not confirm either number** and the report does
+  not assert one. What I did verify by reading is the *shape*: 11 named scenarios
+  on both sides, held equal by
+  `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas`, and no scenario
+  configuring a limiter or a BFF from the environment.
 - **Did not touch any other repository.** No `cafaye/kit`, no `core`, no
   `identity` — even though `internal/session`'s deferral turns on identity's store
   and I took that from the package comment rather than opening the file.
+
+### What I would check next, if there were another quarter
+
+1. `openapi/v1.yaml` needs `api-keys` operations before §3 item 3 is a porting
+   job rather than a document job — that is a manager/spec call, not an audit one.
+2. The two limiter equivalence scenarios. Both halves of the decision are already
+   unit-tested in Go; this is the cheapest remaining confidence in the whole port.
+3. Whether the per-route limit table (§1 row 9) was deliberately deferred or
+   simply not reached. Nothing in the tree, the README or the changelog says
+   either way — which is why I have called it a silent gap rather than a deferral,
+   and why that distinction is the manager's to make rather than mine.
+## 5. Verification
+
+This packet's verification is the diff. Run before the final commit:
+
+```
+$ git diff master...HEAD --stat
+ REPORT-gateway-go-port-audit-01.md | 250 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 250 insertions(+)
+```
+
+One added file, nothing else — no modification to any `src/` file, no new Go
+file, no edit to `CHANGELOG.md`, `AGENTS.md`, `account_scope.yml` or any other
+`HANDOFF-*` / `REPORT-*`.
+
+Two commits, both adding only this file:
+`e81a65f` (the table, §1–§3) and `6d09270` + the final one (corrections found in
+Q3). Nothing was reverted or amended after the fact.
