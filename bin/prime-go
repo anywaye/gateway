@@ -66,6 +66,58 @@ fi
 step "toolchain: go $actual_go (mise.toml pins $pinned_go)"
 go version
 
+# THE IMAGE TAG AGREES WITH THE PIN, and this is the port of two tests in the
+# deleted `pins.test.ts` — "the Dockerfile builds on that toolchain" and "compose
+# passes the pin through rather than repeating it".
+#
+# WHY IT IS HERE AND NOT IN prime-go's header as a note. `pinned_go` above is
+# checked against go.mod, which is the copy the COMPILER enforces. These two
+# files are not read by the compiler and were read by nothing else: `grep -n
+# GO_VERSION` across the repository returned one hit, `docker-compose.yml:151`,
+# which is the thing being asserted rather than an assertion of it. So before this
+# block, mise.toml's comment — "`Dockerfile`'s ARG GO_VERSION is 1.26, the tag the
+# image builds with, the same way RUST_VERSION used to name an image rather than
+# a patch" — was a claim about two files that nothing could check. It is now
+# checked.
+#
+# THE RULE IS A PREFIX AND NOT EQUALITY, and that is the comment above being
+# right: the image names a tag (`1.26`) while the pin names a release (`1.26.1`).
+# Equal numbers would be a coincidence rather than a contract — a patch bump must
+# not have to edit two files in two languages. What must hold is that the image's
+# toolchain is the same major.minor the pin names, because a 1.25 image against a
+# 1.26.1 pin builds a binary CI never tested and reads the difference as a defect
+# in the code.
+image_go="$(sed -n 's/^ARG GO_VERSION=\(.*\)/\1/p' Dockerfile)"
+# `grep -E` and `tr -d` rather than a `sed` capture, and that is measured rather
+# than stylistic: the sed spelling
+#   s/^[[:space:]]*GO_VERSION:[[:space:]]*\([0-9][0-9.]*\).*/\1/p
+# matches nothing on the macOS BSD sed — the same line `grep -nE
+# '^[[:space:]]*GO_VERSION:'` finds at docker-compose.yml:151 — while exiting 0,
+# which is the worst of both. A check that reads an empty string here would have
+# reported "compose names no GO_VERSION" rather than "compose names 1.26", and a
+# reader would have gone looking in the wrong file. Digits only, so the YAML
+# quoting does not have to be modelled.
+compose_go="$(grep -E '^[[:space:]]*GO_VERSION:' docker-compose.yml | head -n1 | tr -dc '0-9.')"
+expected_prefix="${pinned_go%.*}"
+for pair in "Dockerfile:$image_go" "docker-compose.yml:$compose_go"; do
+  file="${pair%%:*}"
+  found="${pair#*:}"
+  if [ -z "$found" ]; then
+    echo "bin/prime-go: $file names no GO_VERSION, and an image that does not say" >&2
+    echo "  which toolchain it builds with is an image whose toolchain is a default." >&2
+    exit 1
+  fi
+  if [ "$found" != "$expected_prefix" ]; then
+    echo "bin/prime-go: mise.toml pins go $pinned_go and $file builds with $found." >&2
+    echo "  One toolchain, three files (mise.toml, go.mod, the image tag) plus the" >&2
+    echo "  compose variable that names it. The image tag is the major.minor prefix of" >&2
+    echo "  the pin, so a patch bump needs no edit here — but a minor bump needs this" >&2
+    echo "  one, and skipping it builds a binary CI never tested." >&2
+    exit 1
+  fi
+done
+echo "image tag: Dockerfile and docker-compose.yml build on go $expected_prefix, the major.minor mise.toml pins as $pinned_go"
+
 step "gofmt -l"
 # `-l` prints the files that NEED formatting and exits 0 either way, so the count
 # is the assertion. An empty list is the pass and a non-empty one is a red that
@@ -176,6 +228,67 @@ else
     exit 3
   fi
 fi
+
+# THE SKIP CEILING, and this block is the port of `test/noSkips.test.ts` rather
+# than a replacement for it.
+#
+# That file read the suite's own source and failed on any `skip` outside a
+# one-entry allowlist. Its premise is still true and still load-bearing: exactly
+# one tier in this repository may skip, and it is named — the live Redis tier,
+# gated on `GATEWAY_REDIS_URL`. So the check moved here rather than being deleted
+# along with the file, and it is a real check on both sides:
+#
+#   * A RUNTIME COUNT. `go test -count=1 -v` above prints one `--- SKIP:` line per
+#     skipped test, and `go test` discards a passing package's output — so this
+#     block is the only place the number is ever visible. On a machine without
+#     Redis the live tier skips 13 tests and that is the whole of it; with Redis
+#     it skips 0.
+#   * A SOURCE COUNT. The same property the TypeScript version read out of the
+#     sources, checked where a converted skip would be WRITTEN rather than only
+#     where it would be observed. A `t.Skip` behind an environment condition that
+#     happens not to fire still lands here, which is the case a runtime count
+#     cannot see.
+#
+# WHY A CEILING AND NOT A FLOOR, which is the one place this is weaker than the
+# file it ports. `noSkips.test.ts` asserted EQUALITY with an allowlist; this
+# cannot, because the legitimate count is 13 without Redis and 0 with it, and a
+# gate that is right in one environment and red in the other is a gate people
+# learn to disable. 13 is the no-Redis number, which is what `bin/prime` always
+# produces, and a run with Redis sits BELOW the ceiling rather than over it — so
+# the ceiling is the one direction that holds in both environments.
+#
+# What it therefore does NOT catch is the whole tier disappearing: a
+# `GATEWAY_REDIS_URL` branch deleted whole leaves 0 skips, which is under the
+# ceiling. `GATEWAY_REDIS_REQUIRED=1` is what catches that, and so is the `redis`
+# CI job, which forces the tier. This block catches the other three of the four
+# ways — an undeclared skip added, an allowlist entry outliving its skip, a
+# second gated tier arriving — and the fourth is named rather than implied.
+skip_count="$(grep -c '^--- SKIP: ' <<<"$out" || true)"
+skip_ceiling=13
+if [ "$skip_count" -gt "$skip_ceiling" ]; then
+  echo "bin/prime-go: ${skip_count} tests skipped and this repository declares" >&2
+  echo "  ${skip_ceiling} — the live Redis tier, and nothing else. Every skipped test is" >&2
+  echo "  named below, because a gate that reports a count without naming the offender" >&2
+  echo "  is a gate whose reader has to go and diff a file list by hand:" >&2
+  grep -E '^--- SKIP: ' <<<"$out" | sed 's/^/    /' >&2
+  exit 1
+fi
+
+# The source half. ONE call site is the whole allowance, and it is named rather
+# than counted: an allowlist that only held a number would pass a repository
+# where the declared skip moved to a different file, which is the stale-allowlist
+# failure `noSkips.test.ts` had a test for by name.
+skip_sites="$(grep -rn 't\.Skip(' ./cmd ./internal --include='*_test.go' || true)"
+skip_site_count="$(printf '%s' "$skip_sites" | grep -c 't\.Skip(' || true)"
+if [ "$skip_site_count" -ne 1 ] || ! printf '%s' "$skip_sites" | grep -q '^\./internal/ratelimit/live_test\.go:'; then
+  echo "bin/prime-go: the tree has ${skip_site_count} t.Skip() call site(s) and this" >&2
+  echo "  repository allows exactly one — internal/ratelimit/live_test.go, the live" >&2
+  echo "  Redis tier. A second one is a second gated tier, and a gated tier nobody" >&2
+  echo "  named is a tier whose skip nobody counts. What is there now:" >&2
+  printf '%s\n' "$skip_sites" | sed 's/^/    /' >&2
+  exit 1
+fi
+echo "skips: ${skip_count} of ${skip_ceiling} declared (all of them the live Redis tier), and 1 t.Skip() call site"
 
 step "the generated server matches the OpenAPI document"
 # REGENERATE AND DIFF, and this replaced a grep — which is the whole reason this
