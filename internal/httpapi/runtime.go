@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafaye/gateway/internal/auth"
 	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/cafaye/gateway/internal/sessionredis"
 )
 
 // Config is everything `cmd/gateway` needs to serve, as read from the
@@ -66,6 +67,9 @@ type Config struct {
 //	RATE_LIMIT_WINDOW_MS     the window's length
 //	TRUSTED_PROXIES          how much of `X-Forwarded-For` may be believed
 //	REDIS_URL                where buckets are counted, when there is more than one replica
+//	IDENTITY_URL             identity's base URL for the `/auth` calls — the browser
+//	                         surface, and only WITH `REDIS_URL`: see
+//	                         `browserSurfaceFromEnv` for why neither alone serves it
 //
 // The count is the assertion `TestTheRuntimeReaderReadsExactlyTheseVariables`
 // holds, and it is the assertion that makes this function safe to extend: a
@@ -152,6 +156,19 @@ func RuntimeOptions(env Env) (Config, error) {
 		return Config{}, err
 	}
 
+	bff, err := browserSurfaceFromEnv(env, redis)
+	if err != nil {
+		// The closer is registered after this on purpose. `counterStore` opened a
+		// lazy client that holds a socket, and returning without closing it here
+		// would leak a connection on the refusal path — which is the path where
+		// `REDIS_URL` parsed fine and something else did not, so it is reached with
+		// a Redis already dialled rather than not.
+		if closer != nil {
+			closer()
+		}
+		return Config{}, err
+	}
+
 	limit, err := intFromEnv(env, "RATE_LIMIT_REQUESTS", ratelimit.DefaultLimit, 1)
 	if err != nil {
 		return Config{}, err
@@ -211,6 +228,17 @@ func RuntimeOptions(env Env) (Config, error) {
 			Limiter:  limiter,
 			Routes:   routes,
 			Assert:   assertion,
+
+			// THE BROWSER SURFACE, AND IT IS NOT A POINTER TO NOTHING.
+			//
+			// `browserSurfaceFromEnv` returns nil when either half of the browser
+			// surface is unconfigured, and `Options.BFF`'s comment says what nil
+			// means: the four routes decline with the reference's `404`. Passing a
+			// non-nil empty `BffOptions` instead would be the v0 gateway wearing a
+			// browser surface it cannot serve, and `NewBff` refuses it — so the two
+			// spellings would not both work and the difference would be invisible
+			// until a deployment set one of the two variables.
+			BFF: bff,
 		},
 		Addr:  ":" + strconv.Itoa(port),
 		Close: closer,
@@ -406,7 +434,11 @@ func assertionTTLFromEnv(env Env) (time.Duration, error) {
 // and the probe come from the same fact — a probe list that claimed a Redis no store
 // is using would report `redis: unavailable` for a limiter that is counting in
 // memory, which is a readiness endpoint lying about a healthy deployment.
-func probeList(jwksURL string, redis ratelimit.Commands) []NamedProbe {
+// `redis` is the concrete `*LazyRedis` so a NIL is a nil POINTER rather than a nil
+// interface holding nothing — which is checked here rather than anywhere else,
+// because `if redis != nil` on an interface value is true for a typed nil, and a
+// probe that calls `Ping` on that would panic on the first `/readyz`.
+func probeList(jwksURL string, redis *ratelimit.LazyRedis) []NamedProbe {
 	probes := []NamedProbe{{Name: "identity", Probe: keySetProbe(jwksURL)}}
 	if redis != nil {
 		probes = append(probes, NamedProbe{Name: "redis", Probe: redisProbe(redis)})
@@ -426,7 +458,14 @@ func probeList(jwksURL string, redis ratelimit.Commands) []NamedProbe {
 // `Ping` on its interface: closing and pinging are transport concerns, and
 // `Commands` is where the socket is. Nothing else in the repository constructs a
 // Redis store, so there is exactly one caller and exactly one closer.
-func counterStore(env Env) (ratelimit.Store, ratelimit.Commands, func(), error) {
+// The return type is the CONCRETE `*ratelimit.LazyRedis` rather than the
+// `ratelimit.Commands` interface, and that is a change with a caller rather than a
+// preference. `Commands` is the limiter's two methods — `Eval` and `Ping` — and the
+// session store needs a third, `Do`, which is on `Connection` and not on the
+// interface. Returning the concrete client is what lets `browserSurfaceFromEnv`
+// hand the SAME socket to both, instead of the interface widening for everyone and
+// every fake in the limiter's tests growing a method they have no use for.
+func counterStore(env Env) (ratelimit.Store, *ratelimit.LazyRedis, func(), error) {
 	url := trimSpace(env("REDIS_URL"))
 	if url == "" {
 		store, err := ratelimit.NewMemoryStore(0)
@@ -449,6 +488,61 @@ func counterStore(env Env) (ratelimit.Store, ratelimit.Commands, func(), error) 
 		return nil, nil, nil, err
 	}
 	return store, redis, func() { _ = redis.Close() }, nil
+}
+
+// browserSurfaceFromEnv is `Options.BFF`, or the `404` four routes declining.
+//
+// # BOTH VARIABLES, OR NEITHER
+//
+// `IDENTITY_URL` is "there is an identity to ask". `REDIS_URL` is "there is more
+// than one replica, and the things that must survive a restart or a peer live in a
+// shared store". A browser session is BOTH of those — a per-process map signs a
+// browser out on the next restart and on whichever replica it did not sign in to —
+// so this is the one place the two variables are read together, and the rule is
+// that neither alone builds a browser surface:
+//
+//   - `IDENTITY_URL` and no `REDIS_URL`: no browser surface. Not a degraded one.
+//     A per-process store is the shape this packet exists to stop, and refusing to
+//     offer it is the refusal `NewBff` already makes on a nil store.
+//   - `REDIS_URL` and no `IDENTITY_URL`: no browser surface either, and the four
+//     routes decline with the reference's `404`. A limiter that counts buckets in
+//     Redis is a perfectly configured gateway that serves no browser traffic, which
+//     is `createApp({})` with a shared counter and not a fault.
+//
+// # THE STORE IS BUILT ON THE LIMITER'S CLIENT, NOT A SECOND ONE
+//
+// `redis` is the `*ratelimit.LazyRedis` that `counterStore` already built, and it
+// hands the SAME connection to `sessionredis`. So one deployment has one socket to
+// Redis rather than two, one command-in-flight lock rather than two, and one
+// implementation of RESP2 rather than two implementations that will disagree. It
+// is why `counterStore` returns the concrete `*LazyRedis` rather than the
+// `ratelimit.Commands` interface it used to: the interface is the limiter's two
+// methods and has no `Do`, so a session store held as an interface value would
+// have had to type-assert its way to the third.
+//
+// And the store's connection is LAZY, so building it does not dial: a gateway
+// configured with a `REDIS_URL` that is down still starts, and answers `/readyz`
+// with `redis` named as unavailable — which is the contract the limiter already
+// has, and the reason a session store being unavailable is a `503` on one route
+// rather than a gateway that will not boot.
+//
+// # AN `IDENTITY_URL` THAT DOES NOT PARSE IS A REFUSAL TO BOOT
+//
+// Handed to `NewBff` unchanged, which validates it, rather than validated here and
+// handed on. One validator for one variable: a second copy of the http(s)-and-no-
+// path rule in this file is a second sentence to keep in step with the first.
+func browserSurfaceFromEnv(env Env, redis *ratelimit.LazyRedis) (*BffOptions, error) {
+	identityURL := trimSpace(env("IDENTITY_URL"))
+	if identityURL == "" || redis == nil {
+		return nil, nil
+	}
+
+	store, err := sessionredis.NewLazy(redis, time.Now)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BffOptions{IdentityURL: identityURL, Sessions: store}, nil
 }
 
 // keySetProbe asks identity whether it can be reached at all.

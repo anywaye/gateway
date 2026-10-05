@@ -54,6 +54,13 @@ var runtimeVariables = []string{
 	"ASSERTION_TTL_MS",
 	"ROUTE_TABLE",
 
+	// The browser surface. The FIFTEENTH, and the only one that is read together
+	// with another: a session store has to be shared to be worth having, so
+	// `IDENTITY_URL` with no `REDIS_URL` configures no browser surface at all.
+	// `browserSurfaceFromEnv` carries why, and `runtime.go`'s header says what
+	// answers when it is set.
+	"IDENTITY_URL",
+
 	// The verifier and the limiter.
 	"GATEWAY_CLIENT_ID",
 	"IDENTITY_ISSUER",
