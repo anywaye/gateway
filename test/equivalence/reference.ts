@@ -39,6 +39,9 @@
 // and is the failure mode this file exists to prevent.
 import { createApp, type AppOptions, type ProbeStatus } from "../../src/index";
 import type { BffOptions } from "../../src/bff/auth";
+import { memoryRateLimitStore } from "../../src/middleware/rateLimitStore";
+import type { LimitTable } from "../../src/middleware/limits";
+import type { RateLimitStore } from "../../src/middleware/rateLimitTypes";
 
 // # THE BFF SCENARIOS, AND WHY THE REFERENCE HAS TO BE GIVEN A FETCH
 //
@@ -299,6 +302,96 @@ SCENARIOS.gatedUpstream = {
   probes: probeForRouting,
   routes: routes(),
   jwt: { issuer: "https://identity.localhost", audience: "gateway" },
+};
+
+// # THE LIMITER'S TWO REFUSALS, WHICH ARE NOT REFUSALS OF THE SAME THING
+//
+// `limitsExhausted` and `counterStoreDown` are two scenarios rather than two
+// modes of one because they answer differently and the difference IS the
+// property: the first answers `429`, the second answers `200`. A configuration
+// in which both did the same thing would be indistinguishable from a limiter
+// that was never mounted, so they must not look alike.
+//
+// # WHY THE CLOCK IS FIXED AND WHY IT IS FIXED TO A CONSTANT
+//
+// `rateLimit.now` is the seam `AppOptions` documents as "clock, injected so a
+// test can cross a window boundary without sleeping". A limiter compared on a
+// live clock is a limiter compared on `Date.now()`, and `RateLimit-Reset` and
+// `Retry-After` are both derived from it — so two runs a millisecond apart render
+// two different numbers and the comparison fails on arithmetic nobody is looking
+// at. Frozen, the numbers are exact integers and the refusal is a function of the
+// request count alone.
+//
+// 2026-01-01T00:00:00Z. Whole seconds, so no rounding question can be blamed on
+// the fixture; `internal/equivalence/scenarios.go` states the same instant in Go
+// as a `time.Time` and asserts the two agree.
+const FIXED_NOW_MS = 1_767_225_600_000;
+
+// Three per minute: small enough that four requests cross it, large enough that
+// the crossing is a burst rather than a single request immediately after another.
+//
+// GCRA spends the allowance continuously, so with the clock frozen the third
+// request lands exactly on the threshold and the fourth is refused — `count` in
+// `internal/ratelimit/store.go` is strictly greater-than, which is what lets a
+// burst of exactly `limit` through. One per minute would refuse on the second
+// and would not exercise the boundary the way three does.
+const limiterTable: LimitTable = {
+  default: { limit: 3, windowMs: 60_000, policy: "gateway-api" },
+  routes: {},
+};
+
+// A limiter at an allowance small enough that a burst crosses it. This is the
+// scenario that compares the `429` itself — the status, the problem body, and
+// the rate-limit headers ON THE REFUSAL — which none of the other scenarios
+// reach, because every one of them runs under an allowance no burst in the suite
+// can cross.
+SCENARIOS.limitsExhausted = {
+  probes: probeForRouting,
+  routes: routes(),
+  rateLimit: { limits: limiterTable, store: memoryRateLimitStore(), now: () => FIXED_NOW_MS },
+};
+
+/**
+ * A counter store that cannot be reached.
+ *
+ * The contract is explicit that an implementation THROWS when its storage is
+ * unreachable, and that turning that into a response is the middleware's
+ * decision. This one throws, with a host, a port and a credential in the
+ * message, so the comparison can prove the reason reaches neither the response
+ * body nor the `/readyz` body — the leak `AGENTS.md` is about.
+ *
+ * It is the store's own shape rather than a wrapper: a wrapper that swallowed
+ * the throw and answered "allowed" would test the wrapper, not the fail-open
+ * path.
+ */
+function unreachableStore(): RateLimitStore {
+  return {
+    hit: () =>
+      Promise.reject(
+        new Error("dial tcp 10.0.3.9:6379: connect: connection refused (REDIS_URL=redis://:hunter2@redis.internal)"),
+      ),
+  };
+}
+
+// The same limiter over a store that cannot be reached. `internal/ratelimit`
+// fails OPEN: the request is served, uncounted, with no rate-limit headers at
+// all — a client told `RateLimit-Limit: 3` and then never refused is worse than
+// a client told nothing. Failing closed would hand a Redis outage to every caller
+// as a 429.
+//
+// The `redis` probe is what makes the gap visible instead of silent. It is
+// declared here rather than derived from the store because the reference has no
+// way to derive it: `runtimeOptions` registers it from `REDIS_URL` at the edge,
+// and a subprocess given a store directly is a subprocess given a configuration
+// the deployment builds some other way.
+SCENARIOS.counterStoreDown = {
+  probes: {
+    redis: async () => {
+      throw new Error("dial tcp 10.0.3.9:6379: connect: connection refused (REDIS_URL=redis://:hunter2@redis.internal)");
+    },
+  },
+  routes: routes(),
+  rateLimit: { limits: limiterTable, store: unreachableStore(), now: () => FIXED_NOW_MS },
 };
 
 // `GATEWAY_EQUIVALENCE_SCENARIO` names the scenario rather than argv, so the
