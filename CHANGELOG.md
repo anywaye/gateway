@@ -10,6 +10,39 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
+- **`/v1/api-keys`' 60/min allowance is a deliberate tightening, checked, and left
+  alone — and the reference's own suite would not have noticed it changing.**
+  `REPORT-gateway-api-keys-01.md` §1 settles the question the allowance-table packet
+  flagged. The Go side already matched `src/middleware/limits.ts` and was verified
+  byte for byte across eight paths rather than read off a table, so **no number
+  moved on either side**; `internal/ratelimit/limits.go` gained the argument as a
+  comment, because the row's existing comment states the intent and not the
+  decision.
+
+  The argument is the table's shape: **every entry that names a new bucket is
+  strictly cheaper than the bucket it inherits**, and the one exception (`/v1/`) is
+  not an exception because it reuses the default's own `gateway-api` name at the
+  default's own 600. A dropped digit would not land on both "tighter than its
+  parent" and "the number the table already spends on a named security surface".
+
+  The finding worth acting on is an asymmetry, measured by planting `60`→`600` in
+  both trees. **The reference does not notice** — `bun test src/middleware/limits.test.ts`
+  reports 17 pass / 0 fail, because `limits.test.ts:74-78` pins the *policy name*
+  for this row and no number while pinning 10, 5 and 600 for its neighbours.
+  **Four Go assertions do**: two in `limits_test.go`, one through `PolicyResolver`,
+  and one reading `q=` out of `RateLimit-Policy` through the whole HTTP stack. So
+  the number is currently held by the Go suite alone — the safe direction to fail
+  in, and the reason those four stay exactly as they are.
+- **`RATE_LIMIT_TABLE` — the escape hatch the limit table's own header offers
+  operators — does not exist.** `limits.ts:53` tells an operator with a real traffic
+  shape to "replace this table with their own through `RATE_LIMIT_TABLE`". That
+  variable appears exactly once in the repository: in that sentence.
+  `runtimeOptions` reads `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_MS`, and both
+  write the **default row only** (`src/index.ts:409-410`), so no per-route entry is
+  configurable from the environment on either side. The honest statement is the
+  inverse of the header's: a shipped allowance is **not** operator-tunable in a
+  deployment today. That raises the stakes on every number in the table slightly,
+  and it is a packet rather than something to change here.
 - **The recorded reason for the missing Go session store was CHECKED, and it is
   CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01.md`
   verifies both halves against `cafaye/identity` at source rather than inheriting
