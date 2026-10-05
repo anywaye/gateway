@@ -8,6 +8,34 @@ dependency versions follow npm's own rules.
 
 ## [Unreleased]
 
+### Changed
+
+- **The recorded reason for the missing Go session store was CHECKED, and it is
+  CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01.md`
+  verifies both halves against `cafaye/identity` at source rather than inheriting
+  them, because a claim in a document is a reader's premise:
+
+  - identity's `sessions` table **has no column for the presented value**. It is
+    keyed on `token_digest` with a unique index, `migrations/00003_sessions.sql`
+    stores "only its SHA-256", and the table's only read — `ByToken` —
+    takes a *token* and hashes it. So the inverse lookup gateway needs
+    (browser id → identity token) is not merely absent, it is unimplementable
+    from that table: the value is not stored. `/v1/session` carries only `post`
+    and `delete`, so there is no HTTP route either.
+  - Go's `internal/` rule forbids the import, **answered by the compiler**: a
+    scratch module with a `replace` onto the identity checkout fails with
+    `use of internal package github.com/cafaye/identity/internal/sessions not
+    allowed`. That line arrives *after* unrelated missing-go.sum errors rather
+    than instead of them, so it is the kind of failure a skimmed log reads as
+    something else.
+
+  Both hold, so the justification in `README.md` and in `internal/session`'s
+  package comment stays as written — it is accurate. What it wrongly implied is
+  that nothing could be built. Gateway **owns** its sessions rather than reusing
+  identity's, and the decision is to put them in Redis over the RESP2 transport
+  `internal/ratelimit` already speaks, sharing **one** client and one socket with
+  the limiter rather than forking `resp.go`.
+
 ### Added
 
 - **The per-route allowance table, in Go.**
