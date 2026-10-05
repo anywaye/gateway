@@ -1419,5 +1419,5 @@ dependency versions follow npm's own rules.
   that cannot mint a session is a gateway that should not be taking traffic, and
   liveness — which is what a restart acts on — is untouched.
 
-[Unreleased]: https://github.com/cafaye/guard/compare/v0.0.0...HEAD
-[v0.0.0]: https://github.com/cafaye/guard/releases/tag/v0.0.0
+[Unreleased]: https://github.com/cafaye/gateway/compare/v0.0.0...HEAD
+[v0.0.0]: https://github.com/cafaye/gateway/releases/tag/v0.0.0
