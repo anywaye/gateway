@@ -10,6 +10,80 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
+- **`/v1/api-keys`' 60/min allowance is a deliberate tightening, checked, and left
+  alone — and the reference's own suite would not have noticed it changing.**
+  `REPORT-gateway-api-keys-01.md` §1 settles the question the allowance-table packet
+  flagged. The Go side already matched `src/middleware/limits.ts` and was verified
+  byte for byte across eight paths rather than read off a table, so **no number
+  moved on either side**; `internal/ratelimit/limits.go` gained the argument as a
+  comment, because the row's existing comment states the intent and not the
+  decision.
+
+  The argument is the table's shape: **every entry that names a new bucket is
+  strictly cheaper than the bucket it inherits**, and the one exception (`/v1/`) is
+  not an exception because it reuses the default's own `gateway-api` name at the
+  default's own 600. A dropped digit would not land on both "tighter than its
+  parent" and "the number the table already spends on a named security surface".
+
+  The finding worth acting on is an asymmetry, measured by planting `60`→`600` in
+  both trees. **The reference does not notice** — `bun test src/middleware/limits.test.ts`
+  reports 17 pass / 0 fail, because `limits.test.ts:74-78` pins the *policy name*
+  for this row and no number while pinning 10, 5 and 600 for its neighbours.
+  **Four Go assertions do**: two in `limits_test.go`, one through `PolicyResolver`,
+  and one reading `q=` out of `RateLimit-Policy` through the whole HTTP stack. So
+  the number is currently held by the Go suite alone — the safe direction to fail
+  in, and the reason those four stay exactly as they are.
+- **`RATE_LIMIT_TABLE` — the escape hatch the limit table's own header offers
+  operators — does not exist.** `limits.ts:53` tells an operator with a real traffic
+  shape to "replace this table with their own through `RATE_LIMIT_TABLE`". That
+  variable appears exactly once in the repository: in that sentence.
+  `runtimeOptions` reads `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_MS`, and both
+  write the **default row only** (`src/index.ts:409-410`), so no per-route entry is
+  configurable from the environment on either side. The honest statement is the
+  inverse of the header's: a shipped allowance is **not** operator-tunable in a
+  deployment today. That raises the stakes on every number in the table slightly,
+  and it is a packet rather than something to change here.
+- **What porting API-key management to Go would take: a contract change, not a
+  translation — and it obliges the TypeScript reference in the same commit.**
+  `REPORT-gateway-api-keys-01.md` §2 enumerates it. `openapi/v1.yaml` declares
+  seven operations and **zero** `api-keys` operations; the `apiKeyCredential`
+  security scheme describes how a caller *presents* a key and is not coverage for
+  managing one, and the document says so itself at lines 787-789. Three operations
+  would have to be **added** — `POST /v1/api-keys`, `GET /v1/api-keys`,
+  `DELETE /v1/api-keys/{id}` — with two new schemas and one new parameter.
+
+  The consequence that makes this the wrong shape for a port: `openapi/v1.yaml`
+  describes what **gateway** answers, and gateway answers it in TypeScript until
+  `src/` is deleted. Adding the operations makes
+  `test/openapiDocument.test.ts` demand matching routes in `src/`, so it is
+  "add a feature to the reference, then add it to the port" — contract first, then
+  reference, then Go.
+
+  Three questions in that change belong to the manager and are named rather than
+  answered:
+
+  - **Does the listing response carry `hash`?** `ApiKeyRecord` has six fields and
+    one is the digest. Rule 1 is about what is *stored* and rule 2 about what is
+    *shown*, so a display projection is required and neither tree builds one.
+  - **Is `DELETE` on a key that is not yours a `204` or a `404`?** `revoke` refuses
+    by not acting, and cross-tenant is absence — but every other operation in the
+    document 404s on a missing resource, so this needs the sentence saying why.
+  - **Is there a scope requirement on any of the three?** `requireScope` exists and
+    **no route in `createApp` uses it**, so today any valid credential could mint,
+    list and revoke. Whether revocation needs a weaker scope than issuance — a
+    compromised issuance-capable caller should not also be able to destroy the audit
+    trail — is an authorization policy question.
+
+  One reframe worth recording, because it is a third reason the Q1 number is
+  deliberate and the strongest of the three: **`/v1/api-keys` is a route that does
+  not exist yet.** `apiKey.ts`'s five exports are three helpers, a store, a
+  middleware, and three management operations that no route calls in either
+  language. So the row is an allowance declared for a surface that is not served
+  yet, and a number chosen *before* the question of traffic existed is what a
+  starting-point-not-a-measurement number looks like. It also means the row is
+  currently inert on the wire — nothing ever draws `gateway-api-keys` — so the four
+  Go assertions holding 60 are holding the resolution rule, not a live quota.
+
 - **The recorded reason for the missing Go session store was CHECKED, and it is
   CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01.md`
   verifies both halves against `cafaye/identity` at source rather than inheriting

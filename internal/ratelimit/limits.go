@@ -107,6 +107,49 @@ func DefaultLimitTable() LimitTable {
 			"/v1/":           {Limit: 600, Window: minute, Policy: "gateway-api"},
 			// Minting and revoking credentials is a write on the security surface, so
 			// it gets its own budget rather than the general API's.
+			//
+			// # 60, NOT 600. THAT NUMBER WAS CHECKED, AND IT STAYS.
+			//
+			// A port that copies a table is how a wrong number survives a rewrite
+			// twice, so here is the record of the one that looks wrong.
+			// `REPORT-gateway-api-keys-01.md` §1 has the long form; the short form is
+			// the shape of the table.
+			//
+			// **Every entry in this table that names a NEW bucket is strictly cheaper
+			// than the bucket it inherits.** `/auth/register` 5, `/auth/login` 10 and
+			// `/auth/logout` 30 each sit under `/auth/`'s 60, which itself sits under
+			// the default's 600. The one entry that is not cheaper than what it
+			// inherits is `/v1/` — and it is not cheaper because it is not a new
+			// bucket: it reuses the default's own `gateway-api` name at the default's
+			// own 600. It is the same row written twice.
+			//
+			// So a nested entry has exactly one way to add itself here, and this is
+			// the only entry on the `/v1` side that uses it. A digit dropped off a
+			// `600` would not land on a number that is BOTH tighter than its parent
+			// AND equal to the one number the table already spends on "a named
+			// security surface". That is the outcome of a decision, and the direction
+			// is the half the decision is about.
+			//
+			// What the endpoint does agrees. `/auth/login` is 10 because a password is
+			// guessable work; a machine credential is 32 CSPRNG bytes, so there is
+			// nothing to guess. It is not cheap to leak either — it works until
+			// somebody revokes it, and a holder may never look — so it belongs between
+			// guessable work and ordinary API traffic, which is where 60 already is.
+			//
+			// **THE NAME IS THE LOAD-BEARING HALF, NOT THE NUMBER.** The name is half
+			// the counter key, so this row is what stops a caller spending its
+			// credential-minting allowance on ordinary API traffic. The number bounds
+			// how fast one compromised session fans out into standing credentials,
+			// and the header on `DefaultLimitTable` already calls these a starting
+			// point rather than a measurement.
+			//
+			// Worth knowing before editing the 60: the reference's own suite pins only
+			// the POLICY NAME for this row — `limits.test.ts` asserts
+			// `gateway-api-keys` and no number, while it does pin 10, 5 and 600 for
+			// its neighbours. The three Go assertions over this number
+			// (`limits_test.go` twice, `internal/httpapi/runtime_limits_test.go` once,
+			// the last of them through the whole HTTP stack) are therefore the only
+			// thing in either tree holding it, and this comment is why they say 60.
 			"/v1/api-keys": {Limit: 60, Window: minute, Policy: "gateway-api-keys"},
 		},
 	}
