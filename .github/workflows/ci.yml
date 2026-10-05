@@ -28,54 +28,42 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# `GATEWAY_EQUIVALENCE_REQUIRED` is read by exactly one place in this repository:
-# `bin/prime-go:172`, inside the branch that fires when the equivalence tier
-# prints its counted skip. It is here and only here for the same reason the Redis
-# job sets `GATEWAY_REDIS_REQUIRED=true`: a skip nobody can see is a green run
-# that verified nothing, and this repository has been bitten by that twice — once
-# on the Redis tier and once by `docker build --target test` running 392 tests
-# across 15 files where the host ran 399 across 16.
+# THERE IS NO WORKFLOW-LEVEL ENV ANY MORE, and the absence is the finding.
 #
-# KEPT, NOT REMOVED, and the reason is a measurement rather than a sentiment.
-# The packet's instruction was to grep before touching it, and the grep was run
-# over the whole worktree:
+# This file used to set `GATEWAY_EQUIVALENCE_REQUIRED: "1"` job-wide, on the
+# reasoning that a skip nobody can see is a green run that verified nothing. The
+# reasoning was sound and the flag had a reader: `bin/prime-go`, inside the
+# branch that fired when the equivalence tier printed its counted skip.
 #
-#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --exclude-dir=node_modules --exclude-dir=.git .
-#   bin/prime-go:172:  if [ "${GATEWAY_EQUIVALENCE_REQUIRED:-0}" = "1" ]; then
-#   bin/prime-go:173:    echo "bin/prime-go: GATEWAY_EQUIVALENCE_REQUIRED=1 and there is
-#                            nothing to compare against." >&2
-#   Dockerfile:83, gate.yml:347, README.md:947, CHANGELOG.md:639, AGENTS.md:408,
-#   REPORT-*.md, HANDOFF-docs-corrections-01.md  -- prose, all of it
-#   .github/workflows/ci.yml:31,44              -- this comment and this variable
+# Then two commits in the same merge removed the reader, from opposite ends:
 #
-#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --include='*.go' .
-#   (no output; rc=1)
+#   f87c891  deleted the harness that printed the summary line the flag guarded
+#   3e9f856  (this file's sibling packet) deleted the whole equivalence block
+#            from `bin/prime-go` -- which was already dead, since it exits 1 at
+#            an EARLIER check, before the flag is ever read
 #
-# So: something reads it, therefore it stays. And the previous version of this
-# comment was WRONG about who — it said "`internal/equivalence` reads it", which
-# was true of the harness f87c891 deleted and is true of nothing now. Zero hits
-# in any `.go` file. The reader is a shell script, and the variable is a
-# documented interface to that script rather than to Go code. Corrected here
-# because a comment naming the wrong reader sends the next person to grep for a
-# Go symbol that has not existed since the cutover.
+# The variable was kept across that merge on a measurement that was correct when
+# it was taken and wrong by the time the two packets landed: it grepped
+# `bin/prime-go:172` and found the reader. In the merged tree there is none:
 #
-# WHAT IT IS WORTH NOW, honestly: not much, and that is a finding rather than a
-# hedge. `bin/prime-go`'s check runs in this order — it greps for the summary
-# line first, and if neither the summary nor a counted skip is present it exits
-# 1 before line 172 is ever reached. f87c891 removed the harness that printed
-# both. So `bin/prime-go` fails today with or without this variable set, and the
-# variable cannot rescue it. It is kept because the reader exists and a
-# documented interface is not mine to delete; whoever rewrites `bin/prime-go`
-# for the Go-only tree should decide whether the flag survives the rewrite, and
-# this comment is where they will look.
+#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --exclude-dir=.git --exclude-dir=node_modules .
+#   Dockerfile:83, README.md:947, CHANGELOG.md:639, AGENTS.md:408, gate.yml:347,
+#   REPORT-*.md, HANDOFF-*.md   -- prose describing a tier that no longer exists
+#   .github/workflows/ci.yml     -- the comment above
+#   (no reader; rc=1)
 #
-# It is a JOB-level env rather than a step-level one because `bin/prime` runs
-# the Go tier itself, and the equivalence check is inside it. There is
-# deliberately no `prime-go` job: two jobs running two tiers would be the gate
-# existing twice, and the two could disagree about what "the Go tier is green"
-# means.
-env:
-  GATEWAY_EQUIVALENCE_REQUIRED: "1"
+# A variable that is set in CI and read by nothing is worse than a missing one.
+# It costs a reader's time, it implies a gate that does not exist, and it is the
+# shape of the exact bug the CI work in this repository keeps finding: a claim
+# wired to nothing, reading as a check because it is spelled like one.
+#
+# The prose hits are NOT fixed here. `Dockerfile:83`, `README.md:947`,
+# `AGENTS.md:408`, `CHANGELOG.md:639` and `gate.yml:347` all describe the
+# equivalence tier as something CI sets, and every one of them is now false.
+# They are documentation, they do not affect any run, and they are a separate
+# packet from this one. They are named here so the next person does not have to
+# rediscover that the variable and the prose went out of date together.
+env: {}
 
 jobs:
   # -------------------------------------------------------------- shared half
