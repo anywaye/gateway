@@ -203,3 +203,135 @@ defensible limit becomes an accident:
   records the measurement for why: `createApp({bff})` answers `{"deps":{}}`, so a
   probe added in the wrong place makes `/readyz` differ from the reference at
   byte 9.
+
+---
+
+## What landed, and how it was proved
+
+`internal/sessionredis` is the store. It reproduces `src/bff/session.ts` rather than
+inventing a session model, row by row:
+
+| the reference does | this store does |
+|---|---|
+| `Map` keyed by the minted id | `gateway:sess:<id>`, prefix fixed, no operator knob |
+| `expiresAt` compared on read: `expiresAt <= now()` | the same comparison, the same **inclusive** boundary |
+| expired record dropped on the way out | `GET` then `DEL`, the same read-is-the-sweep reasoning |
+| `delete` of an absent id succeeds | `DEL` of an absent key succeeds |
+| an already-expired `put` is stored, reads back absent | stored, `PX` clamped to `1`, reads back absent |
+| `maxSessions` bounds retained memory, never evicts a live session | no bound, and none needed |
+
+It is built on `internal/ratelimit`'s client and `RuntimeOptions` hands **the same
+`*LazyRedis`** to the limiter and to the store. `sessionredis` declares its own
+one-method `Commands` and a `Connecter` for the lazy client rather than widening
+`ratelimit.LazyRedis`, so `internal/ratelimit` gained nothing and lost nothing — the
+change is confined to `counterStore`'s and `probeList`'s return type, and the nil
+check there is now on a concrete pointer where a typed-nil interface would have been
+the trap.
+
+Two properties the reference cannot have, both found while porting:
+
+- **A session id is caller input on `Get` and `Delete`.** It arrives in the cookie.
+  The reference has no such hazard — a `Map` cannot be escaped by a crafted key —
+  which is exactly why the hazard only appears when the map becomes a shared store.
+  An id that is not the canonical lowercase UUID `login` mints is **absent** and
+  issues no command, so no caller byte reaches a key. On `Put` the asymmetry is the
+  other way and is deliberate: that id is gateway's, minted one line above the call,
+  so a bad one is a defect here and is **refused**.
+- **The token is stored in the clear**, because `Get` must return it. A digest could
+  not answer, so this is forced by the BFF's claim rather than chosen. It is named
+  in the package comment and in `README.md` rather than glossed, and `describe()`
+  reports a reply by shape so no error path can log a credential.
+
+### The wiring, which was the untested half
+
+The gap was never the interface — it was that **nothing went from "these variables
+are set" to "the routes are served"**. Every existing test built `Options{BFF: …}`
+with the fixture, so a gateway with no store and a gateway with a store were
+indistinguishable from outside.
+
+`internal/httpapi/runtime_session_test.go` closes that, and it runs against a **real
+`redis-server` started in-process on a free port**:
+
+```
+$ go test ./internal/httpapi/ -run 'Runtime|Session|Configured|Unconfigured|Browser' -v
+--- PASS: TestARuntimeGatewaySignsInAndReadsItsOwnSession (0.03s)
+--- PASS: TestASessionSurvivesTheProcessThatCreatedIt (0.03s)
+--- PASS: TestANoStoreMeansNoBrowserSurfaceRatherThanADegradedOne (0.00s)
+--- PASS: TestAnUnconfiguredGatewayDeclinesTheFourRoutesAsTheReferenceDoes (0.00s)
+--- PASS: TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem (0.00s)
+--- PASS: TestAnUnusableIdentityURLIsARefusalToBoot (0.00s)
+ok  	github.com/cafaye/gateway/internal/httpapi	0.752s
+```
+
+No `GATEWAY_REDIS_URL` and **no skip**: the server is executed by the test, so a
+developer with no Redis gets a *failing* test that says so rather than a passing one
+that proved nothing. That is the fourth instance in this repository of a gated tier
+that could go green without running — the limiter's `TestMain` exiting 0 before
+`m.Run`, the equivalence tier's skip into a void, and the codegen step's `|| true`
+are the other three — and the shape here is deliberate rather than accidental.
+
+The headline assertion is the whole exchange, not a status: login → cookie →
+`/auth/me` with the cookie → logout → the same cookie is `401`. And
+`TestASessionSurvivesTheProcessThatCreatedIt` builds a **second gateway from the same
+environment** and reads the first one's session — the property a `Map` cannot have,
+and the reason this packet exists rather than a refusal.
+
+### The guards, as a pair
+
+`internal/sessiontest`'s `TestNoProductionFileImportsTheSessionDouble` proves the
+**fixture** is not linked. `internal/sessionredis`'s `TestTheShippedBinaryLinksThisStore`
+asserts the **real** store **is**. A guard that only ever says "no" cannot notice that
+the "yes" stopped happening, and that is precisely the shape of the gap this closed —
+so the inverse guard is not decoration.
+
+### Planted divergences, because a guard has to be shown to fail
+
+Three, each reverted, each caught by the named test:
+
+| planted | caught by | how |
+|---|---|---|
+| `browserSurfaceFromEnv` always returns nil | `TestARuntimeGatewaySignsInAndReadsItsOwnSession`, `TestASessionSurvives…`, `TestAConfiguredBrowserSurface…` | the four routes answered `404` — with the message naming the defect |
+| the expiry check removed | `TestTheExpiryBoundaryIsInclusive` | `a session expiring exactly now is live=true, want false`, and the `DEL` never issued |
+| the id assertion removed | `TestCallerSuppliedBytesNeverReachAKey` | `GET gateway:sess:../../config` — caller bytes in a key |
+
+### The narrow gate
+
+```
+$ bin/prime-go
+==> ok
+
+suite: 187 passed, 0 failed
+packages: 6 with tests
+```
+
+The one line to read rather than skip past is
+`ratelimit: DID NOT RUN — GATEWAY_REDIS_URL is unset`, which is the **limiter's**
+gated tier and is unchanged by this packet. The session store's Redis tier is
+`internal/httpapi`'s and it ran in the same invocation — a `redis-server` is started
+by the tests themselves, which is why it is not listed among the skips.
+
+`go test -race ./internal/sessionredis/ ./internal/httpapi/` is also green.
+
+---
+
+## Left for a successor
+
+1. **The `identity` readiness probe.** `RuntimeOptions` now reads `IDENTITY_URL` and
+   builds the browser surface, but registering the `identity` probe is still
+   elsewhere's job — `New` must not do it, because `createApp({bff})` answers
+   `{"deps":{}}` and a probe there changes `/readyz` at byte 9. The successor who
+   owns the remaining `runtimeOptions` variables should register it *and* confirm the
+   probe order still renders identity-then-redis.
+2. **Equivalence coverage for the wired surface.** `internal/equivalence`'s browser
+   scenarios build `Options{BFF: …}` by hand and so still use `sessiontest`. They
+   are correct — they compare the PORT, not the deployment — but there is now a
+   second, stronger set of assertions in `runtime_session_test.go`, and the two
+   should be reconciled rather than left to drift. The TypeScript reference uses a
+   `Map`, so a browser scenario comparing both implementations cannot use Redis on
+   the Go side without also giving the reference a store; that is a real constraint
+   on that packet, not an oversight here.
+3. **`REDIS_PREFIX` for sessions.** The limiter takes a sub-namespace; the session
+   store deliberately has no operator-settable prefix (one namespace is one thing to
+   reason about). If two gateways must share one Redis with separate session
+   namespaces, the prefix becomes a knob and belongs in `REDIS_PREFIX` — a change to
+   one variable, not to this design.

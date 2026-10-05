@@ -3,38 +3,47 @@
 //
 // # THIS IS NOT THE SERVICE'S SESSION STORE
 //
-// `internal/httpapi` ships NO session store. `Options.BFF.Sessions` is a
-// `SessionStore`, and the only implementations of it in this module live in test
-// files or in this package — which is why this package exists as its own module
-// path rather than as a `_test.go` inside `httpapi`: `internal/equivalence` is a
+// `Options.BFF.Sessions` is a `SessionStore`, and the service's implementation of
+// it is `internal/sessionredis` — Redis, over `internal/ratelimit`'s transport.
+// The implementations in THIS package are the ones the suite and the equivalence
+// check stand in with, which is why this package exists as its own module path
+// rather than as a `_test.go` inside `httpapi`: `internal/equivalence` is a
 // separate package and needs one too, and a `_test.go` is invisible across a
 // package boundary.
 //
 // That visibility is the point, so it is ENFORCED rather than asserted in a
 // comment. `TestNoProductionFileImportsTheSessionDouble` reads every non-test
 // source file under `cmd/` and `internal/` and fails on any import of this
-// package. So "the Go service ships no session store" is a property a reader can
-// check by running one test, not a promise in a header that a later packet could
-// quietly break by adding one import.
+// package. So "the shipped binary holds no per-process session store" is a
+// property a reader can check by running one test, not a promise in a header that
+// a later packet could quietly break by adding one import.
 //
-// # WHY THERE IS NO IMPLEMENTATION, IN ONE PARAGRAPH
+// And it is the mirror of `internal/sessionredis`'s guard, which asserts the real
+// store IS linked. Both are needed: the fixture guard says the wrong store is not
+// there, the other says the right one is, and the failure this repository actually
+// had was the second one silently untrue.
+//
+// # WHY THE STORE IS A FIXTURE AND NOT WHAT GATEWAY OWNS, IN ONE PARAGRAPH
 //
 // `src/bff/session.ts` has one: a `Map` in one process, marked
 // `TODO(guard-06)`/`TODO(guard-07)` for Redis. Porting it would have copied the
 // worse of two designs into the language that makes the better one easier to
-// write. The better one is `identity/internal/sessions/store.go` — it is handed a
-// `TokenDigest` and has no code path that can produce a raw credential, and its
-// `ErrNotFound` is one error for "no such token, a revoked token, an expired
-// token, and a token belonging to a deleted user". But it is keyed by
-// `token_digest` and resolves a *token* to a session, which is the OPPOSITE
-// direction from what this service needs (`SessionStore.Get` is handed the
-// browser's opaque id and must return the token), Go's `internal/` rule forbids
-// the import across modules, and no identity endpoint performs the inverse
-// lookup. The `internal/session` package comment has the measurement; this is the
-// consequence of it.
+// write. The better one is not identity's, either: `identity/internal/sessions/
+// store.go` is the better DESIGN — it is handed a `TokenDigest` and has no code
+// path that can produce a raw credential, and its `ErrNotFound` is one error for
+// "no such token, a revoked token, an expired token, and a token belonging to a
+// deleted user" — but it is keyed by `token_digest` and resolves a *token* to a
+// session, which is the OPPOSITE direction from what this service needs
+// (`SessionStore.Get` is handed the browser's opaque id and must return the token),
+// Go's `internal/` rule forbids the import across modules, and no identity endpoint
+// performs the inverse lookup.
 //
-// So the store is a fixture, it says so on every type, and the interface it
-// stands in for is the thing the next packet implements.
+// So gateway OWNS its sessions, in `internal/sessionredis`. What it does not do is
+// own them in a `Map`, and that is what makes this package a fixture rather than a
+// fourth implementation: a per-process store in the binary signs a browser out on
+// the next restart, so a test running against one proves the PORT and nothing about
+// a deployment. `internal/httpapi`'s runtime tests are the ones that run against
+// the real thing.
 package sessiontest
 
 import (

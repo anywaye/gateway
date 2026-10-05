@@ -43,6 +43,57 @@ dependency versions follow npm's own rules.
   entries, the policy names, the longest-prefix-on-a-segment-boundary resolution and
   the `limitTable()` validation. `internal/httpapi/runtime.go` now supplies the
   resolver, so the table is reachable from the shipped binary.
+- **A session store the Go service can actually build, so `/auth/*` stops
+  answering `404` on a configured deployment.** This was the code blocker from
+  `REPORT-gateway-go-port-audit-01.md`: `internal/session` declared the interface,
+  `internal/sessiontest` held a map-backed double whose guard proved no production
+  file imports it, and `cmd/gateway` built no BFF at all — so the Go service could
+  not serve the browser surface while the TypeScript reference serves it today.
+
+  **`internal/sessionredis` is the store, and gateway owns it.** `gateway:sess:<id>`,
+  one `SET` carrying the expiry in the payload with a `PX` backstop, absent and
+  expired the same answer, `DELETE` of an absent id a success — reproduced from
+  `src/bff/session.ts` rather than invented, including the `<=` expiry boundary and
+  the already-expired-`put`-is-stored-and-reads-back-absent row that a stricter
+  store would get wrong.
+
+  It is built on `internal/ratelimit`'s client and **`RuntimeOptions` hands the
+  limiter and the session store the same `*LazyRedis`**, so a deployment has one
+  socket to Redis rather than two, one command-in-flight lock rather than two, and
+  one implementation of RESP2 rather than two implementations that will disagree.
+  `Commands` is the store's own one-method interface and `Connecter` takes the lazy
+  client, so `internal/ratelimit` was not widened for a caller it does not have.
+
+  Two properties the reference's `Map` does not need and a shared store does:
+
+  - **A session id is CALLER INPUT on `Get` and `Delete`**, because it arrives in
+    the `__Host-bff-session` cookie. An id that is not the canonical lowercase UUID
+    `login` mints is *absent* and issues no Redis command at all — so caller bytes
+    cannot reach a key, and a junk cookie is a stranger answering `401` rather than
+    an outage answering `503`. On `Put` the asymmetry runs the other way: that id is
+    gateway's, so a bad one is a defect and is refused.
+  - **The token is stored in the clear**, because `Get` must return it for
+    `/v1/me`'s `Bearer` header. That is the reference's posture and a *different*
+    one from identity's, so it is named rather than glossed. Error messages report a
+    Redis reply by shape and never by contents, so an error path cannot log a
+    credential.
+
+  `RuntimeOptions` reads `IDENTITY_URL` and builds the surface **only with
+  `REDIS_URL` too** — a per-process store is the degraded shape this exists to stop,
+  and `IDENTITY_URL` alone is the configuration that looks set and serves `404`. An
+  unusable `IDENTITY_URL` is a refusal to boot.
+
+  Proved against a **real `redis-server` started in-process** by
+  `internal/httpapi/runtime_session_test.go`, with no `GATEWAY_REDIS_URL` and no
+  skip: login, `/me` with the cookie, logout, the stale cookie refused, and **a
+  second gateway built from the same environment reading a session the first one
+  created** — the property a `Map` cannot have and the reason the whole packet
+  exists. Three planted divergences were caught: dropping `Options.BFF` (the four
+  routes answered `404`), disabling the expiry check (sessions outliving their
+  token), and skipping the id assertion (caller bytes in keys).
+
+  `bin/prime-go` green: **187 passed, 0 failed**.
+
 
   `REPORT-gateway-go-port-audit-01` found this gap and found it **silent**:
   `httpapi.Options.Policy` and `Options.Resolve` were already on the limiter and

@@ -17,12 +17,19 @@
 // file is the only place the claim is stated — the alternative is a comment on one
 // handler, which is a comment the next handler does not read.
 //
-// # THERE IS NO IMPLEMENTATION IN THIS MODULE, AND THAT IS THE DELIBERATE ANSWER
+// # THERE IS NO IN-MEMORY IMPLEMENTATION HERE, AND THAT IS STILL THE ANSWER
 //
 // `src/bff/session.ts` ships `memorySessionStore()`: a `Map` in one process,
 // marked `TODO(guard-06)`/`TODO(guard-07)` for Redis. Porting it into Go would
 // have been copying the worse of two designs into the language that makes the
 // better one easier to write, so this package declares the seam and stops.
+//
+// **The seam is no longer empty.** `internal/sessionredis` is the implementation
+// the service ships — Redis, over `internal/ratelimit`'s transport — and
+// `RuntimeOptions` builds it when `IDENTITY_URL` and `REDIS_URL` are both set.
+// What has not changed is the refusal below: the reason was never "a Map is hard
+// to write in Go", it was "a Map is the wrong shape for a service whose claim is
+// that it holds a credential", and that reason still rules out the map.
 //
 // The better design is `identity/internal/sessions/store.go`, and it has three
 // properties the map store does not:
@@ -61,11 +68,26 @@
 //   - So the only remaining route is an HTTP call, and identity exposes no
 //     endpoint that does the inverse lookup either.
 //
-// Therefore: **deferred, with the reason recorded here rather than in a ticket.**
-// The alternative this packet rejected is shipping a `sync.Map` in the binary and
-// calling it a port — a per-process store that signs a browser out on the next
-// restart, in a service whose entire claim is that it holds a credential so the
-// page does not have to.
+// Therefore: **gateway owns its sessions**, in Redis, over the transport it
+// already speaks. The alternative this package rejected is shipping a `sync.Map`
+// in the binary and calling it a port — a per-process store that signs a browser
+// out on the next restart, in a service whose entire claim is that it holds a
+// credential so the page does not have to.
+//
+// # THE REASON ABOVE WAS CHECKED, NOT INHERITED
+//
+// It arrived as a claim in a document, and it is a claim about another
+// repository's schema. `REPORT-gateway-session-store-01.md` verifies it: identity's
+// `sessions` table has no column for the presented value, `ByToken` is its only
+// read and takes a token, and `/v1/session` carries `post` and `delete` with no
+// inverse lookup. Go's `internal/` rule was answered by the compiler rather than by
+// reading — `use of internal package … not allowed`. Both hold, so this section
+// stands as written and only the conclusion moved.
+//
+// A reader who takes this paragraph as "therefore nothing could be built" is reading
+// a stronger claim than the evidence supports, and that misreading is what left the
+// Go service unable to serve `/auth/*` for several packets. The evidence supports
+// "therefore not identity's", and gateway owns its own.
 //
 // The refusal is at CONSTRUCTION rather than at request time:
 // `httpapi.NewBff` refuses a `Store` that is nil, so a deployment cannot
@@ -77,9 +99,17 @@
 //
 // `internal/sessiontest` holds the map-backed double, and
 // `TestNoProductionFileImportsTheSessionDouble` reads every non-test source file
-// under `cmd/` and `internal/` to prove nothing outside a test can reach it. So
-// the Go service ships no session store at all, and the store the suite runs
-// against is visibly a fixture rather than a deployment choice.
+// under `cmd/` and `internal/` to prove nothing outside a test can reach it. The
+// store the suite runs the browser surface against is therefore visibly a fixture
+// rather than a deployment choice — and the REAL one is proved separately, because
+// `internal/httpapi`'s runtime tests sign in against a real `redis-server` with a
+// real session store and are the only thing in the tree that can say the shipped
+// store works.
+//
+// The two guards are a pair and neither substitutes for the other:
+// `sessiontest`'s says the FIXTURE is not linked, `sessionredis`'s says the REAL
+// one is. A guard that only ever says "no" cannot notice that the "yes" stopped
+// happening, which is the shape of the gap this packet closed.
 package session
 
 import (
