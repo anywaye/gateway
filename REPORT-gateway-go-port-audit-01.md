@@ -301,8 +301,8 @@ This packet's verification is the diff. Run before the final commit:
 
 ```
 $ git diff master...HEAD --stat
- REPORT-gateway-go-port-audit-01.md | 314 ++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 314 insertions(+)
+ REPORT-gateway-go-port-audit-01.md | 316 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 316 insertions(+)
 ```
 
 One added file, nothing else — no modification to any `src/` file, no new Go
