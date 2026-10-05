@@ -279,6 +279,22 @@ jobs:
           # DOWN. When it goes down legitimately, the author lowers this number in
           # the same commit that removed the case, which puts the removal on the
           # record in the diff rather than in a comment nobody reads.
+          #
+          # IT HAS BEEN SHOWN TO FAIL, ON THIS TREE AND NOT ONLY ON FIXTURES
+          #
+          # Two mutations were planted and reverted, both with `bin/prime-go` GREEN
+          # underneath, which is the condition that matters: a tier that fails on its
+          # own has already been reported on by the step above.
+          #
+          # Six cases deleted from `edgeCases`. The tier reported 756 comparisons and
+          # this step failed on the floor. A floor of 72 passed it four times over.
+          #
+          # `comparisons++` changed to `comparisons += 2`, so the summary claimed
+          # 1368 against 912 real comparisons — fifty percent INFLATED, which is
+          # ABOVE the floor, so the floor passed it silently and the arithmetic above
+          # is the only thing that caught it. That is the argument for deriving the
+          # count rather than trusting it: a number a human typed cannot tell an
+          # honest 1368 from a dishonest one, and a row-by-row tally can.
           floor=912
           if [ "$comparisons" -lt "$floor" ]; then
             echo "the equivalence tier compared $comparisons request/case pairs and this floor says $floor."
@@ -290,7 +306,12 @@ jobs:
             exit 1
           fi
 
-          echo "equivalence: $comparisons comparisons over $asked_total cases asked across $scenarios scenarios (floor $floor), every one of them answered identically by both sides"
+          # `cases` AND `asked_total` both, because the two differing IS the shape of
+          # the tier and a reader who sees one number will guess wrong about the
+          # other: `cases` is the base list every scenario starts from, and the
+          # browser and limiter halves are added PER SCENARIO, so a case asked under
+          # six scenarios is counted once in the list and six times in the sum.
+          echo "equivalence: $comparisons comparisons over $asked_total cases asked across $scenarios scenarios, from a base case list of $cases (floor $floor), every one of them answered identically by both sides"
       - name: bun.lock is untouched
         # `bin/prime` runs `bun install --frozen-lockfile`, which fails rather
         # than rewriting the lock — so this is expected to be a no-op, and that is
