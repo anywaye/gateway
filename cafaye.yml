@@ -17,7 +17,17 @@
 # > to read for gateway, which is the cost of leaving it out.
 name: gateway
 description: The cafaye public gateway — the only door in, terminating auth and rate limits in front of every service.
-language: typescript
+# `go`, and it said `typescript` until the otel packet. `src/` was deleted at
+# cutover (f87c891) and `bin/prime` is the Go gate, so `typescript` described an
+# implementation that is not in this repository any more — and it had a cost
+# beyond being wrong: `caf gen telemetry` reads this field and REFUSES any
+# language it does not generate for, so gateway could not take its own telemetry
+# setup from the generator the fleet maintains until this line agreed with the
+# tree. The manifest is specs-owned, so this is recorded here rather than left
+# implicit: one field, one word, no other consequence than that generator works
+# again. It does not resolve DECISION NEEDED item 7 below, which is about which
+# implementation the manifest describes and is still open.
+language: go
 core: ^0.2.0
 
 # gateway subscribes to no events. It answers requests; it does not react to a
