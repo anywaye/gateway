@@ -1,12 +1,12 @@
 # Toolchain pins for gateway. The worktree and CI must agree, so the versions
 # live here rather than in whatever the machine happens to have installed.
 #
-# TWO LANGUAGES, AND WHY THAT IS NOT A RENAME. `go` arrives with the Go port
-# (gateway-go-substrate-01) while `src/` — the TypeScript service that is still
-# the reference implementation — is still here. `src/` is deleted in a later
-# packet, once equivalence is proven, and when it goes the `bun` and `node` pins
-# go with it, exactly as pantry's comment records the `rust` pin going with its
-# Rust tier. Two pins in this file is the temporary state, not the design.
+# ONE LANGUAGE, AND THAT IS THE DESIGN. This file used to pin `bun` and `node`
+# beside `go`, with a comment saying the TypeScript pins go away when `src/` does
+# and that the two-pin state was temporary. `src/` is gone — deleted at cutover
+# (f87c891), after the equivalence harness measured 51 cases / 13 scenarios /
+# 914 comparisons / 0 differences — and these pins are the promise being kept.
+# package.json, bun.lock and tsconfig.json went in the same commit.
 #
 # `bin/prime-go` asserts the Go pin against `go.mod`'s own `go` directive before
 # it runs anything, because nothing else makes the go command enforce either
@@ -23,24 +23,16 @@
 # RUST_VERSION used to name an image rather than a patch. go.mod's `go` directive
 # is the third copy and is the one the compiler enforces.
 #
-# bun 1.3.12 is the same number as the oven/bun base image in `Dockerfile` and the
-# `packageManager` field in package.json. `engines.bun` is a floor, not a
-# pin: `>=1.3.0` is satisfied by 1.3.12 and by 1.9.0 alike, so it says who may
-# run this rather than which one ran. mise is optional, which is why the pin
-# is in package.json too — a contributor without mise must still get the runtime CI
-# tested, and `src/pins.test.ts` is what keeps the copies from drifting apart.
+# WHAT IS NOT HERE, and the omission is the point rather than an oversight:
+# `bun` and `node`. Nothing in this repository runs them any more. There is no
+# TypeScript source to run, no manifest, no lockfile, and no test runner that
+# finds a test; a pin for a runtime the gate never invokes is a second number
+# for a reader to wonder whether somebody forgot to remove the first one.
 [tools]
-bun = "1.3.12"
-node = "22.12.0"
 go = "1.26.1"
 
-[env]
-# Keeps `bun run` and `bunx` from inheriting a NODE_ENV that silently changes
-# which dependency tree a script sees.
-NODE_ENV = "development"
-
 [tasks.prime]
-description = "The gate: both tiers, TypeScript and Go"
+description = "The gate: the Go tier, gofmt/build/vet/test plus generated-code currency"
 run = "./bin/prime"
 
 [tasks.prime-go]

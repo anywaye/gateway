@@ -48,9 +48,19 @@ coverage.*
 # `find`. A Go-side local half — this file, read the way `dockerStage.test.ts` read
 # the Dockerfile — is not written yet, and `HANDOFF-cutover-01.md` says so.
 #
-# `src/` and `test/` are deliberately NOT here: `internal/equivalence` reads
-# `test/equivalence/reference.ts` and stands it up, so the TypeScript tree is in
-# the context until that harness retires with it.
+# `src/` and `test/` are deliberately NOT here, and the reason has changed since
+# the lines above them were written. They used to be kept because
+# `internal/equivalence` read `test/equivalence/reference.ts` and stood it up, so
+# the TypeScript tree had to be in the context until that harness retired with
+# it. The harness retired at cutover (f87c891) and `src/` went with it, so the
+# reason is gone.
+#
+# They stay in the context anyway, and now for a better one: `COPY . .` is the
+# whole of the Go test stage, and the CI `image` job checks what the BUILT image
+# holds — including that no path from the repository leaked into the runtime
+# stage. A `test/` directory absent from the context would make that check
+# vacuously true for the wrong reason. Excluding them now would trade a real
+# assertion for a smaller build context, which is the wrong direction.
 README.md
 AGENTS.md
 CLAUDE.md
