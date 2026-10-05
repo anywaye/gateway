@@ -16,20 +16,21 @@ service: gateway
 #
 # So this file is not empty and it is not all-false either: one route DOES resolve
 # an account and return it, and it is declared as such — `me`, `accountScoped:
-# true`, verified by this run and not by this prose. Read the block above that row
-# before reading this as a complete enumeration: the OTHER registration of that
-# same route, the one `internal/api/api.gen.go` mounts, has no row and is why this
-# run is red.
+# true` — and it is the only row here that says so. It is ALSO the only row that
+# is red, permanently, for a reason that has nothing to do with whether the route
+# is scoped. Read the block above that row before reading this as a complete
+# enumeration or "fixing" the red.
 #
-# TWO FILES, AND WHY THE SECOND ONE IS A GENERATED FILE WITH A HAND-EDITED LINE
-# IN IT.
+# ONE FILE NOW, AND IT IS A GENERATED FILE WITH A HAND-EDITED LINE IN IT.
 #
-# gateway is mid-rewrite: `src/` is the TypeScript REFERENCE and `internal/api`
-# is the Go implementation that will replace it, and both are live. So both
-# register routes, and a declaration that names only one of them is declaring
-# half the surface.
+# `f87c891` deleted `src/`. This used to declare two sources because there were
+# two implementations registering the same seven operations — `src/index.ts` (the
+# TypeScript reference) and `internal/api/api.gen.go` (the Go implementation that
+# replaced it) — and a declaration naming only one was declaring half the surface.
+# There is one implementation now, so there is one source, and the `me` row has
+# exactly one registration to describe rather than one it cannot reach.
 #
-# THE GO FILE NEEDS A WORD, because `oapi-codegen` emits
+# THE GO FILE STILL NEEDS A WORD, because `oapi-codegen` emits
 #
 #     r.Get(options.BaseURL+"/v1/me", wrapper.GetCurrentPrincipal)
 #
@@ -43,47 +44,69 @@ service: gateway
 # line, and `bin/prime-go` fails if a registration whose path is an expression
 # reaches the committed file. That is why the `minimum` below is a number and
 # not zero: pantry's is 0 with a DECISION NEEDED attached, because the same
-# problem there could not be solved without a checker change.
+# problem there could not be solved without a checker change. The committed file
+# is still in the stripped shape, which is what makes that floor 7 and not 0.
 #
-# `surface.minimum: 14` IS THE HONEST COUNT and it is NOT lowered to hide the
-# missing row. A floor set below the truth is a floor that stops being a floor,
-# and `undeclared` is decided by the REGISTRATIONS in the source, never by this
-# file's row count — so lowering it would buy nothing and cost the only
-# decrease-detector this surface has.
-#
-# `14 = 7 + 7`: the same seven operations, registered twice, once by each
-# implementation. That is not double-counting, it is two entry points that exist
-# until the packet that deletes `src/`. When `src/` goes, its source comes out of
-# this list, the seven rows below that name it go with it, and `minimum` returns
-# to 7 — in that commit, because a floor that has to be lowered later is a floor
-# somebody will forget.
+# `surface.minimum` WAS 14 and IS NOW 7, and it was NOT lowered to hide anything.
+# `14 = 7 + 7` was the same seven operations registered twice, once by each
+# implementation. A floor set below the truth is a floor that stops being a
+# floor, and `undeclared` is decided by the REGISTRATIONS in the source, never by
+# this file's row count — so lowering it would buy nothing and cost the only
+# decrease-detector this surface has. The drop to 7 happened in the same commit
+# that deleted the registrations rather than being left for the next reader,
+# because a floor that has to be lowered later is a floor somebody will forget.
+# The measurement that fixes it at 7 is in the comment on the number itself.
 surface:
   kind: http
-  # The TypeScript file. Every route in `src/index.ts` is registered on the `app`
-  # this one function builds, and naming the directory instead would drag in the
-  # 40-odd `_test.ts` files beside it — where `route_defs` counts and D18's three
+  # ONE source, where there were two until f87c891. `src/index.ts` — the
+  # TypeScript reference, which registered the same seven operations on an `app`
+  # that one function built — is gone. It was the FILE that was named here, never
+  # the directory: naming the directory would have dragged in the 40-odd
+  # `_test.ts` files beside it, where `route_defs` counts and D18's three
   # different answers came from.
   #
-  # The Go file. The generated registrations, after `stripbaseurl` — see above for
-  # why that step exists and why the gate holds it. Naming
-  # `internal/api/api.gen.go` and not `internal/` also keeps the checker out of
-  # `internal/httpapi`, where `route_defs` would count the test files' helpers.
+  # The Go file, which is all that is left. The generated registrations, after
+  # `stripbaseurl` — see above for why that step exists and why the gate holds it.
+  # Naming `internal/api/api.gen.go` and not `internal/` also keeps the checker
+  # out of `internal/httpapi`, where `route_defs` would count the test files'
+  # helpers. Worth restating now that httpapi is the only implementation: the
+  # BEHAVIOUR of every route below lives there and the registrations do not, and
+  # this source names the registrations. That gap is what the `me` row's block is
+  # about.
   sources:
-    - src/index.ts
     - internal/api/api.gen.go
-  # 14: the seven operations in the TypeScript file and the same seven in the
-  # generated one. The assertion packet added NO registration — it did not need
-  # one, and an added route is what would have forced this `minimum` to move. See
-  # `principal` in `src/routes/table.ts`: the public half of gateway's assertion
-  # key is exposed through the minter rather than at `/.well-known/jwks.json`,
-  # precisely so this file does not change.
-  #
-  # MEASURED, not counted by hand, and both halves measured rather than one:
+  # 7: the seven operations the generated file registers, and nothing else.
+  # MEASURED, not chosen and not counted by hand — this is the count the checker
+  # reads out of the one declared source, in the run at the bottom of this comment:
   #
   #     $ /Users/kaka/Code/any/moon/cafaye/core/harness/bin/account-scope-check .
+  #     the declared sources register 7 entry point(s) and surface.minimum is 7
   #
-  #   with `options.BaseURL+` back in `api.gen.go` (all seven registrations, one
-  #   command, reverted after measuring):
+  # and those seven are the seven `r.Get`/`r.Post` lines of
+  # `internal/api/api.gen.go` — 1185, 1188, 1191, 1194, 1197, 1200, 1203 — every
+  # one of which this commit re-verified by grep against the file rather than
+  # carrying forward the number the file already had.
+  #
+  # IT WAS 14, AND THE DROP TO 7 IS THE DROP PREDICTED IN THE HEADER. `14 = 7 + 7`
+  # was the same seven operations registered twice, once by `src/index.ts` and once
+  # by `api.gen.go`, and `f87c891` deleted the TypeScript half. The seven rows that
+  # named `src/index.ts` went with it, in the same commit, because that header said
+  # they would and said why: "a floor that has to be lowered later is a floor
+  # somebody will forget."
+  #
+  # THIS IS A LOWERING, and it is worth being explicit that it is not the other
+  # kind. It is not a floor lowered to stop asking a question: the finding it
+  # removes is `surface-thin`, which fired only because the declared sources could
+  # be read at all once `src/index.ts` stopped being named. The number is what one
+  # declared source actually registers, and `undeclared` is decided by the
+  # REGISTRATIONS in the source rather than by this file's row count, so a floor
+  # set below the truth buys nothing and costs the only decrease-detector this
+  # surface has.
+  #
+  # HISTORY, kept because it is why this number is 7 and not 0. MEASURED, both
+  # halves, in gateway-account-scope-ratchet-01:
+  #
+  #   with `options.BaseURL+` back in `api.gen.go` (reverted after measuring):
   #
   #     FAIL account-scope.surface-thin: the declared sources register 8 entry
   #     point(s) and surface.minimum is 14 — and 6 further registration(s) in
@@ -92,188 +115,160 @@ surface:
   #     FAIL 0 account-scoped, 12 not-account-scoped, 0 stale, 1 undeclared,
   #          6 unreadable
   #
-  #   with it removed (the committed state):
+  #   with it removed — the shape f87c891 left behind, and the shape this floor is
+  #   still standing on today:
   #
   #     FAIL 0 account-scoped, 12 not-account-scoped, 0 stale, 2 undeclared,
   #          0 unreadable
   #
-  # So the number that moves is `unreadable: 6 -> 0` and the finding that
-  # disappears is `surface-thin`. Note what core says about the FIRST shape:
-  # "this floor is not being violated, it is unfalsifiable" — a floor the checker
-  # can tell is blind is worse than a floor set too low, because it looks like a
-  # passing floor. That is why `stripbaseurl` exists and why `bin/prime-go` fails
-  # on a committed file that has regressed to it.
-  #
-  # AND IT IS NOT LOWERED BY gateway-account-scope-ratchet-01 EITHER, with one
-  # row fewer covering more of the tree than the run before it. The floor did its
-  # job in this packet: it is why 14 registrations against 13 rows is a question
-  # somebody had to answer rather than a number that happened to be right. A floor
-  # lowered to stop asking a question is the only kind that stops working.
-  #
-  # MEASURED AGAIN, one command, this commit:
-  #
-  #     $ /Users/kaka/Code/any/moon/cafaye/core/harness/account_scope_check.py .
-  #     FAIL: 1 account-scoped, 12 not-account-scoped, 0 stale, 1 undeclared,
-  #            0 unreadable — 1 failure(s), 6 warning(s)
-  #
-  # 14 registrations, 13 rows, and the difference is named rather than rounded
-  # away: it is the Go registration of `GET /v1/me`. Read the block above
-  # `go-readyz` for the four measurements that decide it.
-  minimum: 14
+  # So the number that moved there was `unreadable: 6 -> 0`, and what disappeared was
+  # `surface-thin`. Core's own words about the FIRST shape — "this floor is not
+  # being violated, it is unfalsifiable" — are the reason `internal/api/stripbaseurl`
+  # exists and the reason `bin/prime-go` fails on a committed file that has
+  # regressed to it. That property still holds of the committed file today, which
+  # is what makes 7 a floor rather than a zero.
+  minimum: 7
   accountKey: account_id
 
 entryPoints:
-  # --- the two probes -------------------------------------------------------
-  # Liveness is unconditional and touches nothing; a dependency outage must not
-  # get the process restarted out from under in-flight requests.
-  - id: healthz
-    kind: http
-    method: GET
-    path: /healthz
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 157
-
-  - id: readyz
-    kind: http
-    method: GET
-    path: /readyz
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 159
-
-  # --- THE ONE ACCOUNT-SCOPED ROW -------------------------------------------
+  # --- THE ONE ACCOUNT-SCOPED ROW, AND THE ONE THAT IS PERMANENTLY RED ---------
   # `GET /v1/me` resolves an account and returns it. It is the ONLY row here with
   # `accountScoped: true`, and the only route in gateway that can reach another
-  # account's data: everything else in this file resolves a USER, a session, or
-  # nothing at all. D18 made it account-scoped; MD19's signed principal assertion
-  # is what makes the resolution CHECKABLE rather than asserted.
+  # account's data: everything else resolves a USER, a session, or nothing at all.
   #
-  # IT IS DECLARED, AND UNTIL gateway-account-scope-ratchet-01 IT COULD NOT BE.
-  # Both ways to say so were measured and both were answered by a FAILURE, which
-  # is what the block below replaced. `accountScoped: false` is still wrong, and
-  # always was: `declaration-contradicts-code` reads the registration line ITSELF
-  # and finds the account there, because Hono puts the whole handler on that line
-  # and `c.get("principal")` is one of core's `RESOLVED` shapes.
+  # IT IS RED, AND IT STAYS RED, AND NEITHER OF THOSE IS A DEFECT IN THE ROW. Read
+  # this block before "fixing" it. The finding is
   #
-  # `accountScoped: true` with `accountFrom.via: requireJwt` used to be wrong too,
-  # and the reason was NOT the format. `scoping-bypassed` reads the `app.use`
-  # mounts registered ABOVE the row's own line — `chain_gate`, and
-  # `Recogniser.chain_read`, which core-hono-inline-01 added for exactly this
-  # route — and asks three things of each: is it ABOVE, does its pattern COVER
-  # this path, does it name `via` on its own line or within `HANDLER_WINDOW` (3)
-  # lines below it. The mount at src/index.ts:251 is above, and its `/v1/*`
-  # covers `/v1/me`. What failed was the third question: MD19's public-prefix
-  # exception made the mount's body four statements, `jwt.requireJwt` fell to the
-  # fifth line, and a five-line body does not fit in a three-line window.
+  #   FAIL account-scope.scoping-bypassed: me: registered at
+  #        internal/api/api.gen.go:1191, which does not go through Authenticate
   #
-  #   before: FAIL account-scope.scoping-bypassed: me: registered at
-  #           src/index.ts:247, which does not go through requireJwt
-  #   after:  the same three statements with no blank line between them, so
-  #           `chain_gate` reads `requireJwt` at src/index.ts:254 — VERIFIED by
-  #           the run that produced this file rather than asserted in it.
-  #           `account-key-lost` is checked on the same row and does not fire:
-  #           `via` appears in `accountFrom.file`, and line 346 carries
-  #           `account_id`.
+  # and it is PERMANENT for a reason that has nothing to do with whether this route
+  # is actually scoped. It is scoped. Here is the chain, every line measured:
   #
-  # A blank line is the whole of that change and `src/index.ts` argues it at the
-  # mount, because a security declaration that depends on a blank line is a
-  # fragility the next reader has to be told about rather than left to find. It
-  # is a weakness in core's window and not in this gate: a bounded window is
-  # RIGHT — an unbounded one would find the middleware for some other route
-  # further down and call a bypass covered — and three lines is too few for a
-  # gate with two exceptions in front of the call. It is recorded as a
-  # recommendation in REPORT-gateway-account-scope-ratchet-01.md §5, not worked
-  # around in silence.
+  #   internal/httpapi/httpapi.go:302
+  #       router.Use(everyRequest(insideLimiter, bearerGate(options))...)
+  #   internal/httpapi/httpapi.go:429-434   bearerGate
+  #       onPrefix("/v1/", options.Verifier.Require(writeAuthRefusal))
+  #   internal/httpapi/httpapi.go:575-586   onPrefix gates on
+  #       strings.HasPrefix(r.URL.Path, "/v1/")  -> "/v1/me" matches
+  #   internal/auth/middleware.go:102        (*Verifier).Require
+  #       next.ServeHTTP(w, withPrincipal(r, principal))
+  #   internal/auth/verifier.go:540-541      Authenticate resolves the account
+  #       principal.AccountID = &account     from claims.String("account_id")
+  #   internal/httpapi/principal.go:66       the handler reads it back
+  #       principal := auth.PrincipalOf(r)
   #
-  # THE ROUTE, for the record:
+  # ## THE CHI TRAP IS NOT TRIPPED HERE, AND IT WAS CHECKED RATHER THAN ASSUMED
   #
-  #   GET /v1/me   src/index.ts:278   resolves the account at
-  #                 src/middleware/jwt.ts:346 — `accountId: typeof
-  #                 payload.account_id === "string" && payload.account_id !== ""
-  #                 ? payload.account_id : undefined`, inside `principalOf` —
-  #                 through the `requireJwt` gate at
-  #                 src/middleware/jwt.ts:241, which is mounted on `/v1/*` at
-  #                 src/index.ts:251.
+  # This repository already shipped the routed-traffic defect: chi's `Use` wraps
+  # only the routes registered on THAT router after the `Use`, so a gate mounted
+  # after `api.HandlerWithOptions` would guard nothing. The order here is
+  # `router.Use` at 302 and `api.HandlerWithOptions` at 305 — the `Use` is
+  # ABOVE the registration, which is the only order that works. That is the whole
+  # argument, and it is why `internal/httpapi/principal.go:68` can say "unreachable
+  # while `Require` is mounted above this route on `/v1/*`" and mean it.
   #
-  # Hono matches handlers in REGISTRATION ORDER, which is the whole reason a
-  # twenty-seven-line gap between the mount and the route is a gate rather than a
-  # coincidence. The file's own comment says so, and so does `mount_covers`'s
-  # `/v1/*` over `/v1/me` test — gateway's own case, and the one core's
-  # `docs/account-scope.md` uses to explain the whole chain question.
-  # ---------------------------------------------------------------------------
+  # ## WHY `chain_gate` CANNOT SEE ANY OF THAT, MEASURED
+  #
+  # Three facts about core's `chain_gate`, each read out of
+  # `harness/account_scope_check.py` and then confirmed by running it:
+  #
+  #   1. It reads ONE file — the one `registeredAt` names (`chain_gate` opens
+  #      `source_lines(within(repo, where))`). Here that is `api.gen.go`.
+  #   2. `MIDDLEWARE` is
+  #        \b(?:app|router|api|r|server)\.use\(...
+  #      lowercase `use`, compiled WITHOUT `re.IGNORECASE`. chi's mount is
+  #      `router.Use(`. It cannot match.
+  #   3. `api.gen.go` contains no `.use(` at all, so even case-insensitively there
+  #      is nothing for it to find.
+  #
+  #   $ python3 -c "...checker's own MIDDLEWARE and chain_gate..."
+  #     MIDDLEWARE matches httpapi.go:302 the real gate    -> False
+  #     MIDDLEWARE matches r.use("/v1/*", requireJwt(...))  -> True
+  #     MIDDLEWARE hits in api.gen.go (the registeredAt file): []
+  #     chain_gate(api.gen.go, 1191, /v1/me, via=Authenticate)
+  #       -> Chain(covers=False, composed=False, at=None)
+  #
+  # `covers=False` with `composed=False` is the one shape that both fails the gate
+  # AND claims the chain was followed, so `readable` stays True and
+  # `scoping-bypassed` fires. And `registeredAt` cannot move to dodge this: it has
+  # to name a line that REGISTERS the route or `account-scope.stale` fires instead,
+  # and `r.Get("/v1/me", wrapper.GetCurrentPrincipal)` at `api.gen.go:1191` is the
+  # only such line in the repository. `internal/httpapi` registers the seven
+  # through `api.HandlerWithOptions`, which carries no path.
+  #
+  # So: a ratchet row red forever with a condition whose end is unreachable. The
+  # file's own rule 2 refuses that shape — and the fix is in CORE (make MIDDLEWARE
+  # read `Use(`, or let `chain_gate` follow the registration's package), not here.
+  # Nothing in gateway can clear it, and inventing a lowercase `.use(` line in
+  # `api.gen.go` to satisfy the regex would be a fake gate, which is worse than
+  # the red.
+  #
+  # ## WHY IT IS NOT `accountScoped: false`, WHICH PASSES
+  #
+  # Measured, both rows, same tree:
+  #
+  #   this row (`true`)  -> FAIL ... 1 account-scoped, 6 not-account-scoped,
+  #                         0 stale, 0 undeclared, 0 unreadable — 1 failure(s),
+  #                         0 warning(s)          EXIT 1
+  #   `false, reason: none`
+  #                      -> OK   ... 0 account-scoped, 7 not-account-scoped,
+  #                         0 stale, 0 undeclared, 0 unreadable — 0 failure(s),
+  #                         1 warning(s)          EXIT 0
+  #
+  # `false` goes green and it is WRONG. The route resolves an account — the chain
+  # above is nine lines long and none of them is hypothetical — so `false` is a
+  # false statement about gateway's only account-scoped route. Worse, it is one
+  # nothing can refute: `handler_for` resolves `wrapper.GetCurrentPrincipal` to
+  # the forwarding trampoline in `api.gen.go` and `_hops` from there is `[]`, so
+  # the checker never opens `internal/httpapi/principal.go`, where the behaviour
+  # is. Five mutations of that handler were planted and reverted by
+  # gateway-account-scope-ratchet-01 and NONE produced a finding. A `false`
+  # nobody can refute is the permissive direction: the fleet would believe a route
+  # is unscoped the day it is not. This row is `true` and red because a red that
+  # says the true thing is worth more than a green that says the opposite.
+  #
+  # WHAT IS CHECKED, and checked by the run above rather than asserted here:
+  # `account-scope.account-key-lost` fires on `accountFrom` and does NOT fire —
+  # `internal/auth/verifier.go:541` carries the account key, and `Authenticate`
+  # appears in the file `accountFrom` names, which is the second thing that check
+  # asks and the one that made the first attempt (`via: bearerGate`, named in
+  # `internal/httpapi` and not in `internal/auth`) fail with `account-key-lost`
+  # alongside `scoping-bypassed`. Measured, not guessed.
   - id: me
     kind: http
     method: GET
     path: /v1/me
     accountScoped: true
-    accountFrom: { via: requireJwt, file: src/middleware/jwt.ts, line: 346 }
+    accountFrom: { via: Authenticate, file: internal/auth/verifier.go, line: 541 }
     registeredAt:
-      file: src/index.ts
-      line: 278
+      file: internal/api/api.gen.go
+      line: 1191
 
-  - id: bff-register
-    kind: http
-    method: POST
-    path: /auth/register
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 311
-
-  - id: bff-login
-    kind: http
-    method: POST
-    path: /auth/login
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 312
-
-  - id: bff-logout
-    kind: http
-    method: POST
-    path: /auth/logout
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 313
-
-  - id: bff-me
-    kind: http
-    method: GET
-    path: /auth/me
-    accountScoped: false
-    reason: none
-    registeredAt:
-      file: src/index.ts
-      line: 314
-
-  # --- the same seven, registered by the GO implementation ---------------------
-  # Seven rows for seven generated registrations, and they exist for one reason:
+  # --- the other six, registered by the GO implementation ----------------------
+  # Six rows here for six generated registrations, and they exist for one reason:
   # `account-scope.undeclared` is decided by the REGISTRATIONS in the files
   # `surface.sources` names, not by this file's row count. Naming
   # `internal/api/api.gen.go` as a source therefore makes its seven registrations
   # countable — which is the point, and the whole reason `stripbaseurl` exists —
-  # and countable registrations with no rows behind them are seven FAILURES.
+  # and countable registrations with no rows behind them are seven FAILURES. The
+  # seventh row is `me`, above, which is the same counting argument applied to the
+  # seventh registration.
   #
-  # The measurements, so a reader can check rather than believe:
+  # HISTORY, from when `src/` was still live and there were fourteen registrations
+  # to cover. Kept because it is why these rows exist at all:
   #
   #   before this block:  8 undeclared, 7 of them the Go registrations
-  #   after:              1 undeclared,  which is the pre-existing `GET /v1/me`
-  #                       finding above and is not this block's to fix
+  #   after:              1 undeclared,  which was the Go `GET /v1/me`
+  #                       registration — now covered by the `me` row above, and
+  #                       `undeclared` is 0 in the run recorded there
   #
   # `registeredAt.line` WILL MOVE whenever `api.gen.go` is regenerated, and the
   # checker's `account-scope.stale` is what says so. That is the mechanism and it
   # is loud: the line numbers are the only thing in this file that cannot be
   # derived, and they are checked by the same run that checks everything else.
+  # f87c891 did NOT move them: all six were re-grepped against `api.gen.go` and
+  # the run reports `0 stale`, which is that checker's own independent answer.
   - id: go-healthz
     kind: http
     method: GET
@@ -294,75 +289,56 @@ entryPoints:
       file: internal/api/api.gen.go
       line: 1188
 
-  # `GET /v1/me` HAS NO ROW HERE, AND IT IS STILL THE HONEST ANSWER — BUT THE
-  # REASON IS NOW MEASURED RATHER THAN ASSUMED, and the earlier reason was wrong.
+  # HISTORY, AND TWO OF ITS CLAIMS ARE NOW FALSE. Read the `me` row above first;
+  # this block is what the state was BEFORE that row was re-pointed at the Go
+  # registration, and it is kept because the reasoning is what produced the row.
   #
-  # `gateway-go-substrate-01` wrote this off as "a finding about the FORMAT": a row
-  # is matched to a registration by (method, path) and NOT by the file its
-  # `registeredAt` names, so with two implementations live one row lands on one
-  # registration and the other reads as uncovered. That half is still true, and
-  # `registeredAt` is still only what `account-scope.stale` reads. But "one row"
-  # was the wrong conclusion drawn from it: TWO rows for the same (method, path)
-  # are two claims the checker takes to two registrations, because `classify`
-  # marks each registration taken and scans for the next untaken one. So the
-  # format CAN say "this file registers it that way and that file registers it
-  # this way", and `me` above is the proof: it took src/index.ts:278 and the chi
-  # registration is still there to be covered.
+  # IT USED TO SAY "`GET /v1/me` HAS NO ROW HERE", because with two
+  # implementations live one row landed on one registration and the other read as
+  # uncovered. That is gone: `me` now names `internal/api/api.gen.go:1191` and the
+  # row above is the one that carries the `scoping-bypassed` finding.
   #
-  # SO THE REMAINING BLOCKER IS NOT THE FORMAT. It is that neither honest answer
-  # survives a run, and both were measured rather than argued:
+  # The FORMAT half of the old reasoning was right and is still true. A row is
+  # matched to a registration by (method, path) and NOT by the file its
+  # `registeredAt` names; `registeredAt` is only what `account-scope.stale` reads.
+  # What was WRONG was the conclusion drawn from it — that this was unfixable "in
+  # the format". Two rows for one (method, path) are two claims taken to two
+  # registrations, because `classify` marks each registration taken and scans for
+  # the next untaken one. With `src/` gone there is only one implementation, so
+  # the ambiguity the format question was about no longer arises at all.
   #
-  #   accountScoped: false, reason: none
-  #     ->  0 findings. `GetCurrentPrincipal` calls `notBuilt` and writes the v0
-  #         404, so the route resolves no account today and the row is TRUE. It
-  #         is also a claim NOTHING CAN REFUTE, and that is the reason it is not
-  #         written. Measured: `handler_for` resolves every `wrapper.X` on these
-  #         seven lines to `internal/api/api.gen.go` — the forwarding method in
-  #         the generated wrapper — and `_hops` from that file is `[]`, so
-  #         `contradiction` reads api.gen.go and one hop below it and NEVER
-  #         opens `internal/httpapi/httpapi.go`, where the handler is. Five
-  #         mutations of `GetCurrentPrincipal` were planted and reverted — an
-  #         exported `principal.AccountID`, an unexported `principal.account`, a
-  #         `payload["account_id"]` claim read, an inline principal — and NONE of
-  #         them produced a finding on this row. A `false` nobody can refute on
-  #         the one route this file exists to describe is the permissive direction
-  #         the packet names: the fleet would believe a route is unscoped when the
-  #         day comes that it is not.
+  # TWO CLAIMS IN THE OLD BLOCK ARE FALSE AS OF THIS COMMIT, and both were false
+  # before this commit wrote them down:
   #
-  #   accountScoped: true, accountFrom.via: requireJwt
-  #     ->  FAIL account-scope.scoping-bypassed: go-me: registered at
-  #         internal/api/api.gen.go:1191, which does not go through requireJwt.
-  #         TRUE today — the Go router mounts all seven operations behind nothing,
-  #         and `openapi/v1.yaml` gives `/v1/me` a `security:` block. It is also
-  #         PERMANENT: `chain_gate` looks for `app.use(`/`.use(` and chi mounts
-  #         middleware with `r.Use(`, so no middleware added to the Go router can
-  #         ever satisfy it and the failure cannot be cleared by doing the work.
-  #         A ratchet row red forever with a condition whose end is unreachable is
-  #         the switch rule 2 exists to refuse.
+  #   "`GetCurrentPrincipal` calls `notBuilt` and writes the v0 404, so the route
+  #    resolves no account today." — NO. `internal/httpapi/principal.go:60` reads
+  #    `auth.PrincipalOf(r)` and renders it. The v0 404 at line 62 is the
+  #    `s.verifier == nil` case and nothing else.
   #
-  # `accountScope.undeclared` is what answers instead, and it is TRUE and it is
-  # ACTIONABLE: a registration in a file this declaration names, which no row
-  # covers, and the packet that ports the bearer gate to `internal/httpapi` has to
-  # write this row to go green. That is the difference from the previous state and
-  # it is the reason this block is one line shorter than it was: BEFORE this
-  # packet the TypeScript registration was undeclared too, so the route was
-  # uncovered twice over. Now it is declared and verified, and exactly ONE
-  # `undeclared` remains, naming the Go registration.
+  #   "the Go router mounts all seven operations behind nothing" — NO.
+  #    `internal/httpapi/httpapi.go:302` mounts `bearerGate` over `/v1/`, above
+  #    the registration at 305. See the chain in the `me` row.
   #
-  # > DECISION NEEDED (gateway-account-scope-ratchet-01), and it is NOT the one
-  # > gateway-go-substrate-01 recorded. That one asked for `registeredAt` to become
-  # > part of the match, and the answer is that it does not need to. What is needed
-  # > is a way for `handler_for` to follow a GENERATED forwarding method to the
-  # > implementation behind it: `wrapper.GetCurrentPrincipal` is a five-line
-  # > trampoline in `api.gen.go` and the behaviour is in
-  # > `internal/httpapi/httpapi.go`, and one hop cannot cross a package boundary
-  # > that has no import statement to cross. Until then EVERY `go-*` row in this
-  # > file is verified against the generated file and not against the code it
-  # > describes — which is harmless today, because `internal/httpapi` contains no
-  # > account evidence at all (measured: `evidence_in` over the masked file
-  # > returns `None`), and is a silent hole the day it does. That is a defect in
-  # > `core` and this repository is not the place to fix it; it is recorded in
-  # > REPORT-gateway-account-scope-ratchet-01.md §6 with the measurement.
+  # The conclusion those claims supported is unchanged and is still the reason
+  # `me` is `true` and red: `accountScoped: false` would go GREEN and would be
+  # WRONG, and it is a claim nothing can refute, because `handler_for` resolves
+  # `wrapper.GetCurrentPrincipal` to the forwarding trampoline in `api.gen.go`
+  # and `_hops` from there is `[]`, so the checker never opens the file the
+  # behaviour is in. Five mutations of that handler were planted and reverted by
+  # gateway-account-scope-ratchet-01 and NONE of them produced a finding.
+  #
+  # > DECISION NEEDED (gateway-account-scope-ratchet-01 §6), UNCHANGED AND STILL
+  # > OPEN, and it is in `core` and not here: `handler_for` needs to be able to
+  # > follow a GENERATED forwarding method to the implementation behind it.
+  # > `wrapper.GetCurrentPrincipal` is a five-line trampoline in `api.gen.go` and
+  # > the behaviour is in `internal/httpapi/principal.go`, and one hop cannot
+  # > cross a package boundary with no import statement to cross. Until then every
+  # > `go-*` row below is verified against the generated file rather than against
+  # > the code it describes.
+  #
+  # A SECOND core defect is now measured too, and it is the one that keeps `me`
+  # red: `MIDDLEWARE` cannot read chi's `Use(`. That measurement, and the run that
+  # produced it, are in the `me` row rather than repeated here.
   #
   # What this block does NOT do is delete a row, lower `minimum`, or remove
   # `internal/api/api.gen.go` from `surface.sources` to make the number smaller.
