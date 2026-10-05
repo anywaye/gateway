@@ -34,25 +34,57 @@ but I could not name a test that holds it.
 |---|---|---|---|---|
 | 1 | `src/probe.ts` | The `Probe`/`ProbeStatus` contract: a dependency that throws, rejects, hangs or answers anything but `"ok"` is one `unavailable`. | **PORTED** | `internal/httpapi/probe.go` (`Probe func(ctx) error`, `runProbe`, `probeTimeout`). Tests: `TestAProbeThatPanicsIsOneUnavailableDependency`, `TestAProbeThatIgnoresItsContextIsStillBounded`, `TestReadinessNamesTheDependencyThatIsDownAndNotWhyItIsDown`. Equivalence: `bare`, `oneProbeOk`, `probesDegraded`. |
 | 2 | `src/problem.ts` | Renders core's `problem+json` envelope with `X-Trace-Id` matching `trace_id`; `errors[]` only on a 422. | **PORTED** | `internal/httpapi/problem.go` (`writeProblem`, hand-ordered `writeProblemBody`, `encodeFieldErrors`, `newTraceID`). Tests: `TestTheProblemEnvelopeIsTheReferencesFieldOrder`, `TestFieldErrorsAppearOnlyOnA422`, `TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody`, `TestACodeWithNoTitleIsRefusedRatherThanRendered`. Equivalence: every case with a refusal. |
-| 3 | `src/middleware/assert.ts` | Configuration checks that throw a `RangeError`: positive integer, non-negative integer, non-empty string, RFC 9651 structured-field key. | **PORTED (unverified)** | Behaviour is present in `internal/ratelimit/limiter.go` (limit/window/policy validated in `NewLimiter`, structured-key check) and `internal/auth/verifier.go` (`New`, `assertHTTPURL`). I found **no test named for these four predicates**; `TestAnUnreadablePortIsARefusalToBoot` and the limiter's construction errors cover the same rule at the caller. The shared *helpers* are not a Go file — each package re-derives them. |
+| 3 | `src/middleware/assert.ts` | Configuration checks that refuse to boot: positive integer, non-negative integer, non-empty string, RFC 9651 structured-field key. | **PORTED** | Behaviour in `internal/ratelimit/limiter.go` (`NewLimiter` validates limit/window/trustedProxies; structured-key check per request) and `internal/auth/verifier.go` (`New`, `assertHTTPURL`, `trimIssuer`). Tests: the table at `internal/ratelimit/limiter_test.go:140-172` (a negative limit, a sub-millisecond window, a negative proxy count — each asserting the refusal names the field) and `internal/auth/verifier_test.go:589 TestABrokenConfigurationIsARefusalToBoot` (7 malformed issuers refused, the trailing-slash one accepted). Plus `internal/httpapi/httpapi_test.go:472 TestAnUnreadablePortIsARefusalToBoot`. **Not a shared helper**: Go has no `assert.ts` equivalent file — each package re-derives the predicates and returns `ErrNotConfigured`. The behaviour is ported; the *file* is not, which is the right shape for Go and not a gap. |
 | 4 | `src/middleware/rateLimitTypes.ts` | The store contract: one `hit`, no `peek`, so counting and reading cannot be split. | **PORTED** | `internal/ratelimit/store.go` (`Store` interface, `Verdict`, `Request`). Tests: `internal/ratelimit/parity_test.go` runs one table through both backends; `TestTheTranscriptionIsTheScript`. |
 | 5 | `src/middleware/rateLimitStore.ts` | GCRA counting in memory, one process, sweep of settled buckets. | **PORTED** | `internal/ratelimit/store.go` (`MemoryStore.Hit`, `count`, `sweepSettledLocked`, `DefaultMaxClients`). Tests: `parity_test.go`, `live_test.go`. |
 | 6 | `src/middleware/rateLimitStore.ts` / `src/middleware/rateLimitRedis.ts` (Redis half) | GCRA over Redis from one Lua script plus a hand-written RESP2 transport. | **PORTED** | `internal/ratelimit/redis.go` (`GCRALua`, `RedisStore.Hit`, `Connection`, `readReply`, `LazyRedis`) and `resp.go`. Tests: `parity_test.go` (transcripted script) + `live_test.go` (real `redis-server`). |
-| 7 | `src/middleware/rateLimit.ts` | The limiter middleware: per-request policy, the eight `RateLimit-*` headers, `Retry-After` on refusal, one 429, **fail-open** when the store is unreachable. | **PORTED, partially verified** | `internal/ratelimit/limiter.go` (`NewLimiter`, `Wrap`, `announce`, `CounterKey`) + `internal/httpapi/httpapi.go` (`RateLimiter`, `ProbePaths`, `writeRateLimitRefusal`, `RateLimitRefuser`). Mounted in `runtime.go:168`. Tests: `internal/ratelimit/limiter_test.go`. **The 429 refusal and the fail-open path have no equivalence scenario** — see §2. |
+| 7 | `src/middleware/rateLimit.ts` | The limiter middleware: per-request policy, the eight `RateLimit-*` headers, `Retry-After` on refusal, one 429, **fail-open** when the store is unreachable. | **PORTED** | `internal/ratelimit/limiter.go` (`NewLimiter`, `Wrap`, `announce`, `CounterKey`, `RateLimitHeaders`) + `internal/httpapi/httpapi.go` (`RateLimiter`, `ProbePaths`, `writeRateLimitRefusal`, `RateLimitRefuser`). Mounted at `runtime.go:168` with `Exempt: isProbePath`. Tests — and these are **Go-side unit tests, not equivalence**: `limiter_test.go:68 TestRedisDownFailsOpenAndABrokenConfigurationFailsClosed` (unreachable store serves 200, headers left off, reason to the log; and a broken *configuration* fails **closed**), `:214 TestOneAtomicStepAdmitsExactlyTheLimitUnderABurst`, `:332 TestEveryRateLimitFieldIsAnnouncedOnEveryAnsweredRequest`, `:453 TestTheTwoProbePathsAreNeverCounted`, and the 429 assertions at `:409-437` (status, `rate_limited`, ceiling arithmetic on `Retry-After`, and the floor of one whole second). **None of this is compared against the TypeScript** — see §2. |
 | 8 | `src/middleware/limitKey.ts` | Which bucket a request is: account > API key > address; `clientIp` parses `X-Forwarded-For` and accepts only real IPs. | **PORTED** | `internal/ratelimit/key.go` (`Key`, `KeySource`, `KeySourceOf`, `ClientIP`, `unknown`), branch for branch. Tests: `internal/ratelimit/key_test.go` (346 lines). |
 | 9 | `src/middleware/limits.ts` | **The per-route allowance table**: `DEFAULT_LIMIT_TABLE` (6 entries, 5 distinct policy names), `limitTable()` validation, and `resolveLimit()` longest-prefix-on-a-segment-boundary lookup. | **GAP — silent** | No Go file holds this. `internal/ratelimit/limiter.go` has `DefaultLimit = 600`, `DefaultWindow = 60s`, `DefaultPolicy = "gateway-api"` — the **default row only**. `internal/httpapi/runtime.go:168` constructs the limiter with `Limit`/`Window`/`TrustedProxies`/`Exempt` and **never sets `Policy` or `Resolve`**, so every path in the Go service draws on one allowance under one policy name. `/auth/login` at 10/min and `/auth/register` at 5/min do not exist in Go, and `/auth/*` and `/v1/api-keys` are not cheaper than `/v1/`. The seam exists (`Options.Policy func(path) string`, `Options.Resolve`), so this is a table that was never written, not an architecture that cannot hold it. |
 | 10 | `src/middleware/jwt.ts` | RS256 bearer verification: algorithm pinned before any key fetch, JWKS cache with TTL and a bounded one-refresh-per-window budget, `requireScope`, `503` when the key set cannot be fetched. | **PORTED** | `internal/auth/verifier.go` (`New`, `Authenticate`, `verifyClaims`, `algorithm = "RS256"`, `unavailable()`), `internal/auth/jwks.go` (`jwksCache`, `noWindow`, `load`, `keysFor`), `internal/auth/middleware.go` (`Require`, `RequireScope`). Tests: `internal/auth/verifier_test.go` (635 lines), `internal/httpapi/routes_test.go`. |
-| 11 | `src/middleware/apiKey.ts` | API keys: `generateApiKey`/`hashApiKey` (SHA-256), `apiKeyPrefixOf`, an `ApiKeyStore` where every mutator takes the account, and a gate mounted on `*` **before** the limiter. | **GAP — silent** | There is no `ApiKeyStore` in Go at any depth. `grep` for `ApiKeyStore`, `issue`, `revoke`, `hasKeyScheme` finds nothing outside comments. `internal/auth/middleware.go:78` has `apiKeyContextKey` + `WithAPIKeyID`/`APIKeyIDOf` — the **seam the limiter reads**, not an implementation — and `internal/ratelimit/key.go:61` consumes it. Nothing sets it: `internal/httpapi/httpapi.go` mounts the header reduction, the bearer gate and the limiter, and no API-key gate. So in Go a caller cannot authenticate with a key, and `KeySource.APIKeyID` is always empty. |
+| 11 | `src/middleware/apiKey.ts` | API keys: `generateApiKey`/`hashApiKey` (SHA-256), `apiKeyPrefixOf`, an `ApiKeyStore` where every mutator takes the account, and a gate mounted on `*` **before** the limiter. | **GAP — silent, and structurally blocked** | There is no `ApiKeyStore` in Go at any depth. Searching for the *behaviour* — `ApiKeyStore`, `issue`, `revoke`, `hasKeyScheme` — finds nothing outside comments. `internal/auth/middleware.go:78` has `apiKeyContextKey` + `WithAPIKeyID`/`APIKeyIDOf` — the **seam the limiter reads**, not an implementation — and `internal/ratelimit/key.go:61` consumes it. Nothing sets it: `internal/httpapi/httpapi.go` mounts the header reduction, the bearer gate and the limiter, and no API-key gate. So in Go a caller cannot authenticate with a key, and `KeySource.APIKeyID` is always empty. **And it cannot be added by porting the store alone**: Go's router is generated from `openapi/v1.yaml`, and the document declares **seven paths** (`/healthz`, `/readyz`, `/v1/me`, `/auth/register`, `/auth/login`, `/auth/logout`, `/auth/me`) and **zero** `api-keys` operations — `grep -c api-keys openapi/v1.yaml` returns `0`. The key store has no HTTP surface in *either* language today (TypeScript registers only the `app.use("*")` gate at `src/index.ts:182`, never a route; `/v1/api-keys` appears in `src/` only as a limit-table entry at `limits.ts:67`). The document must name the operations before a Go route can exist. |
 | 12 | `src/routes/table.ts` | Which prefix goes where, validated at boot; longest prefix wins on a segment boundary; `public` entries; `/v1/me` refused as a prefix. | **PORTED** | `internal/httpapi/table.go` (913 lines; `gatewayOwned = "/v1/me"`, longest-match note at :254). Tests: `internal/httpapi/table_test.go` (571 lines). Equivalence: `routedUpstream`, `gatedUpstream` (the table is declared on both sides and `TestTheRouteTableBothSidesDeclareIsTheSameThreeEntries` holds them equal). |
 | 13 | `src/routes/proxy.ts` | The pass-through: rebuild the path, strip the prefix, an **outbound header allowlist**, attach gateway's own credential (never the caller's), relay only 2xx/4xx, translate 3xx and 5xx, drop `Set-Cookie`, override `Cache-Control`, bind a timeout. | **PORTED** | `internal/httpapi/proxy.go` (543 lines). Tests: `internal/httpapi/proxy_test.go` (941 lines) — including `TestTheCallersCredentialNeverReachesAnInternalService`, `TestTheRequestAllowlistIsExactlyTwoNames`, `TestTheResponseAllowlistIsExactlyOneName`, `TestTheTwoServiceFailuresAreDifferentSentencesAndDifferentLogLines`. Equivalence: `routedUpstream`, `gatedUpstream`, ~25 cases. |
 | 14 | `src/routes/assertion.ts` | Mints the `x-cafaye-principal` assertion: ES256 over a declared claim set, bound to one upstream, RFC 7638 thumbprint `kid`, `MAX_ASSERTION_TTL_MS` refused at boot, reserved claims refused. | **PORTED** | `internal/httpapi/assertion.go` (586 lines). Tests: `internal/httpapi/assertion_test.go` (861 lines, 15 tests). |
 | 15 | `src/bff/auth.ts` | The four `/auth` routes: same-origin gate, `__Host-bff-session` cookie, the fixed 401 sentence, 423 + `Retry-After`, identity's token never reaching the browser, `identityProbe`. | **PORTED** | `internal/httpapi/bff.go` (1,140 lines). Tests: `internal/httpapi/bff_test.go` (1,689 lines, ~45 tests). Equivalence: all six `bff*` scenarios. |
 | 16 | `src/bff/session.ts` | The session **interface** (`SessionStore`, three methods, absent == expired) plus `memorySessionStore()`, a per-process `Map`. | **PORTED as a contract, NO IMPLEMENTATION — deliberate** | `internal/session/session.go` declares `SessionStore` (Get/Put/Delete, ported method for method). `internal/sessiontest/store.go` is the map-backed double — and `internal/sessiontest/guard_test.go` proves no production file imports it, so **the Go binary ships no session store at all**. `httpapi.NewBff` refuses a nil store. Recorded as a decision in `README.md` and the `internal/session` package comment, with the measurement (identity's store is keyed by `token_digest` and resolves the opposite direction, and Go's `internal/` rule forbids the import). **This is a real cutover blocker**: the shipped TypeScript has a working store, the Go service cannot serve `/auth/*` without one, and `RuntimeOptions` never builds a `BFF`. |
-| 17 | `src/index.ts` | The app factory: probe routes, the four gates in order, `PROBE_PATHS`, the v0 404/500 envelope, `runtimeOptions`, `Bun.serve`. | **PORTED** | `internal/httpapi/httpapi.go` (`New`, mount ordering at :225-268, `ProbePaths`, `writeV0NotFound`), `internal/httpapi/runtime.go` (`RuntimeOptions`, `isProbePath`, `intFromEnv`), `internal/httpapi/env.go` (the one reader), `cmd/gateway/main.go`. Tests: `httpapi_test.go`, `runtime_variables_test.go`, `routes_test.go`, `runtime_routing_test.go`, `query_test.go`, `TestExactlyOneFileInThisPackageTouchesTheProcessEnvironment`. Equivalence: all 11 scenarios. |
+| 17 | `src/index.ts` | The app factory: probe routes, the four gates in order, `PROBE_PATHS`, the v0 404/500 envelope, `runtimeOptions`, `Bun.serve`. | **PORTED** | `internal/httpapi/httpapi.go` (`New`, mount ordering at :225-268, `ProbePaths`, `writeV0NotFound`), `internal/httpapi/runtime.go` (`RuntimeOptions`, `isProbePath`, `intFromEnv`), `internal/httpapi/env.go` (the one reader), `internal/httpapi/principal.go` (`GetCurrentPrincipal`, the `/v1/me` handler), `cmd/gateway/main.go`. Tests: `httpapi_test.go` (622 lines), `runtime_variables_test.go`, `routes_test.go`, `runtime_routing_test.go`, `query_test.go`, `TestExactlyOneFileInThisPackageTouchesTheProcessEnvironment`. Equivalence: all 11 scenarios. |
 
-**Tally: 15 non-test `src/` files — 11 fully ported, 1 ported-but-unverified
-(`assert.ts`), 1 ported with a missing implementation (`session.ts`), 2 silent
-gaps (`limits.ts`, `apiKey.ts`).**
+**Note on `/v1/me`, where the README is wrong a third time.** `README.md`'s table
+says `GET /v1/me` in Go "declines with the reference's `404`". That is only true
+when no verifier is configured. `internal/api/api.gen.go:1191` registers
+`r.Get("/v1/me", wrapper.GetCurrentPrincipal)` from the document, and
+`internal/httpapi/principal.go:60` implements it: with a verifier it echoes the
+principal, without one it declines with the v0 `404`. That is **the same
+conditional as `src/index.ts:249-278`** — `createApp` registers `/v1/me` only when
+`options.jwt` is set — so the Go side is ported and the README understates it.
+The equivalence set cannot see this, because `Options.Verifier` is nil in every
+routed scenario (§2).
+
+**Tally: 15 non-test `src/` files — 12 fully ported, 1 ported as a contract with no
+implementation in the binary (`session.ts`), 2 silent gaps (`limits.ts`,
+`apiKey.ts`).** No row is "ported but unverified" — for every `PORTED` row there is
+a named test that would fail if the behaviour were lost. What varies is *which
+kind* of test, and that distinction is the point of §2.
+
+### A note on how "ported" was established
+
+By behaviour, never by name. For each row I asked: what does this file *do*, where
+does that behaviour live in Go, and what would fail if Go lost it. Concretely that
+meant searching for the **route, header, error code, policy name or refusal** — not
+the filename. Three findings came out of that discipline and none of them would
+have appeared from a basename sweep:
+
+- `src/middleware/apiKey.ts` has **no** Go counterpart, while `internal/ratelimit/key.go`
+  contains `APIKeyID` and reads it. A name search for "apiKey" finds the second and
+  concludes the first is ported.
+- `src/middleware/limits.ts` has **no** Go counterpart, while `internal/ratelimit/limiter.go`
+  contains `DefaultPolicy`, `DefaultLimit`, `DefaultWindow` and an
+  `Options.Policy`/`Options.Resolve` seam. A search for "limit" finds all four.
+- `src/middleware/assert.ts` has **no** Go counterpart *as a file*, while the
+  behaviour is present in two packages and tested in two tables. Here the absence of
+  a file is the correct Go shape and **not** a gap — the opposite conclusion to the
+  two above, from the same kind of search.
 
 ## 2. The proven floor: what `internal/equivalence` actually compares
 
@@ -131,12 +163,17 @@ not compared (the scenarios run on the `sessiontest` double).
    `/auth/logout` (30/min) and `/v1/api-keys` (60/min) do not exist. The seam
    (`Options.Policy`, `Options.Resolve`) is there; the table is not.
 3. **`src/middleware/apiKey.ts` — API keys.** No store, no hashing, no prefix
-   check, no gate. `KeySource.APIKeyID` is dead in Go.
-4. **Equivalence coverage for the limiter's two refusals**, which the manager needs
-   *before* trusting the limiter rather than after. Two scenarios, ~1 day.
-5. **`src/middleware/assert.ts`'s four predicates have no named test** in Go. Low
-   risk — the behaviour is present — but it is the one row I could not give
-   evidence for.
+   check, no gate. `KeySource.APIKeyID` is dead in Go. **This one is not a
+   porting job on its own**: Go's router is generated from `openapi/v1.yaml`, and
+   the document declares seven paths and **zero** `api-keys` operations. A key
+   management surface has no operation to generate from, in either language. The
+   document comes first, then the port.
+4. **Equivalence coverage for the limiter**, which the manager needs *before*
+   trusting the limiter rather than after. Two scenarios: the 429 and the
+   fail-open store. Both are behaviourally covered by `limiter_test.go` in Go, so
+   this is about the two implementations *agreeing*, not about Go being correct.
+5. ~~`assert.ts`'s predicates untested~~ — **withdrawn.** `limiter_test.go:140-172`
+   and `verifier_test.go:589` cover them. See the row.
 
 ### Non-code
 
@@ -161,9 +198,23 @@ not compared (the scenarios run on the `sessiontest` double).
 10. **`AGENTS.md` and `README.md` are both wrong about the Go side's size** (§0).
     The README's "What is Go today" table claims rate limiting, API keys and bearer
     verification are "not ported — Wave 3". Two of those three *are* ported and one
-    (API keys) is not, and the table also has duplicated rows and a duplicated
-    trailing row (`| the BFF and the session store | ✅ | **not ported** — Wave 3 |`
-    floating after a paragraph). Sequencing off this table will mis-size the work.
+    (API keys) is not. It separately understates `/v1/me`, which *is* served
+    (§1 row 17), and the table also carries duplicated rows plus a stray trailing
+    row (`| the BFF and the session store | ✅ | **not ported** — Wave 3 |`
+    floating after a paragraph). **Sequencing off this table will mis-size the work
+    in both directions** — it overstates three subsystems as absent and understates
+    one as absent. I did not edit either file; that is a documentation packet.
+
+### One thing that is *not* a blocker, recorded because it looks like one
+
+`internal/httpapi/httpapi.go:255-262` notes that chi requires `Use` before any
+route is registered, so there is **no ordering hazard in Go** — the hazard the
+`src/index.ts:195-201` comment spends a paragraph on ("a route registered above
+`app.use("*", limiter)` is never rate limited") is Hono-specific. The Go
+mount-ordering property is real and is asserted by
+`TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstream`
+(`internal/httpapi/table_test.go:184`), which reads the source rather than
+inferring it. The ordering rule transfers; the trap does not.
 
 ## 4. What I deliberately did not do
 
