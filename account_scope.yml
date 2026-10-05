@@ -69,21 +69,39 @@ surface:
   # `internal/api/api.gen.go` and not `internal/` also keeps the checker out of
   # `internal/httpapi`, where `route_defs` would count the test files' helpers.
   sources:
-    - src/index.ts
     - internal/api/api.gen.go
-  # 14: the seven operations in the TypeScript file and the same seven in the
-  # generated one. The assertion packet added NO registration — it did not need
-  # one, and an added route is what would have forced this `minimum` to move. See
-  # `principal` in `src/routes/table.ts`: the public half of gateway's assertion
-  # key is exposed through the minter rather than at `/.well-known/jwks.json`,
-  # precisely so this file does not change.
-  #
-  # MEASURED, not counted by hand, and both halves measured rather than one:
+  # 7: the seven operations the generated file registers, and nothing else.
+  # MEASURED, not chosen and not counted by hand — this is the count the checker
+  # reads out of the one declared source, in the run at the bottom of this comment:
   #
   #     $ /Users/kaka/Code/any/moon/cafaye/core/harness/bin/account-scope-check .
+  #     the declared sources register 7 entry point(s) and surface.minimum is 7
   #
-  #   with `options.BaseURL+` back in `api.gen.go` (all seven registrations, one
-  #   command, reverted after measuring):
+  # and those seven are the seven `r.Get`/`r.Post` lines of
+  # `internal/api/api.gen.go` — 1185, 1188, 1191, 1194, 1197, 1200, 1203 — every
+  # one of which this commit re-verified by grep against the file rather than
+  # carrying forward the number the file already had.
+  #
+  # IT WAS 14, AND THE DROP TO 7 IS THE DROP PREDICTED IN THE HEADER. `14 = 7 + 7`
+  # was the same seven operations registered twice, once by `src/index.ts` and once
+  # by `api.gen.go`, and `f87c891` deleted the TypeScript half. The seven rows that
+  # named `src/index.ts` went with it, in the same commit, because that header said
+  # they would and said why: "a floor that has to be lowered later is a floor
+  # somebody will forget."
+  #
+  # THIS IS A LOWERING, and it is worth being explicit that it is not the other
+  # kind. It is not a floor lowered to stop asking a question: the finding it
+  # removes is `surface-thin`, which fired only because the declared sources could
+  # be read at all once `src/index.ts` stopped being named. The number is what one
+  # declared source actually registers, and `undeclared` is decided by the
+  # REGISTRATIONS in the source rather than by this file's row count, so a floor
+  # set below the truth buys nothing and costs the only decrease-detector this
+  # surface has.
+  #
+  # HISTORY, kept because it is why this number is 7 and not 0. MEASURED, both
+  # halves, in gateway-account-scope-ratchet-01:
+  #
+  #   with `options.BaseURL+` back in `api.gen.go` (reverted after measuring):
   #
   #     FAIL account-scope.surface-thin: the declared sources register 8 entry
   #     point(s) and surface.minimum is 14 — and 6 further registration(s) in
@@ -92,170 +110,22 @@ surface:
   #     FAIL 0 account-scoped, 12 not-account-scoped, 0 stale, 1 undeclared,
   #          6 unreadable
   #
-  #   with it removed (the committed state):
+  #   with it removed — the shape f87c891 left behind, and the shape this floor is
+  #   still standing on today:
   #
   #     FAIL 0 account-scoped, 12 not-account-scoped, 0 stale, 2 undeclared,
   #          0 unreadable
   #
-  # So the number that moves is `unreadable: 6 -> 0` and the finding that
-  # disappears is `surface-thin`. Note what core says about the FIRST shape:
-  # "this floor is not being violated, it is unfalsifiable" — a floor the checker
-  # can tell is blind is worse than a floor set too low, because it looks like a
-  # passing floor. That is why `stripbaseurl` exists and why `bin/prime-go` fails
-  # on a committed file that has regressed to it.
-  #
-  # AND IT IS NOT LOWERED BY gateway-account-scope-ratchet-01 EITHER, with one
-  # row fewer covering more of the tree than the run before it. The floor did its
-  # job in this packet: it is why 14 registrations against 13 rows is a question
-  # somebody had to answer rather than a number that happened to be right. A floor
-  # lowered to stop asking a question is the only kind that stops working.
-  #
-  # MEASURED AGAIN, one command, this commit:
-  #
-  #     $ /Users/kaka/Code/any/moon/cafaye/core/harness/account_scope_check.py .
-  #     FAIL: 1 account-scoped, 12 not-account-scoped, 0 stale, 1 undeclared,
-  #            0 unreadable — 1 failure(s), 6 warning(s)
-  #
-  # 14 registrations, 13 rows, and the difference is named rather than rounded
-  # away: it is the Go registration of `GET /v1/me`. Read the block above
-  # `go-readyz` for the four measurements that decide it.
-  minimum: 14
+  # So the number that moved there was `unreadable: 6 -> 0`, and what disappeared was
+  # `surface-thin`. Core's own words about the FIRST shape — "this floor is not
+  # being violated, it is unfalsifiable" — are the reason `internal/api/stripbaseurl`
+  # exists and the reason `bin/prime-go` fails on a committed file that has
+  # regressed to it. That property still holds of the committed file today, which
+  # is what makes 7 a floor rather than a zero.
+  minimum: 7
   accountKey: account_id
 
 entryPoints:
-  # --- the two probes -------------------------------------------------------
-  # Liveness is unconditional and touches nothing; a dependency outage must not
-  # get the process restarted out from under in-flight requests.
-  - id: healthz
-    kind: http
-    method: GET
-    path: /healthz
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 157
-
-  - id: readyz
-    kind: http
-    method: GET
-    path: /readyz
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 159
-
-  # --- THE ONE ACCOUNT-SCOPED ROW -------------------------------------------
-  # `GET /v1/me` resolves an account and returns it. It is the ONLY row here with
-  # `accountScoped: true`, and the only route in gateway that can reach another
-  # account's data: everything else in this file resolves a USER, a session, or
-  # nothing at all. D18 made it account-scoped; MD19's signed principal assertion
-  # is what makes the resolution CHECKABLE rather than asserted.
-  #
-  # IT IS DECLARED, AND UNTIL gateway-account-scope-ratchet-01 IT COULD NOT BE.
-  # Both ways to say so were measured and both were answered by a FAILURE, which
-  # is what the block below replaced. `accountScoped: false` is still wrong, and
-  # always was: `declaration-contradicts-code` reads the registration line ITSELF
-  # and finds the account there, because Hono puts the whole handler on that line
-  # and `c.get("principal")` is one of core's `RESOLVED` shapes.
-  #
-  # `accountScoped: true` with `accountFrom.via: requireJwt` used to be wrong too,
-  # and the reason was NOT the format. `scoping-bypassed` reads the `app.use`
-  # mounts registered ABOVE the row's own line — `chain_gate`, and
-  # `Recogniser.chain_read`, which core-hono-inline-01 added for exactly this
-  # route — and asks three things of each: is it ABOVE, does its pattern COVER
-  # this path, does it name `via` on its own line or within `HANDLER_WINDOW` (3)
-  # lines below it. The mount at src/index.ts:251 is above, and its `/v1/*`
-  # covers `/v1/me`. What failed was the third question: MD19's public-prefix
-  # exception made the mount's body four statements, `jwt.requireJwt` fell to the
-  # fifth line, and a five-line body does not fit in a three-line window.
-  #
-  #   before: FAIL account-scope.scoping-bypassed: me: registered at
-  #           src/index.ts:247, which does not go through requireJwt
-  #   after:  the same three statements with no blank line between them, so
-  #           `chain_gate` reads `requireJwt` at src/index.ts:254 — VERIFIED by
-  #           the run that produced this file rather than asserted in it.
-  #           `account-key-lost` is checked on the same row and does not fire:
-  #           `via` appears in `accountFrom.file`, and line 346 carries
-  #           `account_id`.
-  #
-  # A blank line is the whole of that change and `src/index.ts` argues it at the
-  # mount, because a security declaration that depends on a blank line is a
-  # fragility the next reader has to be told about rather than left to find. It
-  # is a weakness in core's window and not in this gate: a bounded window is
-  # RIGHT — an unbounded one would find the middleware for some other route
-  # further down and call a bypass covered — and three lines is too few for a
-  # gate with two exceptions in front of the call. It is recorded as a
-  # recommendation in REPORT-gateway-account-scope-ratchet-01.md §5, not worked
-  # around in silence.
-  #
-  # THE ROUTE, for the record:
-  #
-  #   GET /v1/me   src/index.ts:278   resolves the account at
-  #                 src/middleware/jwt.ts:346 — `accountId: typeof
-  #                 payload.account_id === "string" && payload.account_id !== ""
-  #                 ? payload.account_id : undefined`, inside `principalOf` —
-  #                 through the `requireJwt` gate at
-  #                 src/middleware/jwt.ts:241, which is mounted on `/v1/*` at
-  #                 src/index.ts:251.
-  #
-  # Hono matches handlers in REGISTRATION ORDER, which is the whole reason a
-  # twenty-seven-line gap between the mount and the route is a gate rather than a
-  # coincidence. The file's own comment says so, and so does `mount_covers`'s
-  # `/v1/*` over `/v1/me` test — gateway's own case, and the one core's
-  # `docs/account-scope.md` uses to explain the whole chain question.
-  # ---------------------------------------------------------------------------
-  - id: me
-    kind: http
-    method: GET
-    path: /v1/me
-    accountScoped: true
-    accountFrom: { via: requireJwt, file: src/middleware/jwt.ts, line: 346 }
-    registeredAt:
-      file: src/index.ts
-      line: 278
-
-  - id: bff-register
-    kind: http
-    method: POST
-    path: /auth/register
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 311
-
-  - id: bff-login
-    kind: http
-    method: POST
-    path: /auth/login
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 312
-
-  - id: bff-logout
-    kind: http
-    method: POST
-    path: /auth/logout
-    accountScoped: false
-    reason: public
-    registeredAt:
-      file: src/index.ts
-      line: 313
-
-  - id: bff-me
-    kind: http
-    method: GET
-    path: /auth/me
-    accountScoped: false
-    reason: none
-    registeredAt:
-      file: src/index.ts
-      line: 314
-
   # --- the same seven, registered by the GO implementation ---------------------
   # Seven rows for seven generated registrations, and they exist for one reason:
   # `account-scope.undeclared` is decided by the REGISTRATIONS in the files
