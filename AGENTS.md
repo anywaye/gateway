@@ -405,7 +405,14 @@ That is not a theory: the Redis tier did exactly this in TypeScript here.
 Therefore `bin/prime-go` runs `go test -v`, filters the output, and counts the
 skip at the GATE; `GATEWAY_EQUIVALENCE_REQUIRED=1` turns it into a failure inside
 the test; the CI `prime` job sets it and additionally reads the comparison count
-and fails under 72.
+and fails under 72. **That number is the gate's weakest number and it is not mine
+to raise**: a run on this tree prints `51 cases across 13 scenarios = 912
+comparisons`, so the floor is under 8% of what it is a floor on, and a hand-written
+case list that lost nine tenths of itself would pass. Recorded in
+`HANDOFF-docs-corrections-01.md` §1.3. The rule this paragraph exists to teach —
+*a tier that can pass by not running is a green about nothing* — is why the skip is
+caught; the floor is a second, weaker mechanism against a different failure, and it
+is the one that drifted.
 
 Three details that were measured rather than reasoned, and each was wrong first:
 

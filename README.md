@@ -952,6 +952,16 @@ printed on a run that found `bun`, so a `minimum` on it would turn every
 developer's machine without bun into a red gate. A floor on something a legitimate
 environment cannot print is not a floor.
 
+**That floor is also very low, and the workflow is not mine to edit.** A run on
+this tree prints `51 cases across 13 scenarios = 912 comparisons`, so 72 is under
+8% of the work it is a floor on: a hand-written case list that lost nine tenths of
+itself would pass it. It was correct when the tier ran three scenarios and was
+raised as packets landed, and it stopped being raised. The derived half of the
+list is protected independently — the cases are read out of the generated
+registrations — so the exposure is the hand-written remainder. Recorded as a
+finding in `HANDOFF-docs-corrections-01.md` §1.3; it is a one-line change in
+`.github/workflows/ci.yml`, which a live worker owns.
+
 **There is no `prime-go` CI job, and that is deliberate.** Two jobs running two
 tiers would be the gate existing twice, and the two could disagree about what
 "the Go tier is green" means. `setup-go` uses `go-version-file: go.mod` rather
@@ -1120,11 +1130,13 @@ still uncounted; all three are true at once, and only the third is the finding.
 
 ### The browser surface is served, and the session store is Redis
 
-`Options.BFF` is nil by default, so a Go gateway with no browser surface configured
-serves probes only and the four `/auth` routes decline with the reference's `404` —
-the same answer `createApp({})` gives. Configure it, and the four routes are served:
-the origin gate, the `__Host-bff-session` cookie, the fixed `401` sentence, the `423`
-with its `Retry-After`, and the rule that the browser never receives identity's token.
+`Options.BFF` is nil by default, so a Go gateway started without `IDENTITY_URL` and
+`REDIS_URL` declines the four `/auth` routes with the reference's `404` — the same
+answer `createApp({})` gives, and *only* those four: the probes, `/v1/me`, the
+limiter and the pass-through are all still served, because none of them needs a
+browser surface. Configure it, and the four routes are served: the origin gate, the
+`__Host-bff-session` cookie, the fixed `401` sentence, the `423` with its
+`Retry-After`, and the rule that the browser never receives identity's token.
 
 **`internal/sessionredis` is the store, and gateway owns it.** It was a decision,
 and the recorded reason for it was *checked rather than inherited* before anything
