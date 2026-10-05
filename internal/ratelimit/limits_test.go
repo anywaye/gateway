@@ -519,7 +519,127 @@ func TestValidationReturnsACopyRatherThanTheCallersMap(t *testing.T) {
 	}
 }
 
-// routeLimits is the shipped table's entries as a slice, so a table-wide property
+// -----------------------------------------------------------------------------
+// PolicyResolver — the table as the two hooks the limiter wants.
+//
+// The limiter reads a NAME and then the NUMBERS behind it, in two steps, so a table
+// keyed by PREFIX has to be indexed by name. That index is `PolicyResolver`, and it
+// is what `internal/httpapi/runtime.go` hands to `Options.Policy` and
+// `Options.Resolve`.
+
+func TestTheResolverGivesTheLimiterANameAndTheNumbersBehindIt(t *testing.T) {
+	policy, resolve, err := PolicyResolver(DefaultLimitTable())
+	if err != nil {
+		t.Fatalf("the shipped table was refused: %v", err)
+	}
+
+	for _, tc := range []struct {
+		path   string
+		policy string
+		limit  int
+		window time.Duration
+	}{
+		{"/auth/login", "gateway-auth-login", 10, minute},
+		{"/auth/register", "gateway-auth-register", 5, minute},
+		{"/auth/logout", "gateway-auth-logout", 30, minute},
+		{"/auth/me", "gateway-auth", 60, minute},
+		{"/v1/me", "gateway-api", 600, minute},
+		{"/v1/api-keys", "gateway-api-keys", 60, minute},
+		{"/nowhere", "gateway-api", 600, minute},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			name := policy(tc.path)
+			if name != tc.policy {
+				t.Fatalf("%q drew policy %q, want %q", tc.path, name, tc.policy)
+			}
+
+			limit, window, ok := resolve(name)
+			if !ok {
+				t.Fatalf("the resolver does not carry %q, so the limiter would fall back to its constructor allowance", name)
+			}
+			if limit != tc.limit {
+				t.Errorf("%q resolved to limit %d, want %d", name, limit, tc.limit)
+			}
+			if window != tc.window {
+				t.Errorf("%q resolved to window %v, want %v", name, window, tc.window)
+			}
+		})
+	}
+}
+
+// The fallback is FALLIBLE, and that is the point.
+//
+// A name the index does not carry answers `false`, and `Limiter.allow` then uses its
+// constructor allowance. This is the reference's documented behaviour rather than a
+// convenience: a typo in a table costs the default allowance and nothing else, which
+// is a failure a gateway mid-cutover can absorb.
+func TestANameTheTableDoesNotCarryIsNotResolved(t *testing.T) {
+	_, resolve, err := PolicyResolver(DefaultLimitTable())
+	if err != nil {
+		t.Fatalf("the shipped table was refused: %v", err)
+	}
+
+	for _, name := range []string{"", "gateway-auth-lgoin", "Gateway-Api", "gateway-api-keys "} {
+		if limit, window, ok := resolve(name); ok {
+			t.Errorf("%q resolved to %d/%v, want not resolved so the limiter falls back", name, limit, window)
+		}
+	}
+}
+
+// A NAME CLAIMED TWICE WITH DIFFERENT NUMBERS IS REFUSED.
+//
+// The reference's `byPolicy` is a `Map` written default-first and then routes in
+// insertion order, so the last write wins — silently, and in a language where that
+// order exists. A Go map has no insertion order, so the same loop would pick per
+// iteration and a request could draw `q=5` on one call and `q=60` on the next.
+//
+// The port refuses rather than arbitrates, because the reference's own model says
+// sharing a name means sharing an allowance: `limits.ts` says it twice, and it is
+// why `/auth/login` and `/auth/register` are separate policies. Two entries sharing a
+// name while disagreeing about the numbers are a table that contradicts itself, and
+// a startup failure is the only answer that does not depend on iteration order.
+func TestTwoEntriesSharingANameMustAgreeOnTheirNumbers(t *testing.T) {
+	table := LimitTable{
+		Default: Limit{Limit: 100, Window: time.Second, Policy: "shared"},
+		Routes: map[string]Limit{
+			"/v1/":     {Limit: 5, Window: time.Second, Policy: "shared"},
+			"/v1/lens": {Limit: 60, Window: time.Second, Policy: "shared"},
+		},
+	}
+
+	_, _, err := PolicyResolver(table)
+	if err == nil {
+		t.Fatal("a table with one name carrying two sets of numbers was accepted; which one a request draws would be a map's iteration order")
+	}
+	if !strings.Contains(err.Error(), "shared") {
+		t.Errorf("the message does not name the policy: %v", err)
+	}
+	if !strings.Contains(err.Error(), ErrNotConfigured.Error()) {
+		t.Errorf("the error is not wrapped in ErrNotConfigured: %v", err)
+	}
+}
+
+// The shipped `/v1/` row REUSES the default's policy name with the default's
+// numbers, and that has to keep working: it is the case where sharing a name is the
+// model working rather than a contradiction.
+func TestARouteReusingTheDefaultsNameWithTheSameNumbersIsAccepted(t *testing.T) {
+	table := DefaultLimitTable()
+	fallback := table.Default
+
+	entry, ok := table.Routes["/v1/"]
+	if !ok {
+		t.Fatal("the shipped table has no /v1/ row")
+	}
+	if entry.Policy != fallback.Policy || entry.Limit != fallback.Limit || entry.Window != fallback.Window {
+		t.Fatalf("/v1/ is %+v and the default row is %+v; this test is asserting the shipped table reuses the name with the same numbers", entry, fallback)
+	}
+
+	if _, _, err := PolicyResolver(table); err != nil {
+		t.Errorf("the shipped table was refused: %v", err)
+	}
+}
+
+// routeEntries is the shipped table's entries as a slice, so a table-wide property
 // can be asserted over the default row and the routes together.
 func routeLimits(table LimitTable) []Limit {
 	entries := make([]Limit, 0, len(table.Routes))

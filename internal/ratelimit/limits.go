@@ -240,6 +240,78 @@ func ResolveLimit(table LimitTable, path string) Limit {
 	return best
 }
 
+// PolicyResolver is the table expressed as the two hooks `Options.Policy` and
+// `Options.Resolve` want, and it is the whole of `buildLimiter`'s table handling
+// in `src/index.ts`.
+//
+// This is the seam the port needed. Both hooks already existed and nothing set
+// them, so the Go gateway drew every request on one default allowance — 600/min on
+// `/auth/login`, which is the scarcest thing the edge is supposed to serve. The
+// limiter reads a NAME and then the NUMBERS behind it, in two steps, so a table
+// keyed by PREFIX has to be indexed by name to reach it.
+//
+// # `resolve` IS FALLIBLE, AND THAT IS THE POINT
+//
+// A name the index does not carry answers `false`, and the limiter then falls back
+// to its constructor allowance. That is the reference's documented behaviour rather
+// than a convenience: a typo in a table costs the default allowance and nothing
+// else, which is the failure a gateway serving a cutover can absorb. It is also
+// the reason the index is built here and the fallback lives in `allow()`.
+//
+// # A NAME CARRYING TWO SETS OF NUMBERS IS REFUSED, NOT ARBITRATED
+//
+// The reference's `byPolicy` is a `Map` written default-first and then routes in
+// insertion order, so two entries sharing a name with different numbers means the
+// last one written wins — silently, and in a language where that order exists.
+// A Go map has no insertion order, so the same loop would pick per iteration and a
+// request could draw `q=5` on one call and `q=60` on the next.
+//
+// Rather than pick one, this refuses the table at construction. The reference's own
+// model says sharing a name means sharing an allowance — `limits.ts` states it
+// twice, and it is why `/auth/login` and `/auth/register` are separate policies —
+// so two entries sharing a name while disagreeing about the numbers are a table
+// that contradicts itself, and a startup failure is the only answer that does not
+// depend on iteration order. Identical numbers under one name are accepted: that is
+// the model working, not a contradiction, and the shipped `/v1/` row relies on it
+// (it reuses `gateway-api` under the same 600/min the default row carries).
+func PolicyResolver(table LimitTable) (func(string) string, func(string) (int, time.Duration, bool), error) {
+	index := make(map[string]Limit, len(table.Routes)+1)
+
+	// The default row goes in FIRST and a route row overwrites it, which is the
+	// reference's order: a route entry that reuses the default policy name brings
+	// its own numbers with it. Since `DefaultLimitTable` gives both the same
+	// numbers this is a no-op for the shipped table, and it is written the
+	// reference's way rather than the obvious one so a deployment that diverges
+	// them gets the reference's behaviour.
+	for _, entry := range append([]Limit{table.Default}, routeEntries(table)...) {
+		if known, ok := index[entry.Policy]; ok && known != entry {
+			return nil, nil, fmt.Errorf("%w: policy %q is claimed by more than one entry with different numbers (%d/%v and %d/%v). Two entries sharing a name share an allowance, so they must agree; otherwise which one a request draws is a map's iteration order", ErrNotConfigured, entry.Policy, known.Limit, known.Window, entry.Limit, entry.Window)
+		}
+		index[entry.Policy] = entry
+	}
+
+	policy := func(path string) string { return ResolveLimit(table, path).Policy }
+	resolve := func(name string) (int, time.Duration, bool) {
+		entry, ok := index[name]
+		return entry.Limit, entry.Window, ok
+	}
+
+	return policy, resolve, nil
+}
+
+// routeEntries is a table's route rows in no particular order.
+//
+// There is no order to have: `Routes` is a map. `PolicyResolver` above is written so
+// that no result depends on this order, which is the property that makes the absence
+// of one safe.
+func routeEntries(table LimitTable) []Limit {
+	entries := make([]Limit, 0, len(table.Routes))
+	for _, entry := range table.Routes {
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 // pathname is the path, without the query or the fragment.
 //
 // A local copy of the same three lines in `internal/httpapi/table.go`, and the

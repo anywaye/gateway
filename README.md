@@ -1466,6 +1466,7 @@ internal/httpapi/gate.go     the credential seam and the 401 — nil in every co
 internal/httpapi/probe.go    NamedProbe and the bounded probe runner
 internal/httpapi/problem.go  core's error envelope, ported from src/problem.ts
 internal/httpapi/env.go      the ONLY os.Getenv in the module, and it is a named function
+internal/ratelimit/limits.go the per-route allowance table, ported from src/middleware/limits.ts
 internal/httpapi/runtime.go  RuntimeOptions — the only function that reads the environment
 internal/equivalence/        the Go side of the equivalence check, and the scenarios it compares
 test/equivalence/reference.ts the TypeScript side, stood up on a port by the same check
