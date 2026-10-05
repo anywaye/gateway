@@ -28,60 +28,110 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# `GATEWAY_EQUIVALENCE_REQUIRED` is read by `internal/equivalence` and turns
-# "bun is not on PATH" from a skip into a failure at module load. It is here and
-# only here for the same reason the Redis job sets
-# `GATEWAY_REDIS_REQUIRED=true`: a skip nobody can see is a green run that
-# verified nothing, and this repository has been bitten by that twice — once on
-# the Redis tier and once by `docker build --target test` running 392 tests
+# `GATEWAY_EQUIVALENCE_REQUIRED` is read by exactly one place in this repository:
+# `bin/prime-go:172`, inside the branch that fires when the equivalence tier
+# prints its counted skip. It is here and only here for the same reason the Redis
+# job sets `GATEWAY_REDIS_REQUIRED=true`: a skip nobody can see is a green run
+# that verified nothing, and this repository has been bitten by that twice — once
+# on the Redis tier and once by `docker build --target test` running 392 tests
 # across 15 files where the host ran 399 across 16.
 #
-# It is a JOB-level env rather than a step-level one because `bin/prime` now runs
-# the Go tier itself, and the equivalence check is inside it. There is deliberately
-# no `prime-go` job: two jobs running two tiers would be the gate existing twice,
-# and the two could disagree about what "the Go tier is green" means.
+# KEPT, NOT REMOVED, and the reason is a measurement rather than a sentiment.
+# The packet's instruction was to grep before touching it, and the grep was run
+# over the whole worktree:
+#
+#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --exclude-dir=node_modules --exclude-dir=.git .
+#   bin/prime-go:172:  if [ "${GATEWAY_EQUIVALENCE_REQUIRED:-0}" = "1" ]; then
+#   bin/prime-go:173:    echo "bin/prime-go: GATEWAY_EQUIVALENCE_REQUIRED=1 and there is
+#                            nothing to compare against." >&2
+#   Dockerfile:83, gate.yml:347, README.md:947, CHANGELOG.md:639, AGENTS.md:408,
+#   REPORT-*.md, HANDOFF-docs-corrections-01.md  -- prose, all of it
+#   .github/workflows/ci.yml:31,44              -- this comment and this variable
+#
+#   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --include='*.go' .
+#   (no output; rc=1)
+#
+# So: something reads it, therefore it stays. And the previous version of this
+# comment was WRONG about who — it said "`internal/equivalence` reads it", which
+# was true of the harness f87c891 deleted and is true of nothing now. Zero hits
+# in any `.go` file. The reader is a shell script, and the variable is a
+# documented interface to that script rather than to Go code. Corrected here
+# because a comment naming the wrong reader sends the next person to grep for a
+# Go symbol that has not existed since the cutover.
+#
+# WHAT IT IS WORTH NOW, honestly: not much, and that is a finding rather than a
+# hedge. `bin/prime-go`'s check runs in this order — it greps for the summary
+# line first, and if neither the summary nor a counted skip is present it exits
+# 1 before line 172 is ever reached. f87c891 removed the harness that printed
+# both. So `bin/prime-go` fails today with or without this variable set, and the
+# variable cannot rescue it. It is kept because the reader exists and a
+# documented interface is not mine to delete; whoever rewrites `bin/prime-go`
+# for the Go-only tree should decide whether the flag survives the rewrite, and
+# this comment is where they will look.
+#
+# It is a JOB-level env rather than a step-level one because `bin/prime` runs
+# the Go tier itself, and the equivalence check is inside it. There is
+# deliberately no `prime-go` job: two jobs running two tiers would be the gate
+# existing twice, and the two could disagree about what "the Go tier is green"
+# means.
 env:
   GATEWAY_EQUIVALENCE_REQUIRED: "1"
 
 jobs:
   # -------------------------------------------------------------- shared half
-  # `language: bun` runs install (frozen), typecheck and test. It is the same
-  # work `bin/prime` does, from kit's copy of the conventions, which is the point
+  # `language: go` runs download, build, golangci-lint against kit's config,
+  # `go test -race -count=1 ./...` and a coverage floor. It is the same work
+  # `bin/prime-go` does, from kit's copy of the conventions, which is the point
   # of calling it rather than maintaining a second version here.
+  #
+  # WAS `language: bun`, AND THAT WAS A FALSE CLAIM. This line said the
+  # repository's service manifest was a package.json. It stopped being one at
+  # f87c891: 76 files of TypeScript deleted, `-15961 lines`, `src/` and
+  # `test/equivalence/reference.ts` with it. kit's `bun` job opens with
+  # `bun install --frozen-lockfile`, then typecheck, then `bun test` — against a
+  # repository with no dependency graph and no TS suite. That job either fails on
+  # the install or, worse, is green while typechecking nothing. A CI file that
+  # names a toolchain this repository does not have is not documentation, it is a
+  # check on a lie.
   ci:
     name: ci (kit)
     uses: cafaye/kit/.github/workflows/ci.reusable.yml@master
     with:
-      language: bun
+      language: go
       working-dir: .
-      # The pin, passed rather than defaulted. kit falls back to 1.3.12, which
-      # happens to be the same number today — and a default that happens to match
-      # is a default nobody is checking. `pins.test.ts` asserts this against
-      # package.json and mise.toml, so a bump in either fails the gate rather than
-      # quietly testing one runtime and shipping another.
+      # The pin, passed rather than defaulted. kit reads
+      # `fromJSON(inputs.versions).go || 'stable'` — so an absent key here is not
+      # "use our pin", it is "install whatever Go the runner ships this week".
+      # A default that happens to match is a default nobody is checking, and this
+      # one would keep matching right up to the day it did not.
       #
-      # IT NO LONGER ASSERTS THE IMAGE, and that is not a gap in the sentence but
-      # the point of it. This file used to claim that pins.test.ts held package.json,
-      # mise.toml, the Dockerfile and compose to one number — four copies of the Bun
-      # pin, one of them the base image. The image is built on Go now, so there is no
-      # Bun copy in the Dockerfile to drift; the Go toolchain has its own three and
-      # `bin/prime-go` plus the Go half of `pins.test.ts` check them.
-      versions: '{"bun":"1.3.12"}'
+      # 1.26.1, READ NOT ASSUMED. `mise.toml` says `go = "1.26.1"` and `go.mod`
+      # says `go 1.26.1`, and the two were confirmed to agree independently
+      # before this line was written — `go.mod` is the copy the compiler
+      # enforces, so it is the one that gets to decide, and mise.toml is the copy
+      # the worktree uses. `bin/prime-go` asserts the two against each other at
+      # startup, which is what keeps a bump in either one a red build rather than
+      # a compile error nobody expected.
+      #
+      # The three copies of the Go pin: this line, `go.mod`, `mise.toml`. And
+      # `Dockerfile`'s `ARG GO_VERSION is 1.26`, which names an image tag rather
+      # than a patch, the way `RUST_VERSION` used to. `versions` is the ONLY copy
+      # here that nothing checks, because kit's own gate cannot see it — the
+      # value arrives from this caller and is not in any tree. That is why it is
+      # written out in full rather than inherited from a default.
+      versions: '{"go":"1.26.1"}'
 
   # ------------------------------------------------- the gate a developer runs
   # Done means `bin/prime` is the gate and it is the same command locally and in
-  # CI. kit's `bun` job is the same *steps*, but not the same command: a gate
+  # CI. kit's `go` job is the same *steps*, but not the same command: a gate
   # nobody runs is a gate nobody maintains, and this job is what keeps that true.
-  # It also carries the lockfile guard, which has to run *after* an install and
-  # so cannot live inside kit's job.
+  # It also carries the manifest guard, which has to run *after* the gate and so
+  # cannot live inside kit's job.
   prime:
     name: bin/prime
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.12"
       # `go-version-file: go.mod` rather than a literal version, and that is the
       # point: the pin now lives in `go.mod` (which the compiler enforces) and in
       # `mise.toml` (which `bin/prime-go`'s first step checks against it), and a
@@ -89,10 +139,26 @@ jobs:
       # one of them checked by the gate at startup — the arrangement
       # `pantry/.github/workflows/ci.yml:35` states the same way.
       #
-      # The step order matters and it is not alphabetical: `setup-bun` before
-      # `setup-go` is irrelevant, but `setup-go` must come before `bin/prime`,
-      # because `bin/prime` now ends in `./bin/prime-go` and that script exits 127
-      # on a machine with no Go toolchain rather than skipping.
+      # The step order matters and it is not alphabetical: `setup-go` must come
+      # before `bin/prime`, because `bin/prime` ends in `./bin/prime-go` and that
+      # script exits 127 on a machine with no Go toolchain rather than skipping.
+      #
+      # WHAT WAS HERE: `oven-sh/setup-bun@v2` with `bun-version: "1.3.12"`,
+      # removed. Not because installing a toolchain is expensive -- it is cheap
+      # and it worked -- but because it was the only thing standing between this
+      # job and a claim it could not keep. With no `src/` there is no TypeScript
+      # for Bun to run; the step existed to make `bun install --frozen-lockfile`
+      # possible inside `bin/prime`, and a runner that cannot install a
+      # dependency graph that is no longer in the repository fails at the `require
+      # bun` on line 136 of that script rather than at the thing it was
+      # preparing for.
+      #
+      # `bin/prime` and `bin/prime-go` are still Bun-flavoured scripts TODAY and
+      # this job is still red because of it -- see the note at the end of this
+      # commit. Dropping the setup step here does not make that job green; it
+      # removes a step whose only remaining purpose was to serve a deleted
+      # `src/`, and leaves the real failure to be fixed in the script that owns
+      # it. That script belongs to another worker and was not edited here.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -100,7 +166,8 @@ jobs:
       - name: bin/prime
         run: bin/prime
       - name: go.mod and go.sum are untouched
-        # The Go half of the check the next step does for `bun.lock`.
+        # The lockfile guard for this repository, now that there is exactly one
+        # lockfile.
         #
         # `bin/prime-go` runs `go build ./...` and `go test ./...`, and neither
         # rewrites the manifests — but a plain `go get` or a `go mod tidy` left in
@@ -115,238 +182,49 @@ jobs:
         run: |
           git diff --exit-code -- go.mod go.sum \
             || { echo "bin/prime moved go.mod or go.sum — the build is no longer against the committed tree"; exit 1; }
-      - name: the equivalence tier compared something, and said how much
-        # The env var above turns "bun is not on PATH" into a failure, so a green
-        # run of `bin/prime` in this job means the reference was stood up and the
-        # comparison count on the last line below is a number of real answers.
-        # This step is the CLAIM made legible: it reads that count out of the run's
-        # own output and holds it to four things — that the line is there, that the
-        # per-scenario rows agree with it, that the rows' own arithmetic produces it,
-        # and that it has not shrunk.
-        #
-        # It is a second assertion on the same evidence rather than a third
-        # mechanism, and the redundancy is the point — `gate.yml` deliberately
-        # cannot put a floor on that count (a legitimate developer machine without
-        # bun never prints the line), so the only place the count is held to a
-        # number is here, where `GATEWAY_EQUIVALENCE_REQUIRED=1` guarantees it is
-        # printed at all.
-        #
-        # WHAT CHANGED, AND WHY THE OLD VERSION WAS DEAD IN BOTH DIRECTIONS
-        #
-        # It compared against a literal 72, which was correct when the tier compared
-        # 6 cases. The tier now compares 51 cases across 13 scenarios = 912
-        # comparisons, so a floor of 72 passed for every outcome the tier has ever
-        # produced and for every regression between 72 and 911. A check that cannot
-        # fail is not a check.
-        #
-        # It was WORSE than that, and this was measured before it was changed: the
-        # `sed` matched `cases x \([0-9]+\) scenarios`, and the tier has printed
-        # `cases ACROSS` since 5947d8f — the commit that made the browser half a
-        # function of the scenario, which turned the count from a product into a
-        # sum. The pattern matched nothing, so `comparisons` was empty and the step
-        # exited on its "printed no comparison count" branch before reaching the
-        # floor. The guard was red on every green run and had been for a while, and
-        # the red was being read as the known-red kit job rather than as this one.
-        # So the parser is now checked against the string the runner actually
-        # prints, and — see below — the count is checked against a SECOND tally of
-        # the same run rather than against one number that a reworded `t.Logf`
-        # can take away entirely.
-        run: |
-          set -o pipefail
+      # WAS: a second step, `bun.lock is untouched`, doing the same job for the
+      # Bun lockfile via `git diff --exit-code -- bun.lock`. Removed with the
+      # `setup-bun` step above, and for the same reason plus one more: a guard
+      # over a file the gate no longer installs from is a check that cannot fail
+      # for a reason anyone can act on. `git diff --exit-code -- bun.lock` against
+      # a repository where nothing runs `bun install` is a no-op that reports
+      # success, and a passing no-op in a gate file is worse than no step --
+      # it reads as coverage. The `go.mod`/`go.sum` guard above is now the whole
+      # of it, and it guards the whole of it.
 
-          # The gate's exit status is captured HERE, before any of its numbers are
-          # read, and the numbers are discarded if it failed. A partial run still
-          # prints a summary line, so a count from a red `bin/prime-go` would be a
-          # count of half a comparison.
-          #
-          # IN AN `if`, and that is not a style preference. Actions runs a `run:`
-          # block as `bash --noprofile --norc -eo pipefail {0}`, and under `-e` a
-          # bare `summary="$(bin/prime-go 2>&1)"` ABORTS the step the moment the
-          # gate fails: the step would die on that line with the gate's own status
-          # and print nothing at all. The previous version of this step had exactly
-          # that shape, so a failing gate was a red with no sentence attached. Found
-          # by running this block against a stub that fails, under the same shell
-          # Actions uses — reading the code would not have shown it.
-          if summary="$(bin/prime-go 2>&1)"; then
-            gate_exit=0
-          else
-            gate_exit=$?
-          fi
-          echo "$summary"
-
-          # `gate_exit` AND NOT `gate-exit`: bash does not accept a hyphen in a
-          # variable name, so `gate-exit=$?` is a command lookup that fails with
-          # 127 — under `-e` the step dies on that line before it has checked
-          # anything, and without `-e` it dies on the next one instead, because
-          # `$gate-exit` expands to the empty `$gate` followed by the literal
-          # `-exit`. Found by the same harness: a name that cannot be assigned
-          # looks exactly like a name that holds zero.
-          if [ "$gate_exit" -ne 0 ]; then
-            echo "bin/prime-go exited $gate_exit, so the counts below would describe a run that failed."
-            echo "  They are not evidence that anything was compared."
-            exit "$gate_exit"
-          fi
-
-          # `across`, and not `x`: that is the previous version's failure, and the
-          # runner stopped saying `x` when the browser half became a function of
-          # the scenario and the count stopped being a product. The `.*` before
-          # `equivalence:` is carried forward rather than reinvented — `go test -v`
-          # prefixes a log line with `    file.go:403: `, so an anchored pattern
-          # matches nothing, which is what the first draft of this step did.
-          summary_line="$(printf '%s\n' "$summary" |
-            sed -n 's/.*equivalence: \([0-9][0-9]*\) cases across \([0-9][0-9]*\) scenarios = \([0-9][0-9]*\) comparisons.*/\1 \2 \3/p' |
-            tail -n 1)"
-          if [ -z "$summary_line" ]; then
-            echo "the equivalence tier printed no comparison count; a check that cannot say what it compared is a check that cannot be read"
-            exit 1
-          fi
-          cases="$(printf '%s' "$summary_line" | cut -d' ' -f1)"
-          scenarios="$(printf '%s' "$summary_line" | cut -d' ' -f2)"
-          comparisons="$(printf '%s' "$summary_line" | cut -d' ' -f3)"
-
-          # THE PER-SCENARIO ROWS: the same run, counted a second way.
-          #
-          # `comparisons` is incremented once per comparison inside the loop;
-          # `asked` is incremented once per case in the same loop, and printed as
-          # one row per scenario. Two tallies of one run that cannot both be right
-          # unless the runner compared what it says it compared — which is the
-          # property the floor below cannot have on its own, because the floor is a
-          # number and this is arithmetic that moves with the cases.
-          rows="$(printf '%s\n' "$summary" |
-            sed -n 's/.*equivalence: scenario \([A-Za-z0-9]*\) *\([0-9][0-9]*\) case(s) asked.*/\1 \2/p')"
-          row_count="$(printf '%s\n' "$rows" | grep -c '[^[:space:]]' || true)"
-          if [ "$row_count" -ne "$scenarios" ]; then
-            echo "the summary claims $scenarios scenarios and the run printed $row_count per-scenario rows."
-            echo "  One of the two is a number this step read rather than counted, so the floor"
-            echo "  below would be held against a count nothing else in the run corroborates."
-            exit 1
-          fi
-
-          asked_total=0
-          asked_nothing=""
-          while read -r name asked; do
-            [ -n "$name" ] || continue
-            asked_total=$((asked_total + asked))
-            if [ "$asked" -eq 0 ]; then
-              asked_nothing="$asked_nothing $name"
-            fi
-          done <<<"$rows"
-          if [ -n "$asked_nothing" ]; then
-            echo "scenario(s)$asked_nothing asked no case at all, so every comparison under them"
-            echo "  passed vacuously. The runner asserts this too; this step reads the rows it"
-            echo "  now depends on, so it cannot depend on a row set that is allowed to be empty."
-            exit 1
-          fi
-
-          # TWO COMPARISONS PER ASKED CASE, and this is the whole derivation: the
-          # loop compares the FIRST request of a burst and the LAST one, and counts
-          # each (`comparisons++` appears twice in `equivalence_test.go`, `asked++`
-          # once). It is a number about the tier's SHAPE rather than about its case
-          # list, so it does not need raising when a case is added — and a change
-          # to the burst comparison is a change to this, which the failure below
-          # says out loud.
-          comparisons_per_case=2
-          expected=$((asked_total * comparisons_per_case))
-          if [ "$comparisons" -ne "$expected" ]; then
-            echo "the tier reported $comparisons comparisons; its own per-scenario rows add up to"
-            echo "  $expected ($asked_total cases asked x $comparisons_per_case comparisons each)."
-            echo "  Those are two counts of the same loop, so one of them is wrong. If the runner"
-            echo "  compares more or fewer than the first and last request of a burst, fix"
-            echo "  comparisons_per_case above in this commit rather than loosening the equality."
-            exit 1
-          fi
-
-          # THE FLOOR, AND WHY IT IS A NUMBER RATHER THAN A DERIVATION
-          #
-          # Every quantity above is produced by the run whose case list shrank: the
-          # summary's cases, its scenarios, its comparisons and its per-scenario
-          # rows all come from the same execution, so they shrink together and
-          # agree with each other. NO WITHIN-RUN QUANTITY CAN SEE SHRINKAGE, and
-          # the scenario inventory cannot substitute for one — the two arms are
-          # held equal by `TestTheInventoryIsEveryScenarioBothSidesDeclareAndNothing
-          # Twice`, so a run that drove fewer scenarios than the last one is caught
-          # there, but a run that drove all thirteen over a case list with three
-          # fewer cases in it is not, and that is the regression this floor is for.
-          #
-          # So the cross-run half needs a recorded number, and this file is where it
-          # is recorded. What makes that survivable — and what the old literal was
-          # not — is that it is a FLOOR and nothing else. The 72 was not a floor
-          # that had stopped being true; it was a number that had to be RAISED every
-          # time a case was added, and `b7dff5b` alone took the tier from 405 to
-          # 912, so it rotted by never being raised. A floor is never wrong by
-          # being too low as long as it fires — it is only ever too high, and being
-          # too high is a loud red the author can see. Additions pass it without
-          # touching this file; only a removal can fail it.
-          #
-          # SHRINKAGE, NOT ANY CHANGE — deliberately. `b7dff5b` added two scenarios
-          # and the limiter work adds cases inside an existing one, so a guard that
-          # fired on every change would fire on every legitimate packet and get
-          # deleted rather than fixed. The property worth holding is the count going
-          # DOWN. When it goes down legitimately, the author lowers this number in
-          # the same commit that removed the case, which puts the removal on the
-          # record in the diff rather than in a comment nobody reads.
-          #
-          # IT HAS BEEN SHOWN TO FAIL, ON THIS TREE AND NOT ONLY ON FIXTURES
-          #
-          # Two mutations were planted and reverted, both with `bin/prime-go` GREEN
-          # underneath, which is the condition that matters: a tier that fails on its
-          # own has already been reported on by the step above.
-          #
-          # Six cases deleted from `edgeCases`. The tier reported 756 comparisons and
-          # this step failed on the floor. A floor of 72 passed it four times over.
-          #
-          # `comparisons++` changed to `comparisons += 2`, so the summary claimed
-          # 1368 against 912 real comparisons — fifty percent INFLATED, which is
-          # ABOVE the floor, so the floor passed it silently and the arithmetic above
-          # is the only thing that caught it. That is the argument for deriving the
-          # count rather than trusting it: a number a human typed cannot tell an
-          # honest 1368 from a dishonest one, and a row-by-row tally can.
-          floor=912
-          if [ "$comparisons" -lt "$floor" ]; then
-            echo "the equivalence tier compared $comparisons request/case pairs and this floor says $floor."
-            echo "  Its own rows agree: $asked_total cases asked across $scenarios scenarios."
-            echo
-            echo "  If a commit in this range REMOVED a case or a scenario, lower the floor in"
-            echo "  that same commit so the removal is in the diff. If nothing was removed, this"
-            echo "  is unexplained shrinkage and the guard is the only thing that saw it."
-            exit 1
-          fi
-
-          # `cases` AND `asked_total` both, because the two differing IS the shape of
-          # the tier and a reader who sees one number will guess wrong about the
-          # other: `cases` is the base list every scenario starts from, and the
-          # browser and limiter halves are added PER SCENARIO, so a case asked under
-          # six scenarios is counted once in the list and six times in the sum.
-          echo "equivalence: $comparisons comparisons over $asked_total cases asked across $scenarios scenarios, from a base case list of $cases (floor $floor), every one of them answered identically by both sides"
-      - name: bun.lock is untouched
-        # `bin/prime` runs `bun install --frozen-lockfile`, which fails rather
-        # than rewriting the lock — so this is expected to be a no-op, and that is
-        # exactly why it is here. It is the check that survives a future edit to
-        # bin/prime that drops the flag: a plain `bun install` will happily
-        # resolve a different tree than the one that was committed, and the run
-        # stays green while doing it. Cheap, and it catches drift that is
-        # otherwise invisible.
-        run: |
-          git diff --exit-code -- bun.lock \
-            || { echo "bin/prime moved bun.lock — the gate is no longer frozen"; exit 1; }
 
   # ------------------------------------------------------------- the live tier
   # gateway's Redis backend is the one part of the suite that a transcription
-  # cannot stand in for: `rateLimitRedis.test.ts` runs a JavaScript copy of
-  # GCRA_LUA, so the script itself has never been executed by any test in this
-  # repository. That tier is environment-gated on a real redis-server, so without
+  # cannot stand in for: `internal/ratelimit/live_test.go` runs GCRA_LUA against
+  # a real redis-server, so the script itself is executed by these tests and by
+  # nothing else in this repository. That tier is environment-gated, so without
   # this job it skips and the run is green without having run it.
   #
-  # It is a separate job, and a separate service, because kit's bun job has no
+  # It WAS the TypeScript file `src/middleware/rateLimitRedisLive.test.ts`, run
+  # under `bun test` after a `bun install --frozen-lockfile`. That file was
+  # deleted at f87c891, so this job could not pass: `bun install` had no
+  # dependency graph to install and `bun test` had no file to run. It now runs
+  # the Go tier, same Redis, same port, same image pin.
+  #
+  # It is a separate job, and a separate service, because kit's `go` job has no
   # way to start Redis and must not grow one: a reusable workflow that brought up
   # a datastore would be a reusable workflow that decides what every service in
   # the org needs. gateway's counter store is gateway's dependency.
   #
-  # `GATEWAY_REDIS_REQUIRED=true` is the load-bearing part. The tier skips when
-  # GATEWAY_REDIS_URL is unset, and a skip is a green run that verified nothing —
-  # the failure this packet exists to prevent. Setting the required flag turns
-  # "no Redis" from a skip into a failure, so this job cannot pass without having
-  # executed the script.
+  # `GATEWAY_REDIS_REQUIRED` is the load-bearing part, and its value is corrected
+  # from `"true"` to `"1"`. It was `"true"`, and `TestMain` compares
+  # `os.Getenv("GATEWAY_REDIS_REQUIRED") == "1"` -- so the flag this job has been
+  # setting was read as UNSET, every run, since it was written. The tier skipped
+  # silently on a runner where the URL was unusable, and the run stayed green.
+  # This is the same class of defect as the equivalence flag, arrived at from the
+  # other direction: a gate variable whose value is a string nothing ever parses.
+  #
+  # Which is why the job also asserts on the run's own output rather than
+  # trusting the flag. The tier skips when GATEWAY_REDIS_URL is unset, and a skip
+  # is a green run that verified nothing -- the failure this job exists to
+  # prevent. Setting the required flag turns "no Redis" from a skip into a
+  # failure, and the step below turns "ran and passed" from an assumption into a
+  # count. Either alone is half the guarantee.
   redis:
     name: redis (live tier)
     runs-on: ubuntu-latest
@@ -366,42 +244,119 @@ jobs:
           --health-retries 15
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v7
         with:
-          bun-version: "1.3.12"
-      - name: install
-        run: bun install --frozen-lockfile
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: the live tier runs
         env:
           GATEWAY_REDIS_URL: redis://127.0.0.1:6379
-          GATEWAY_REDIS_REQUIRED: "true"
-        run: bun test src/middleware/rateLimitRedisLive.test.ts
+          GATEWAY_REDIS_REQUIRED: "1"
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/live-tier.log"
+          # The tier is SELECTED BY NAME, and the names come out of the file that
+          # declares them. Two reasons, and the second is the real one.
+          #
+          # First: `./internal/ratelimit/` on its own runs 57 tests, not 14. The
+          # package holds the transcription tests as well as the live ones, and a
+          # floor checked against a package total is a floor that drifts upward
+          # every time somebody adds a unit test elsewhere in the file -- so it
+          # stops being a statement about this tier and becomes a statement about
+          # the package. Measured on go1.26.1: 57 `--- PASS` for the package,
+          # 14 for the tier.
+          #
+          # Second, and the reason this reads the source at all: a hardcoded list
+          # of fourteen names is a list that is wrong the day someone adds a
+          # fifteenth test, and it is wrong SILENTLY -- the new test runs, is not
+          # in the pattern, and the floor still passes on the fourteen it knows.
+          # Reading `^func Test` out of live_test.go means the thing being
+          # selected and the thing being counted are the same list by
+          # construction.
+          #
+          # `TestMain` matches the same `^func Test` pattern and is excluded
+          # explicitly, because `-run TestMain` is not a test and Go treats a
+          # `-run` match on it as an error rather than a filter.
+          pattern=''
+          declared=0
+          while read -r t; do
+            [ "$t" = "TestMain" ] && continue
+            declared=$((declared + 1))
+            if [ -n "$pattern" ]; then pattern="$pattern|$t"; else pattern="$t"; fi
+          done < <(grep -oE '^func Test[A-Za-z0-9_]+' internal/ratelimit/live_test.go | sed 's/^func //')
+          echo "live tests declared in internal/ratelimit/live_test.go: $declared"
+          # A tier whose selector matched nothing is a step that cannot fail, so
+          # the empty pattern is refused here rather than handed to `go test`,
+          # where `^()$` is a valid regex matching nothing and the run is green.
+          if [ -z "$pattern" ]; then
+            echo "::error::no test names were read out of internal/ratelimit/live_test.go." >&2
+            echo "::error::An empty -run pattern is a green run of zero tests." >&2
+            exit 1
+          fi
+          go test -count=1 -v -run "^($pattern)\$" ./internal/ratelimit/ 2>&1 | tee "$log"
+          # `pipefail` is already on, but the exit status is read explicitly
+          # rather than inherited: under pipefail the pipeline's status IS go
+          # test's, and a step that reports tee's status is a gate that can
+          # never fail.
+          exit "${PIPESTATUS[0]}"
       - name: the live tier reported passes, not skips
-        # `bun test` exits 0 on a fully skipped file, so a green step above is
-        # not by itself evidence that the tier ran. This reads the summary and
-        # fails on the shape that verifies nothing: `0 pass` and everything
-        # skipped. It is the difference between a checkmark and a claim, and
-        # PLAN.md §1 is explicit that a skipped test proves nothing.
+        # The property, unchanged: a green `go test` on a tier that ran nothing is
+        # not a pass. `go test` exits 0 on a package whose tests all skipped, so
+        # the run step being green is not evidence on its own -- and the run step
+        # CAN be green that way, because `GATEWAY_REDIS_REQUIRED` only escalates
+        # when the URL is also unset (see the two conditions in TestMain). A
+        # reachable-but-degraded Redis, or a typo in the URL that still resolves,
+        # skips rather than fails.
+        #
+        # RE-DERIVED FOR `go test -v`. The old assertion parsed `bun test`'s
+        # summary block (`^ *N pass *$`). That shape does not exist in Go: go
+        # test prints one `--- PASS: Name (0.00s)` line per test and no trailing
+        # count of passes at all. So the count comes from counting those lines,
+        # anchored whole-line with a colon and a space, which is what makes
+        # `--- PASS:` distinct from the `    --- PASS:` that subtests and
+        # benchmarks print indented. Counting `PASS` as a substring would count
+        # those too and inflate the floor past its own meaning.
+        #
+        # `grep -c` under pipefail exits 1 when it counts ZERO, which is the case
+        # this step exists to catch -- so `|| true` is there to let the zero
+        # through to the comparison rather than aborting on it. Without it the
+        # step fails for the right reason by accident and says nothing.
         env:
           GATEWAY_REDIS_URL: redis://127.0.0.1:6379
-          GATEWAY_REDIS_REQUIRED: "true"
+          GATEWAY_REDIS_REQUIRED: "1"
         run: |
-          summary="$(bun test src/middleware/rateLimitRedisLive.test.ts 2>&1)"
-          echo "$summary"
-          # `bun test` prints one count per line, so these are anchored whole-line
-          # matches rather than the substring grep that reads fine until the
-          # output has a second `pass` in it.
-          passed="$(printf '%s\n' "$summary" | sed -n 's/^ *\([0-9][0-9]*\) pass *$/\1/p' | tail -n 1)"
-          skipped="$(printf '%s\n' "$summary" | sed -n 's/^ *\([0-9][0-9]*\) skip *$/\1/p' | tail -n 1)"
-          if [ "${passed:-0}" -lt 14 ]; then
-            echo "the live Redis tier ran ${passed:-0} tests, expected 14 — a tier that did not run is not a pass"
+          set -euo pipefail
+          log="$RUNNER_TEMP/live-tier.log"
+          # MEASURED, not carried forward. live_test.go declares 15 `func Test`
+          # names; one of them is `TestMain`, which is not a test. So the tier is
+          # 14 -- which is the number the old `-lt 14` happened to state, and it
+          # is stated here again only because it was re-measured against
+          # go1.26.1 against a real redis-server rather than inherited.
+          #
+          # One of those 14 is `TestAnUnreachableServerThrowsRatherThanResolving`,
+          # which runs with the tier GATED OFF on purpose -- it asserts that an
+          # unreachable server throws rather than resolving, so it needs no
+          # server. That is why an ungated run below reports 1 pass and 13 skips
+          # and not 0 and 13: the floor is a statement about the tier, and the
+          # ungated run is measured below it, which is the intended failure.
+          floor=14
+          passed="$(grep -cE '^--- PASS: ' "$log" || true)"
+          skipped="$(grep -cE '^--- SKIP: ' "$log" || true)"
+          echo "passed=$passed skipped=$skipped floor=$floor"
+          if [ "$passed" -lt "$floor" ]; then
+            echo "::error::the live Redis tier reported $passed passes; the floor is $floor." >&2
+            echo "::error::A tier that did not run is not a pass. Either Redis was" >&2
+            echo "::error::unreachable -- in which case nothing above says so -- or the" >&2
+            echo "::error::tests moved out of live_test.go, in which case lower this" >&2
+            echo "::error::floor in the same commit as the move." >&2
             exit 1
           fi
-          if [ "${skipped:-0}" -ne 0 ]; then
-            echo "the live Redis tier skipped $skipped tests; CI is the only place it can be forced"
+          if [ "$skipped" -ne 0 ]; then
+            echo "::error::the live Redis tier skipped $skipped of its tests; CI is" >&2
+            echo "::error::the only place it can be forced, and it was not forced." >&2
             exit 1
           fi
-          echo "live Redis tier: $passed passed, ${skipped:-0} skipped"
+          echo "live Redis tier: $passed passed, $skipped skipped"
 
   # ------------------------------------------------------------------ manifest
   # `cafaye.yml` is `additionalProperties: false` against core's frozen schema, so
@@ -461,11 +416,13 @@ jobs:
         run: docker build --target test --tag cafaye-gateway:test .
       - name: the image ran the repository's tests, not a subset of them
         # The step above is a green build, and a green build is a claim about a
-        # file set nobody in this job has read. `docker build --target test`
-        # reported 392 tests across 15 files while the host ran 399 across 16:
-        # `pins.test.ts` sits at the repository root and the test stage's COPY
-        # list never named it, so the one test that checks the image and the
-        # repository agree on the toolchain pin was not in the image that ran.
+        # file set nobody in this job has read. It used to name its own evidence:
+        # `docker build --target test` reported 392 tests across 15 files while the
+        # host ran 399 across 16, because `pins.test.ts` sits at the repository
+        # root and the test stage's COPY list never named it -- so the one test
+        # checking that image and repository agreed on the toolchain pin was not
+        # in the image that ran. Both numbers are TypeScript-tree numbers and the
+        # file is gone; see the note below for what replaced that sentence.
         #
         # This step is the half that cannot be argued with: the image is asked what
         # test files it actually holds, and that set is compared against what
@@ -483,10 +440,40 @@ jobs:
         # and so this diff is what stands between a green build and a green build
         # that never ran a test file the repository has.
         #
+        # THE STEP ITSELF IS STILL RIGHT, and it was read rather than assumed. It
+        # counts `*_test.go` on both sides, asks the built image what it holds
+        # rather than reading the Dockerfile's COPY list, and diffs the two sets.
+        # All three properties hold for the Go tree, and the third is the one that
+        # matters: `COPY . .` is not a tautology when the check reads the IMAGE,
+        # because a `.dockerignore` rule that drops a directory leaves buildkit
+        # copying the rest and staying green. Reading the Dockerfile could not see
+        # that; `docker run ... find` can.
+        #
+        # WHAT WAS HERE, and it described a file that no longer exists: this
+        # comment block explained that `pins.test.ts` sits at the repository root
+        # and the test stage's COPY list never named it, so the image ran 392
+        # tests across 15 files where the host ran 399 across 16. That was a real
+        # finding about the TypeScript tree. `pins.test.ts` was deleted at
+        # f87c891 along with `test/`, and with it the only test file that lived
+        # outside a test directory -- so the specific gap this step was written to
+        # catch no longer exists.
+        #
+        # The check is kept anyway, and the reason is worth stating because it is
+        # the difference between a check and a relic. The property is not "the
+        # image holds pins.test.ts"; it is "the image holds every test file the
+        # repository has". The first instance of that property was about one
+        # file, and this is about all of them. A check that has lost its original
+        # subject is still measuring the thing it was written to measure.
+        #
         # Counting files and not tests, deliberately. The live Redis tier skips in
         # here by design, so the pass count legitimately differs from a host run
         # that has Redis; the file count cannot. `*_test.go` and not `*.test.ts`:
         # the two are disjoint sets, and the TypeScript suite is not in this image.
+        # The `-not -path './node_modules/*'` exclusion is likewise now historical
+        # -- there is no node_modules in this image -- and is kept because it is
+        # correct for the case where one is present, which is the only case it
+        # costs anything in.
+
         run: |
           set -o pipefail
           in_image="$(docker run --rm --entrypoint /bin/sh cafaye-gateway:test -c \
@@ -503,6 +490,25 @@ jobs:
             exit 1
           fi
           echo "image and repository agree on $(printf '%s\n' "$in_image" | wc -l | tr -d ' ') test files"
+      - name: the runtime image builds
+        # MOVED UP, and this was a real ordering bug rather than tidiness.
+        # `docker compose build` is what puts the tag `cafaye/gateway:dev` in the
+        # local image store -- compose reads `image:` off the `gateway` service,
+        # and that line in docker-compose.yml says `cafaye/gateway:dev`. This step
+        # used to be LAST, after the step that creates a container from that very
+        # tag. `docker create` does not pull and does not build: on a runner where
+        # nothing has produced the tag, it fails with "Unable to find image ...
+        # locally", so the job was red and the failure named a missing image
+        # rather than the missing build.
+        #
+        # It has to stay ahead of the test-stage steps too? No -- and that is worth
+        # being precise about, because the two look related. `docker build
+        # --target test --tag cafaye-gateway:test .` and `docker compose build`
+        # are separate builds with separate tags. The test steps read
+        # `cafaye-gateway:test`; only the contents check below reads
+        # `cafaye/gateway:dev`. So the only ordering constraint is that this
+        # precedes the contents check, and it is placed immediately before it.
+        run: docker compose build
       - name: the shipped image carries the binary and nothing else of ours
         # `test/dockerStage.test.ts` asserted that the runtime stage copies no test
         # tree. That assertion retired with the rest of that file — there is no COPY
@@ -538,5 +544,3 @@ jobs:
             exit 1
           }
           echo "the image carries app/service and $(wc -l < /tmp/image-paths.txt | tr -d ' ') base files, and none of ours"
-      - name: the runtime image builds
-        run: docker compose build
