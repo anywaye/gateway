@@ -1,8 +1,10 @@
 # HANDOFF — docs corrections 01
 
 What the documentation packet found that is **not** documentation, plus what it
-deliberately did not do. Written at `10d2c98` on
-`worker/m39-gateway-docs-corrections-01`. Two commits, three files, no code.
+deliberately did not do. Written across three commits on
+`worker/m39-gateway-docs-corrections-01`, the last of which is this file.
+Four files touched: `README.md`, `AGENTS.md`, `cafaye.yml` (comments only) and
+this one. No code.
 
 ## 1. Findings in code, recorded and not fixed
 
