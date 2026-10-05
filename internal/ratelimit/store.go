@@ -97,7 +97,7 @@ type Store interface {
 
 // count is GCRA — a smooth sliding window, in one number per bucket.
 //
-// Ported verbatim from `count()` in `src/middleware/rateLimitStore.ts`, including
+// Ported verbatim from `count()` in `src/middleware/rateLimitStore.ts` (removed at cutover), including
 // the two comments that explain why the arithmetic is what it is:
 //
 //   - A caller is thought of as owing `tat - now` of time. Each request adds

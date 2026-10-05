@@ -12,7 +12,7 @@ import (
 	"github.com/cafaye/gateway/internal/api"
 )
 
-// core's error envelope, ported from `src/problem.ts`: RFC 9457 problem+json
+// core's error envelope, ported from `src/problem.ts` (removed at cutover): RFC 9457 problem+json
 // with cafaye's extensions (`core/docs/openapi-conventions.md`, "Error
 // envelope"). No service invents its own error body, and this is the one every
 // rejection in gateway goes through.
@@ -21,7 +21,7 @@ import (
 // one rather than a hand-written copy: `openapi/v1.yaml`'s `Problem.code`
 // enumerates them, so a code the document does not name cannot be written and a
 // code the document adds is a missing row here that `TestEveryProblemCodeHasATitle`
-// names. `src/problem.ts` carries the same list with the same note — the
+// names. `src/problem.ts` (removed at cutover) carries the same list with the same note — the
 // reserved list is longer, and the codes here are not a closed set for the
 // platform, only for this repository.
 //
@@ -37,7 +37,7 @@ import (
 const problemTypeBase = "https://errors.cafaye.com/"
 
 // titles is the fixed human-readable summary per code, and it is exhaustive over
-// the document's enum rather than a lookup with a fallback. `src/problem.ts`
+// the document's enum rather than a lookup with a fallback. `src/problem.ts` (removed at cutover)
 // falls back to `undefined` for an unknown code, which renders the key as absent
 // from the JSON — so a code nobody had written a title for produced a document
 // the contract does not describe, silently. Here the map is total by
@@ -80,7 +80,7 @@ type Problem struct {
 	// What happened, in terms the caller can act on. Never an internal reason:
 	// a host, a port, a query, or a parser's opinion goes to the log instead.
 	// Every call site is a fixed string for that reason — see the 401s and 503s
-	// in `src/middleware/jwt.ts`, which this envelope is written to serve.
+	// in `src/middleware/jwt.ts` (removed at cutover), which this envelope is written to serve.
 	Detail string
 
 	// Per-field failures, for a 422 and nothing else. Dropped from any other
@@ -169,7 +169,7 @@ func instanceOf(r *http.Request) string {
 // ## THE ORDER IS THE DOCUMENT'S, AND `encoding/json` WOULD GET IT WRONG
 //
 // `openapi/v1.yaml`'s `Problem.required` is `[type, title, status, detail,
-// instance, code, trace_id]` — in that order — and `src/problem.ts` writes its
+// instance, code, trace_id]` — in that order — and `src/problem.ts` (removed at cutover) writes its
 // object literal in that order. `api.Problem` is a **generated** struct whose
 // fields are in alphabetical order, so `json.Marshal` on it produced
 // `{"code":…,"detail":…,"instance":…,"status":…,"title":…,"trace_id":…,"type":…}`.
@@ -221,7 +221,7 @@ func jsonStringMember(name, value string) string {
 //
 // NOT `json.Marshal`, and this is the same trap as the seven members above applied
 // one level down: `api.FieldError` is a GENERATED struct, so its fields are
-// alphabetical — `code` before `field` — and `internal/equivalence` compares bodies
+// alphabetical — `code` before `field` — and `internal/equivalence` compared bodies
 // BYTE FOR BYTE. The proxy packet, which owns this function, had no 422 to compare
 // and marshalled the array; the BFF packet, which did, hand-rendered it. Taking one
 // side of the merge wholesale dropped the other's fix, and this is the commit that

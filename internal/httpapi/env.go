@@ -27,7 +27,7 @@ import "os"
 // the TypeScript original, so that the environment is a *parameter* of
 // configuration rather than a thing any package in this module can reach.
 //
-// `src/index.ts` types its parameter `Record<string, string | undefined>` and
+// `src/index.ts` (removed at cutover) types its parameter `Record<string, string | undefined>` and
 // defaults it to `Bun.env`. The difference is the point: a default value that
 // reads the real environment is a function that can read the real environment,
 // so there is no default here and `cmd/gateway` names what it is doing instead.
@@ -41,7 +41,7 @@ type Env func(key string) string
 func OSEnv(key string) string { return os.Getenv(key) }
 
 // trimSpace trims the ASCII whitespace a compose file leaves behind, which is
-// what `src/index.ts`'s `?.trim()` does. Not `strings.TrimSpace`, because that
+// what `src/index.ts` (removed at cutover)'s `?.trim()` does. Not `strings.TrimSpace`, because that
 // trims Unicode whitespace the shell never produced and would make `PORT` and
 // `PORT` with a non-breaking space agree.
 func trimSpace(value string) string {

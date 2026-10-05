@@ -598,7 +598,7 @@ func TestNoAssertionIsMintedWithoutAMinterOrWithoutADeclaration(t *testing.T) {
 // unreachable is a line nothing tests. So this builds the proxy **directly**, with a
 // table the validator would refuse, and asks it what it does with the header. This
 // is the only way that line is not a green by omission, and it is the same reason
-// `src/routes/assertion.test.ts` exists.
+// `src/routes/assertion.test.ts` (removed at cutover) exists.
 func TestAPublicEntryIsRefusedAnAssertionEvenByATableThatBootWouldHaveRefused(t *testing.T) {
 	silenceLog(t)
 	minter := testMinter(t)

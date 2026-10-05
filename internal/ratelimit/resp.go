@@ -1,6 +1,6 @@
 // RESP2, hand-rolled.
 //
-// `src/middleware/rateLimitRedis.ts` writes its own encoder and parser and gives
+// `src/middleware/rateLimitRedis.ts` (removed at cutover) writes its own encoder and parser and gives
 // the reason: "this is forty lines of RESP2, and the client half of it is covered
 // by the pure `encodeCommand`/`parseReply` tests". The reason it is worth repeating
 // here is that a general-purpose Redis client would be a dependency this repository

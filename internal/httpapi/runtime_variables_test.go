@@ -135,7 +135,7 @@ func TestTheRuntimeReaderReadsExactlyTheseVariables(t *testing.T) {
 // `Options.Probes` is a slice rather than a map because `/readyz` renders `deps`
 // in registration order: `encoding/json` sorts a map's keys and `Object.entries`
 // does not, so a map answers `{"redis":"…","identity":"…"}` where the reference
-// answers `{"identity":"…","redis":"…"}` and `internal/equivalence` fails on bytes
+// answers `{"identity":"…","redis":"…"}` and `internal/equivalence` failed on bytes
 // neither side chose.
 //
 // And `redis` sorts BEFORE `identity`, so the two names here are deliberately the

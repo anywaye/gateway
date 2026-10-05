@@ -321,7 +321,7 @@ func TestUpstreamPathWouldBePathCleanIfItWereAFilter(t *testing.T) {
 //
 // The rows are **measured**, not reasoned: every right-hand answer in this table
 // was read out of `new URL(path).pathname` under Bun 1.3.12, which is what
-// `src/routes/proxy.ts` calls. `TestUpstreamPathRebuildsEverySegmentAndRefuses-
+// `src/routes/proxy.ts` (removed at cutover) calls. `TestUpstreamPathRebuildsEverySegmentAndRefuses-
 // WhatItCannotExpress` covers the refusals; this covers the **rewrite**, which is
 // the half that decides which prefix claims a path and therefore where a request
 // goes.
@@ -351,7 +351,7 @@ func TestTheNormalisedPathIsTheURLParsersOwn(t *testing.T) {
 		{path: "/v1/pantry/x/..", want: "/v1/pantry/"},
 		{path: "/v1/pantry/../secret", want: "/v1/secret"},
 
-		// The percent-encoded spellings, which `src/routes/proxy.ts:24` believes
+		// The percent-encoded spellings, which `src/routes/proxy.ts:24` (removed at cutover) believes
 		// survive normalisation. They do not — see the comment on the function.
 		{path: "/v1/pantry/%2e%2e/secret", want: "/v1/secret"},
 		{path: "/v1/pantry/%2E%2E/secret", want: "/v1/secret"},

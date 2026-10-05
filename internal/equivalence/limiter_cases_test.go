@@ -188,6 +188,43 @@ func TestTheLimiterAnswersWhatEachCaseSaysItAnswers(t *testing.T) {
 				if relayed := service.count(); relayed != spec.want.upstream {
 					t.Errorf("the upstream received %d request(s) and the case says %d. A request the limiter refuses must not be spent on the service, and a fail-open request must be relayed in full.", relayed, spec.want.upstream)
 				}
+
+				// # THE REASON MUST NOT REACH THE CALLER
+				//
+				// Only under the store-down scenario, because that is the only one
+				// where the store and its probe both fail with a message carrying a
+				// host and a credential — and both sides log it, which is the design:
+				// `ratelimit.failedOpen`'s own comment says so. What must not happen is
+				// the message reaching a response body, and this is the harder case for
+				// it because a `200` is a body the caller reads. A fail-open path that
+				// appended "redis is down" to a served answer would be a leak dressed
+				// as helpfulness.
+				//
+				// This was checked on BOTH answers of the burst on each side, and it is
+				// asked against a FORBIDDEN-SUBSTRING list rather than compared between
+				// two implementations: agreement is not the property here, and two
+				// implementations leaking the same secret would satisfy a comparison.
+				//
+				// The `/readyz` body is asked too, because that is the one place a
+				// reason is SUPPOSED to reach an unauthenticated caller as a dependency
+				// name, and "named `redis`" is only a redaction if the host and the
+				// credential are not in it as well.
+				if scenario == ScenarioCounterStoreDown {
+					for _, which := range []struct {
+						label string
+						body  string
+					}{
+						{"the admitted response", first.body},
+						{"the last response of the burst", last.body},
+						{"/readyz", ask(t, base, caseSpec{method: http.MethodGet, path: "/readyz"}).body},
+					} {
+						for _, part := range thePartsOfTheReasonNeitherSideMayEcho {
+							if strings.Contains(which.body, part) {
+								t.Errorf("%s carries %q, which is part of the counter store's failure. The reason goes to the log; a caller gets nothing.", which.label, part)
+							}
+						}
+					}
+				}
 			})
 		}
 	}

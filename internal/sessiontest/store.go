@@ -25,7 +25,7 @@
 //
 // # WHY THE STORE IS A FIXTURE AND NOT WHAT GATEWAY OWNS, IN ONE PARAGRAPH
 //
-// `src/bff/session.ts` has one: a `Map` in one process, marked
+// `src/bff/session.ts` (removed at cutover) has one: a `Map` in one process, marked
 // `TODO(guard-06)`/`TODO(guard-07)` for Redis. Porting it would have copied the
 // worse of two designs into the language that makes the better one easier to
 // write. The better one is not identity's, either: `identity/internal/sessions/

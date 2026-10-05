@@ -153,7 +153,7 @@ func TestReadinessNamesTheDependencyThatIsDownAndNotWhyItIsDown(t *testing.T) {
 // `encoding/json` sorts map keys, so a `map[string]ProbeStatus` would answer
 // `{"redis":"unavailable","identity":"ok"}` where the TypeScript reference
 // answers `{"identity":"ok","redis":"unavailable"}`. Both are the same object and
-// `internal/equivalence` compares the bytes, so this is a difference the port
+// `internal/equivalence` compared the bytes, so this is a difference the port
 // would have shipped. The assertion is on the byte string, not on the decoded
 // map, because a decoded map has already thrown the order away.
 func TestReadinessRendersDependenciesInTheOrderTheyWereRegistered(t *testing.T) {
@@ -186,7 +186,7 @@ func TestAProbeThatPanicsIsOneUnavailableDependency(t *testing.T) {
 	}
 }
 
-// The boundedness case. `src/probe.ts` puts *hangs* in the list of things a
+// The boundedness case. `src/probe.ts` (removed at cutover) puts *hangs* in the list of things a
 // probe may do that mean "unavailable", and a `context.Context` a probe may
 // ignore is not a bound on one — so `runProbe` supplies the deadline. This is
 // the only test that lowers `probeTimeout`, and it restores it.
@@ -323,10 +323,10 @@ func TestEveryOperationIsEitherServedOrDeclined(t *testing.T) {
 	}
 	declined := map[string]string{
 		// `GET /v1/me` — the bearer-token gate is Wave 3, and
-		// `src/index.ts` does not register the route without a verifier.
+		// `src/index.ts` (removed at cutover) does not register the route without a verifier.
 		"GET /v1/me": `{"error":"not_found","message":"no such route"}`,
 		// The four `/auth` routes — the BFF and the session store are Wave 3, and
-		// `src/index.ts` does not register them without an identity to ask.
+		// `src/index.ts` (removed at cutover) does not register them without an identity to ask.
 		"POST /auth/register": `{"error":"not_found","message":"no such route"}`,
 		"POST /auth/login":    `{"error":"not_found","message":"no such route"}`,
 		"POST /auth/logout":   `{"error":"not_found","message":"no such route"}`,

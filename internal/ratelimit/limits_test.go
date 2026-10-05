@@ -1,6 +1,6 @@
 // The limit table, and the rule that decides which entry a path draws on.
 //
-// `src/middleware/limits.test.ts` is the specification for what follows, and its
+// `src/middleware/limits.test.ts` (removed at cutover) is the specification for what follows, and its
 // cases are ported one for one rather than paraphrased: a per-entry table whose
 // tests do not name every entry is a table that can lose one silently, which is
 // the whole failure this port exists to close. The Go tree drew every request on

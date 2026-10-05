@@ -2,7 +2,7 @@
 //
 // # WHY THIS TYPE EXISTS AT ALL
 //
-// `GET /v1/me` echoes the verified claims, and `internal/equivalence` compares
+// `GET /v1/me` echoes the verified claims, and `internal/equivalence` compared
 // that body **byte for byte** against the TypeScript reference. `encoding/json`
 // sorts `map[string]interface{}` keys, and `jose` hands `jwt.ts` the payload as
 // the object `JSON.parse` produced — which preserves the order the token

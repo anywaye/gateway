@@ -35,7 +35,7 @@ import (
 // Every field is optional and the zero value is a working gateway: the two
 // probes and nothing else. That is not a stub, it is the honest v0 shape — an
 // app built with no rate limiter applies no limit, and an app built with no
-// issuer serves probes only — and it is the shape `src/index.ts` documents for
+// issuer serves probes only — and it is the shape `src/index.ts` (removed at cutover) documents for
 // the same fields ("Omit and the gateway serves probes only: with no issuer
 // there is nothing to verify a token against, and an endpoint that would have
 // to trust a token is worse than an endpoint that is not there").
@@ -96,8 +96,8 @@ type Options struct {
 	// Nil means the gate is **not registered**, which is the reference's own
 	// behaviour when no `jwt` option was configured: an app with a route table and
 	// no verifier relays an anonymous request to a private route. That is not a
-	// hole this option opens and not one it closes — it is what the reference does,
-	// and reproducing it is what lets `internal/equivalence` compare two
+	// hole this option opens and not one it closes — it is what the TypeScript
+	// original did, and reproducing it is what let the equivalence check compare two
 	// unconfigured gateways byte for byte.
 	//
 	// The packet that ports RS256 verification fills this in, and nothing else
@@ -136,7 +136,7 @@ type Options struct {
 // TokenVerifier is the bearer-token gate, as the router needs it.
 //
 // The two methods are `requireJwt` and `requireScope` from
-// `src/middleware/jwt.ts`. Only `Require` is mounted by this package; `RequireScope`
+// `src/middleware/jwt.ts` (removed at cutover). Only `Require` is mounted by this package; `RequireScope`
 // is on the interface because the scope gate is part of the verifier's surface and
 // a later packet mounts it, and putting it on the interface NOW is what makes that
 // packet's wiring test able to assert it rather than discover it.
@@ -202,7 +202,7 @@ var ErrNotConfigured = errors.New("httpapi: invalid configuration")
 // is a refusal to construct the gateway at all rather than a `500` on the first
 // request of the week.
 //
-// `import.meta.main` in `src/index.ts` is the same boundary: importing this
+// `import.meta.main` in `src/index.ts` (removed at cutover) is the same boundary: importing this
 // package must never open a socket. `cmd/gateway` is what listens.
 func New(options Options) (http.Handler, error) {
 	if err := options.validate(); err != nil {
@@ -342,7 +342,7 @@ func New(options Options) (http.Handler, error) {
 	}
 
 	// The pass-through, and the credential gate in front of that — the same order
-	// `src/index.ts` registers them, and the order is the property: a request is
+	// `src/index.ts` (removed at cutover) registers them, and the order is the property: a request is
 	// authenticated *before* anything decides to spend an upstream call on it.
 	//
 	// ## WHY THE ROUTER IS WRAPPED RATHER THAN MOUNTED, AND WHAT THAT COSTS
@@ -474,7 +474,7 @@ func authentication(options Options) Authenticate {
 		if refusal != nil {
 			// The refusal's own words are NOT passed on, and that is not a discard:
 			// `credentialGate` writes one 401 for every refusal this seam can return,
-			// and the detail string is `src/middleware/jwt.ts`'s. A verifier's reason
+			// and the detail string is `src/middleware/jwt.ts` (removed at cutover)'s. A verifier's reason
 			// can name an issuer, an audience or a `kid`, and a caller who cannot
 			// authenticate is not entitled to the reason.
 			return nil, errNotAuthenticated
@@ -552,7 +552,7 @@ func (m *mount) ServeHTTP(w http.ResponseWriter, r *http.Request) { m.handler.Se
 //
 // # WHY IT EXISTS RATHER THAN `r.Group`
 //
-// `src/index.ts` writes `app.use("/v1/*", …)` and Hono scopes the mount to that
+// `src/index.ts` (removed at cutover) writes `app.use("/v1/*", …)` and Hono scopes the mount to that
 // pattern. chi's `Mux.Use` takes middleware with no pattern, and `Group` returns a
 // NEW router — so the gate would have to be mounted on a group the generated
 // registrations are not on, and `api.gen.go` is a `//go:generate` output this
@@ -654,7 +654,7 @@ func (bodyless) Write(body []byte) (int, error) { return len(body), nil }
 
 // validate refuses a configuration that cannot be served as written.
 //
-// The rule is `src/index.ts`'s and it is a house convention rather than a
+// The rule is `src/index.ts` (removed at cutover)'s and it is a house convention rather than a
 // gateway detail: *"Invalid config is an error, not a fallback."* A probe
 // registered without a name would render as `{"deps":{"":"ok"}}`, a nil probe
 // would answer `unavailable` forever — a readiness endpoint reporting a
@@ -706,7 +706,7 @@ func (o Options) validate() error {
 //     packet ports, and declines (`GetCurrentPrincipal`).
 //
 // The second kind is the honest part and it is two-valued on purpose.
-// `src/index.ts` does not register `/auth/*` unless there is an identity to ask,
+// `src/index.ts` (removed at cutover) does not register `/auth/*` unless there is an identity to ask,
 // so a gateway built with nothing configured answers `404` on all four — and a
 // gateway built WITH an identity has to answer exactly what the reference does
 // with one, which is a different thing entirely. `decline` is the one writer for
@@ -770,7 +770,7 @@ func (s *server) Readiness(w http.ResponseWriter, r *http.Request) {
 	}
 	// Encoded by hand rather than through `writeJSON`, because `encoding/json`
 	// sorts map keys and `/readyz` renders `deps` in the order the caller wrote
-	// the probes. `internal/equivalence` compares this body byte for byte against
+	// the probes. `internal/equivalence` compared this body byte for byte against
 	// the TypeScript reference, and a sorted map fails on a difference no client
 	// would ever see — which is exactly the kind of difference an equivalence
 	// check exists to find rather than to explain away.
@@ -806,7 +806,7 @@ func orderedDeps(probes []NamedProbe, deps map[string]ProbeStatus) string {
 //
 // `GET /auth/me` is NOT gated and that is not an oversight: the gate is CSRF
 // defence, and a CSRF defence on a request that changes nothing protects a caller
-// from itself. `src/index.ts` mounts it per route for exactly this reason, and
+// from itself. `src/index.ts` (removed at cutover) mounts it per route for exactly this reason, and
 // `TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose` holds the set equal to
 // the document's method list rather than to a hand-written one.
 func (s *server) RegisterUser(w http.ResponseWriter, r *http.Request, _ api.RegisterUserParams) {
@@ -869,7 +869,7 @@ func (s *server) bffOr(w http.ResponseWriter, r *http.Request, method string, ha
 // something:
 //
 //   - `501 Not Implemented` is the truthful answer about *this codebase*, and it
-//     is not the contract's answer. `src/index.ts` does not register `/v1/me`
+//     is not the contract's answer. `src/index.ts` (removed at cutover) does not register `/v1/me`
 //     without a verifier and does not register `/auth/*` without an identity to
 //     ask, so the reference answers `404` on all five with nothing configured —
 //     and the packet rules that the TypeScript answer is the correct one.
@@ -914,7 +914,7 @@ func writeV0NotFound(w http.ResponseWriter, r *http.Request) {
 // `application/json`. The body was byte-identical to the reference's and the media
 // type was not, so every problem document in the service would have been served
 // with the type that says "this is not a problem document" -- and a test that
-// decodes the body and stops there never sees it. `internal/equivalence` does, as a
+// decodes the body and stops there never sees it. `internal/equivalence` did, as a
 // `Content-Type` mismatch on otherwise identical bytes.
 //
 // THE COUNT IS TWO, and it is two because the two packets that each found this bug

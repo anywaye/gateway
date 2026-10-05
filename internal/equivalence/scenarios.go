@@ -1,15 +1,30 @@
-// The Go scenarios, and the one place the equivalence check is told what the Go
-// gateway is configured with for each of them.
+// The Go scenarios: thirteen named configurations of the gateway, and
+// `optionsFor`, the one function that knows what any of them IS.
 //
-// This file is the counterpart to `test/equivalence/reference.ts`, and the two
-// are read by the same runner: a scenario name in `TestTheGoSideHasAnAnswerFor
-// EveryScenarioTheReferenceHas` must exist on both sides, or the runner refuses
-// to start rather than comparing a scenario against nothing.
+// This file WAS the counterpart to `test/equivalence/reference.ts`, and the two
+// were read by the same runner: a scenario name had to exist on both sides or the
+// runner refused to start rather than comparing a scenario against nothing. The
+// reference was removed at the cutover, so that half of the arrangement is gone and
+// the file is now the only account of what each scenario is FOR.
 //
 // The names are declared here as data rather than in the scenarios themselves
-// because the test needs to enumerate them, and a `switch` inside a builder is
-// not something a caller can read the keys of. `optionsFor` is the only function
-// that knows what any scenario IS; the table above it is the inventory.
+// because a test needs to enumerate them, and a `switch` inside a builder is not
+// something a caller can read the keys of. The table is the inventory and
+// `inventorySize` is its asserted length.
+//
+// # WHICH SCENARIOS ARE STILL DRIVEN, AND WHY THE OTHERS ARE HERE
+//
+// Two of the thirteen are asked by the surviving limiter tests: `limitsExhausted`
+// and `counterStoreDown`, because the limiter's refusal and its fail-open answer
+// are the two decisions that outlived the comparison. The other eleven are not
+// driven by anything today.
+//
+// They are kept rather than deleted, and the reason is that they are CONFIGURATIONS
+// and not tests: each is a probe set or a route table or a scripted identity, and
+// what a later packet would need in order to restore this coverage properly is a
+// case list against these configurations rather than thirteen new scenarios. Which
+// of them get cases, and what those cases assert without a reference to compare
+// against, is the next packet's call and not this one's.
 //
 // # WHAT A SCENARIO CAN AND CANNOT DO
 //
@@ -36,9 +51,13 @@ import (
 	"github.com/cafaye/gateway/internal/sessiontest"
 )
 
-// Scenario names. Both sides' lists are the same, and
-// `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas` holds them equal by
-// reading the reference's.
+// Scenario names.
+//
+// There used to be a second list of these in TypeScript and a test holding the two
+// equal by reading that one out of its source. That test is gone with the
+// reference; what is left is this list, and `TestTheInventoryIsEveryScenario
+// DeclaredAndNothingTwice` checks the one property still checkable about it — that
+// every name in it is a configuration `optionsFor` can build.
 const (
 	// ScenarioBare is nothing configured: the two probes and nothing else.
 	ScenarioBare = "bare"
@@ -53,9 +72,9 @@ const (
 	ScenarioProbesDegraded = "probesDegraded"
 
 	// ScenarioRoutedUpstream is a route table in front of a recording upstream and
-	// **no credential gate** — which is the reference's own state when no `jwt`
-	// option was configured. That absence is the point: it is the configuration in
-	// which an anonymous request is *relayed*, so comparing it is comparing the
+	// **no credential gate** — which was the reference's own state when no `jwt`
+	// option was configured. That absence was the point: it is the configuration in
+	// which an anonymous request is *relayed*, so comparing it compared the
 	// pass-through's own answers with nothing above them to soften a difference.
 	ScenarioRoutedUpstream = "routedUpstream"
 
@@ -65,10 +84,10 @@ const (
 	// answers.
 	//
 	// The Go side's gate refuses rather than verifies — verification is the auth
-	// packet's — and that is enough, because what this scenario compares is the
-	// **refusal and its position**, not the token check behind it. `jwt` is given
-	// real values on the reference side and no request carries a credential, so the
-	// reference answers 401 from its own gate without fetching a key set.
+	// packet's — and that was enough, because what this scenario compared was the
+	// **refusal and its position**, not the token check behind it. `jwt` was given
+	// real values on the reference side and no request carried a credential, so the
+	// reference answered 401 from its own gate without fetching a key set.
 	ScenarioGatedUpstream = "gatedUpstream"
 
 	// The browser surface, healthy. The scenario that compares the four
@@ -89,9 +108,10 @@ const (
 	// request count and not of the wall clock.
 	//
 	// Every other scenario runs at an allowance no burst in this suite can reach,
-	// so this is the only one that compares the `429` — its status, its problem
-	// body, and the rate-limit headers ON the refusal. A client reads those, not
-	// the headers on the requests that were admitted.
+	// so this is the only one that ever compared the `429` — its status, its
+	// problem body, and the rate-limit headers ON the refusal — and it is now the
+	// only one asked about a refusal at all. A client reads those, not the headers
+	// on the requests that were admitted.
 	ScenarioLimitsExhausted = "limitsExhausted"
 
 	// The limiter over a counter store that cannot be reached, which FAILS OPEN:
@@ -104,21 +124,22 @@ const (
 	ScenarioCounterStoreDown = "counterStoreDown"
 )
 
-// scenarios is the inventory, in the order the runner drives them.
+// scenarios is the inventory, and it used to be the order the runner drove them.
 //
-// THIRTEEN, and the last two are this packet's: `limitsExhausted` and
-// `counterStoreDown` were named by `worker/gateway-go-auth-01` and no case
-// anywhere built on them, which is the same shape as a comment asserting a
-// property the code does not have. The count is asserted rather than written
-// down, in `TestTheInventoryIsEveryScenarioBothSidesDeclare`.
+// THIRTEEN, and the last two are why: `limitsExhausted` and `counterStoreDown`
+// were named by `worker/gateway-go-auth-01` and no case anywhere built on them,
+// which is the same shape as a comment asserting a property the code does not have.
+// The count is asserted rather than written down, in
+// `TestTheInventoryIsEveryScenarioDeclaredAndNothingTwice`.
 //
-// The union is written out in full rather than assembled, because
-// `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas` reads the
-// REFERENCE's list and holds the two equal — a scenario named in one and not the
-// other is that test going red, which is the mechanism that caught the gap. The
-// first eleven got that way for the same reason: the proxy packet added two and
-// the BFF packet added five, from the same three, without either seeing the
-// other.
+// The union is written out in full rather than assembled because the second list
+// it was held against is gone. A scenario named here with no configuration behind
+// it used to be caught by reading the TypeScript list and comparing the two; what
+// replaces that is weaker and local: `TestTheInventory…` calls `optionsFor` for
+// every name, so a name that is only a label is a failing gate rather than a
+// silently unconfigured scenario. The first eleven grew that way for the same
+// reason it was checked: the proxy packet added two and the BFF packet added five,
+// from the same three, without either seeing the other.
 var scenarios = []string{
 	ScenarioBare,
 	ScenarioOneProbeOk,
@@ -206,16 +227,12 @@ const (
 	routeTokened = "/v1/pantry/imports"
 	routePublic  = "/v1/catalog"
 
-	// serviceToken is the per-upstream credential both sides are configured with.
-	// It is a literal rather than a random value so the recorded request can be
-	// compared for equality — and it is deliberately different from the caller's
-	// token the cases carry, because "the caller's credential never crosses" is the
-	// property the comparison is here for.
+	// serviceToken is the per-upstream credential a routed scenario is configured
+	// with. It is a literal rather than a random value so a recorded request can be
+	// compared for equality — and it was deliberately different from the caller's
+	// token the deleted proxy cases carried, because "the caller's credential never
+	// crosses" was the property the comparison was there for.
 	serviceToken = "equivalence-service-token"
-
-	// callerToken is what the cases put in their own `Authorization`. It must never
-	// appear at the upstream.
-	callerToken = "equivalence-caller-token"
 )
 
 func routesFor(upstreamOrigin string) httpapi.RouteTable {
@@ -547,22 +564,22 @@ func overridesFor(scenario string) map[string]identityAnswer {
 // scripted.
 //
 // The store is STILL `sessiontest`, the fixture, and the reason is a property of
-// the COMPARISON rather than an absence.
+// what these scenarios were FOR rather than an absence.
 //
-// A browser scenario here drives the Go gateway and `test/equivalence/reference.ts`
-// — the TypeScript implementation — at the same requests and compares the bytes. The
-// reference's store is `memorySessionStore()`, a `Map`. So for the two sides to be
-// comparable the Go side must also be a per-process map: swapping in Redis here would
-// make the Go side depend on a server the reference does not have, and a scenario
-// that cannot run is not a comparison.
+// A browser scenario drove the Go gateway and the TypeScript reference at the same
+// requests and compared the bytes. The reference's store was `memorySessionStore()`,
+// a `Map`, so for the two sides to be comparable the Go side had to be a
+// per-process map too: swapping in Redis here would have made the Go side depend on
+// a server the reference does not have, and a scenario that cannot run is not a
+// comparison.
 //
-// So these scenarios compare the PORT's answers given a working store, and they still
-// cannot say what a deployment would put behind one. That limit is unchanged by
-// `internal/sessionredis` existing, and it is stated here rather than discovered by a
-// reader who assumed more: the shipped store is proved in
-// `internal/httpapi/runtime_session_test.go`, against a real `redis-server`, and it is
-// proved on its own terms rather than by comparison — because comparison is the one
-// method that cannot reach it while the reference is a `Map`.
+// So these scenarios compared the PORT's answers given a working store, and they
+// never could say what a deployment would put behind one. That limit is unchanged
+// by `internal/sessionredis` existing, and it is stated here rather than discovered
+// by a reader who assumed more: the shipped store is proved in
+// `internal/httpapi/runtime_session_test.go`, against a real `redis-server`, and it
+// is proved on its own terms rather than by comparison — because comparison is the
+// one method that cannot reach it while the reference is a `Map`.
 func browserSurface(overrides map[string]identityAnswer) (httpapi.Options, error) {
 	return httpapi.Options{BFF: &httpapi.BffOptions{
 		IdentityURL: fixtureIdentity,
@@ -572,10 +589,11 @@ func browserSurface(overrides map[string]identityAnswer) (httpapi.Options, error
 	}}, nil
 }
 
-// scriptedDoer is `reference.ts`'s `scriptedIdentity`, in Go.
+// scriptedDoer is the TypeScript reference's `scriptedIdentity` (removed at
+// cutover), in Go.
 //
 // Keyed on the path rather than switching on it, so an override is exactly one
-// route — the same shape the reference uses, because a `switch` with a shared
+// route — the same shape the reference used, because a `switch` with a shared
 // `default` is how a scenario meant to break one route ends up breaking another.
 func scriptedDoer(overrides map[string]identityAnswer) httpapi.Doer {
 	return doerFunc(func(r *http.Request) (*http.Response, error) {

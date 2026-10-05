@@ -12,7 +12,7 @@ import (
 
 // Which path prefix goes to which service, in configuration rather than in code.
 //
-// Ported from `src/routes/table.ts`. A gateway that authenticates a caller and
+// Ported from `src/routes/table.ts` (removed at cutover). A gateway that authenticates a caller and
 // then has nowhere to send them is a gateway that terminates auth for its own
 // sake. This file is the half of forwarding that can be decided without any of
 // forwarding: the table of prefixes and upstreams, validated at construction,
@@ -502,7 +502,7 @@ func redactUserinfo(value string) string {
 //
 // ## A CORRECTION TO THE REFERENCE'S OWN COMMENT
 //
-// `src/routes/proxy.ts:24` says: *"`%2e%2e` survives WHATWG URL normalisation, so
+// `src/routes/proxy.ts:24` (removed at cutover) says: *"`%2e%2e` survives WHATWG URL normalisation, so
 // this is the check that matters."* Measured against Bun 1.3.12, it does not:
 //
 //	new URL("http://h/v1/pantry/%2e%2e/secret").pathname  ===  "/v1/secret"
