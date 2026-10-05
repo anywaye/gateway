@@ -1,190 +1,81 @@
 #!/usr/bin/env bash
 #
-# kit template — prime a Bun worktree. Copy to bin/prime in the service repo and
-# run it after `git clone`, `git worktree add`, or `git pull --rebase`.
+# bin/prime — gateway's gate.
 #
-#   bin/prime            # frozen install, typecheck, bun test, then the Go tier
-#   bin/prime --fast     # frozen install only
-#   bin/prime --no-go    # everything but ./bin/prime-go, and it says so
+#   bin/prime          run the whole gate
+#   bin/prime --help   this header
+#
+# WHAT IT IS NOW. `./bin/prime-go`, and nothing in front of it. This script used
+# to be two tiers: `bun install --frozen-lockfile`, `tsc --noEmit`, `bun test`,
+# and then `./bin/prime-go` as the last step. The TypeScript tier is gone — `src/`
+# was deleted at cutover (f87c891, "Delete src/: the TypeScript reference is
+# gone"), after the equivalence harness answered the question it existed to ask:
+# 51 cases, 13 scenarios, 914 comparisons, 0 differences. What was left of that
+# tier was the build surface, and this commit is where it goes: package.json,
+# bun.lock, tsconfig.json, the `bun`/`node` pins in mise.toml, and every step
+# below. So the wrapper has no steps left to wrap, and what remains is a file
+# that runs the Go tier and says so.
+#
+# IT IS STILL A SEPARATE FILE rather than a symlink to `bin/prime-go`, and that is
+# a decision rather than an accident. `gate.yml` declares `entrypoint: bin/prime`
+# and `ci.invokes: [bin/prime]`, and the checker reads both textually against
+# `.github/workflows/ci.yml` — so the name is a contract with the fleet, and
+# changing it would mean changing three other files this commit does not own.
+# A developer running `./bin/prime-go` directly still gets the tier; a developer
+# running `bin/prime` gets the tier plus the final line the gate's `ok` proof
+# reads, and a gate that can finish without printing its own last line is a gate
+# whose completion nobody proved.
 #
 # WHAT IT PROMISES
-#   Exit 0: bun.lock installs exactly, the type checker is clean, every
-#   TypeScript test passes, and the Go tier is green. Anything else: nonzero,
-#   with the failing step named.
+#   Exit 0: the Go tier is green — gofmt clean, `go build`, `go vet`,
+#   `go test -count=1 -v ./...` with every counted skip reported, and
+#   `internal/api/api.gen.go` byte-identical to what `openapi/v1.yaml` generates.
+#   Anything else: nonzero, with the failing step named. `bin/prime-go` is where
+#   the work is and where the failure messages live; this script adds none.
 #
-#   The Go tier is `./bin/prime-go` and it is required, not probed. Both
-#   implementations are live — `src/` is still the reference — so a gate that ran
-#   only one of them would be two gates wearing one name. `--no-go` is the one
-#   escape, it prints the skip, and it exists for a contributor with bun and no
-#   Go toolchain.
+# WHAT WAS DROPPED AND WHY, because two flags are gone rather than renamed:
+#   * `--fast` (frozen install only) — every step it skipped was a TypeScript
+#     step. A flag whose whole body was skipped work has no body left.
+#   * `--no-go` (everything but the Go tier) — the escape hatch existed so a
+#     contributor with bun and no Go toolchain could still run the TypeScript
+#     tier. That is precisely the contributor this repository no longer has. The
+#     Go tier was always the required one, and now it is the only one, so the
+#     flag would have been a way to run zero of the gate. An unknown argument
+#     still exits 2 with a sentence, which is what `pins.test.ts` asserted and
+#     what this line preserves.
+#   * `require_pinned_bun` — it read the pin out of `package.json`'s
+#     `packageManager` field, so with the manifest gone it could only ever
+#     report "cannot read the Bun pin" and exit 127. The Go tier asserts its own
+#     toolchain against `mise.toml` AND `go.mod` as its first step
+#     (`bin/prime-go:39-57`), which is a strictly stronger check of a pin that
+#     still exists than this one was of a pin that no longer did.
+#
 #   `set -euo pipefail` is the whole mechanism — no error handling to forget.
-#
-# STRICTNESS NOTES
-#   - No `mise install` here. mise.toml pins bun; this script only primes
-#     dependencies and fails loudly (127) if the toolchain is missing.
-#   - `bun install --frozen-lockfile` (never plain `bun install`): frozen installs
-#     exactly bun.lock and FAILS when the lock and package.json disagree. Plain
-#     `bun install` would quietly rewrite the lock, which is how a lockfile
-#     reaches master having drifted from the manifest it claims to describe.
-#   - `typecheck` before `test`, and `tsc --noEmit` inside it. A Bun service
-#     type-checks rather than transpiles, so a type error that the test run
-#     tolerates would otherwise ship.
-#   - `bun test`, the runner the repo's own `package.json` names. Not `bunx jest`:
-#     a prime that runs something other than what CI runs proves nothing about CI.
-#
-# This is the sibling of bin-prime/node.sh, not a copy of it. Two differences are
-# load-bearing and are the reason this file exists rather than a symlink: bun
-# ships its own test runner, and bun's lockfile is bun.lock.
 
 set -euo pipefail
 
-FAST=0
-SKIP_GO=0
 for arg in "$@"; do
   case "$arg" in
-    # `--no-go` exists for one reason and it is narrow: a contributor who has bun
-  # and no Go toolchain still needs to be able to run and debug the TypeScript
-  # tier, and "install a second toolchain or you cannot run any of this" is the
-  # kind of gate nobody runs. It PRINTS the skip, loudly, and it is the only
-  # condition under which the Go tier does not run — so a developer who takes it
-  # for granted is told every time. `gate.yml`'s proof for the Go tier is
-  # therefore not reachable through this flag, and a gate that checks its own
-  # coverage is the only thing that notices when somebody changes that.
-  --fast) FAST=1 ;;
-  --no-go) SKIP_GO=1 ;;
     -h | --help)
-      sed -n '2,22p' "$0"
+      sed -n '3,44p' "$0"
       exit 0
       ;;
     *)
       echo "bin/prime: unknown argument: $arg" >&2
+      echo "  bin/prime takes no flags. The Go tier is the whole gate; run" >&2
+      echo "  './bin/prime-go' for the tier alone and 'mise run prime' for this." >&2
       exit 2
       ;;
   esac
 done
 
-require() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "bin/prime: $1 not found on PATH — run 'mise install' in this worktree" >&2
-    exit 127
-  fi
-}
+cd "$(dirname "$0")/.."
 
-step() {
-  printf '\n== %s\n' "$1"
-}
+./bin/prime-go
 
-# Never fails the prime. The toolchain check below is the gate; a banner must not
-# be able to turn a green prime red.
-version_of() {
-  "$@" --version 2>/dev/null | head -n 1 || true
-}
-
-# The pin, read rather than written. It is taken from the one field every tool
-# reads — `packageManager`, which bun itself honours as an exact version — so
-# there is no copy of the number in this script to drift. `pins.test.ts` holds
-# that field, `mise.toml`, the Dockerfile and compose to the same number, and a
-# sixth copy written here would be the only one nothing checks.
-pinned_bun() {
-  sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"bun@\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' \
-    package.json
-}
-
-# The version that would actually run this script, extracted rather than compared
-# whole. `--version` is free to print a build banner after the number, and a
-# check that trips on that is a check people learn to work around.
-running_bun() {
-  version_of bun | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true
-}
-
-# WHY THIS IS A CHECK AND NOT A HOPEFUL ASSUMPTION. `require bun` proves a bun
-# exists, which is not the same claim. A bun that is present and wrong — a
-# system install ahead of mise's shims, a global upgrade, a stale CI image — is
-# picked up silently and runs the entire gate, and what it produces is a
-# red herring: a module resolution error, a syntax error several frames deep, a
-# suite that passes on a runtime nothing ships. cafaye-rb's gate failed exactly
-# that way, on a Ruby that was on PATH and was not the one mise had installed.
-# So the gate names the pin and the version it found, before the first command
-# that could misreport the cause.
-require_pinned_bun() {
-  local want
-  want="$(pinned_bun)"
-  BUN_VERSION="$(running_bun)"
-
-  if [ -z "$want" ]; then
-    echo "bin/prime: cannot read the Bun pin — package.json states no packageManager \"bun@X.Y.Z\"." >&2
-    echo "  A gate that cannot find the pin cannot check it. That is a defect in this" >&2
-    echo "  repository rather than a missing runtime, and it is reported as loudly as" >&2
-    echo "  one so the two are never confused." >&2
-    exit 127
-  fi
-
-  if [ "$BUN_VERSION" != "$want" ]; then
-    echo "bin/prime: wrong Bun on PATH — this repository pins $want and found ${BUN_VERSION:-an unreadable version}." >&2
-    echo "  bun resolved to $(command -v bun 2>/dev/null || echo 'nothing')." >&2
-    echo "  Activate the pinned runtime before running the gate:" >&2
-    echo "    mise trust && mise install   # installs the pin in mise.toml" >&2
-    echo "    mise exec -- bin/prime       # or run the gate through mise" >&2
-    echo "  Treat the module error this would otherwise produce — \"cannot find" >&2
-    echo "  module\" — as the symptom it is: it names a package, and the cause is" >&2
-    echo "  the runtime. The pin is in mise.toml, package.json's packageManager, the" >&2
-    echo "  Dockerfile and compose, and pins.test.ts fails if those four disagree." >&2
-    exit 127
-  fi
-}
-
-require bun
-require_pinned_bun
-
-step "bun install --frozen-lockfile"
-bun install --frozen-lockfile
-
-if [ "$FAST" -eq 1 ]; then
-  step "skipping typecheck and tests (--fast)"
-  exit 0
-fi
-
-# Probed rather than assumed: a repo with no typecheck script yet is a day-one
-# repo, not a broken one. A repo that HAS the script must pass it.
-if bun -e 'process.exit(require("./package.json").scripts?.typecheck ? 0 : 1)' \
-  >/dev/null 2>&1; then
-  step "bun run typecheck"
-  bun run typecheck
-else
-  echo "bin/prime: no 'typecheck' script in package.json — skipping typecheck" >&2
-fi
-
-step "bun test"
-bun test
-
-# THE GO TIER, and it is required rather than probed.
-#
-# Two languages, one gate. `bin/prime-go` exists so a developer working on the Go
-# port does not have to install bun to find out whether `go vet` is happy — and
-# this line exists so the declared gate is the WHOLE gate. A gate that a change to
-# either language can pass without running the other one is two gates wearing one
-# name, and `gate.yml`'s proof block is checked by RUNNING `command`, so a Go
-# change that broke `go vet` would have shipped through a green `bin/prime`.
-#
-# Probed the way `typecheck` is NOT: an absent `typecheck` script is a day-one
-# repository, an absent Go toolchain is a missing prerequisite, and
-# `bin/prime-go` says which one it is and exits 127 before running anything.
-# "gateway has no Go yet" stopped being true when `internal/api/api.gen.go`
-# landed; it becoming untrue again is a deletion, and a deletion gets its own
-# commit rather than a conditional.
-#
-# `src/` is still here — the TypeScript tier above is the reference
-# implementation, not a legacy one — so this is additive for as long as both
-# exist. When `src/` goes, this line goes with it.
-if [ "$SKIP_GO" -eq 1 ]; then
-  step "SKIPPING the Go tier (--no-go): bin/prime-go did NOT run, and a green run is not a full one"
-else
-  step "bin/prime-go"
-  ./bin/prime-go
-fi
-
-# The version printed here is the one `require_pinned_bun` verified, not a second
-# reading of `--version` at the end of the run: a banner that reports whatever
-# bun answers at the last moment is a banner that can disagree with the check
-# that admitted the run in the first place.
-step "prime ok (bun ${BUN_VERSION})"
+# The gate's own last line, and it is `==` rather than prime-go's `==>` because
+# these are two scripts: prime-go's is the tier finishing, this one is the gate
+# finishing. gate.yml's `ok` proof reads this line, so a `bin/prime` whose last
+# line stopped being this one is a proof that cannot be satisfied — which is the
+# point of a presence proof, and the reason it is here rather than in prime-go.
+printf '\n== prime ok\n'

@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
-# bin/prime-go — the Go tier of gateway's gate.
+# bin/prime-go — the Go tier of gateway's gate, and since the cutover the WHOLE
+# of it.
 #
 #   ./bin/prime-go   gofmt, build, vet, test, generated-code currency
 #
-# WHY A SECOND SCRIPT rather than six more steps in bin/prime. `bin/prime` is the
-# declared gate (gate.yml: `command: [bin/prime]`) and it is the TypeScript tier,
-# which is still the reference implementation: 578 tests across 25 files and a
-# `docker build --target test` that runs them inside the image. This is the Go
-# tier, and the two coexist for the length of the rewrite — `src/` is deleted in a
-# later packet, once equivalence is proven, and until then a change to either
-# language can break the gate of the other. A developer working on the Go port
-# should not have to install bun to find out whether `go vet` is happy, and the
-# tiers having one file each is what makes "which tier is red" a question with an
-# answer.
+# WHY A SECOND SCRIPT rather than more steps in bin/prime. It used to be two
+# tiers: `bin/prime` ran the TypeScript tier and called this last, and the two
+# coexisted for the length of the rewrite. `src/` is gone — deleted at cutover
+# (f87c891) once equivalence was proven: 51 cases, 13 scenarios, 914
+# comparisons, 0 differences — so `bin/prime` is now a wrapper around this file
+# and this file is the gate. It is still separate because `gate.yml` declares
+# `entrypoint: bin/prime`, and because "which tier is red" should stay a
+# question with an answer even when there is one tier.
 #
-# Green on a bare machine with a Go toolchain on PATH and no network. The one
-# tier that needs anything else — the equivalence check — prints a COUNTED SKIP
-# naming the reason rather than reporting a green that verified nothing; see the
-# equivalence section below.
+# Green on a bare machine with a Go toolchain on PATH and no network. The live
+# Redis tier skips unless `GATEWAY_REDIS_URL` is set, prints a COUNTED SKIP
+# naming the reason rather than reporting a green that verified nothing, and is
+# counted below.
 set -euo pipefail
 set -o pipefail
 
@@ -109,71 +108,41 @@ out="$(go test -count=1 -v ./... 2>&1)" || {
 }
 echo "$out" | grep -E '^(ok|FAIL|---|\?)|equivalence:' || true
 
-# THE COUNTED SKIP, made countable AT THE GATE rather than inside `go test`.
+# THE EQUIVALENCE BLOCK IS GONE, AND THE REASON IS A DELETION RATHER THAN A
+# REWRITE.
 #
-# `internal/equivalence` needs `bun` to stand the TypeScript reference up. A
-# machine without it is a legitimate green — and it must never be an INVISIBLE
-# one, so the skip is counted here. That is the same contract
-# `rateLimitRedisLive.test.ts` keeps, for the same failure: a gate with two ways
-# of being skipped and one way of insisting is a gate whose silence can be read.
+# This block used to require one of two lines to appear in `go test`'s output:
+# `equivalence: DID NOT RUN — …` (no bun to stand the TypeScript reference up) or
+# `equivalence: N cases x M scenarios = K comparisons` (it ran). A missing
+# summary line was a FAILURE rather than a zero, deliberately: the line was the
+# evidence the tier had run, and `go test` discards a passing package's output,
+# which is how `rateLimitRedisLive.test.ts` was once skipped in silence.
 #
-# WHICH MECHANISM DOES WHAT, because two of them sound redundant and only one
-# fires on each path. With the flag UNSET the tier skips, the run is green, and
-# this block is the only thing that says so: it prints the reason, counts it, and
-# on a machine that has bun it prints the comparison count instead. With the flag
-# SET the tier fails inside `go test` — the step above, which exits 1 and prints
-# the whole `-v` output — so the escalation below is never reached from there. It
-# is kept because a reader landing on this block in a 400-line dump should not have
-# to know which mechanism fired, and because a check that cannot count its own
-# skips cannot be trusted to have run them.
+# AT CUTOVER (f87c891) THERE IS NO EQUIVALENCE TIER TO COUNT. `internal/equivalence`
+# used to spawn `test/equivalence/reference.ts` and compare answers byte for byte;
+# that harness retired with the TypeScript tree, and what is left in the package
+# is the Go side asked directly (`caseSpec`, `ask`, `askBurst`) — the limiter's
+# refusal, its announced remaining and its fail-open answer, plus
+# `TestTheGoSideCountsRoutedTraffic`, the tripwire for the defect the comparison
+# found. It runs unconditionally, prints neither of the two markers, and cannot
+# skip.
 #
-# A missing summary line is a FAILURE rather than a zero. The line is the evidence
-# that the tier ran and had something to say; if the test's message changes, this
-# step fails and names it, rather than reporting "0 skipped" because the grep found
-# nothing.
-# `.*` before the marker and not `^`: `go test -v` prefixes a log line with
-# `    file.go:357: `, so anchoring at the start of the line finds nothing and the
-# block below would report a green on a run that skipped everything. Measured, not
-# assumed — the first version of this line anchored and matched nothing.
+# So the block was REMOVED rather than relaxed. The alternative — keep the grep
+# and let it match nothing — is the worst of the three options: the failure it
+# produced was a red gate naming a missing summary line that no code emits any
+# more, and `bin/prime` was red on a clean master for exactly that reason. It was
+# measured before this comment was written: exit 1, "internal/equivalence
+# printed neither its summary nor a counted skip".
 #
-# # HERE STRINGS, NOT PIPES, AND THIS IS NOT A STYLE PREFERENCE
-#
-# Both of these used to pipe `$out` into `sed … | head -1` and `grep -q`. That is
-# wrong under `set -o pipefail`, and it was wrong quietly for as long as it worked:
-#
-#   - `grep -q` exits the INSTANT it matches, closing the read end of the pipe.
-#     `printf` is then killed by SIGPIPE — and `pipefail` reports the pipeline's
-#     status as non-zero even though `grep` matched. So the `if` below took its
-#     `else` branch on a run where the summary was present and matched.
-#   - The same applies to `head -1` closing the pipe on `sed`.
-#
-# The failure needs `$out` to be larger than the pipe buffer, because below that
-# size the producer writes everything and exits before the consumer exits. So it
-# fires only once the test output grows — which is to say it fires on the run after
-# someone adds tests, and reports "internal/equivalence printed neither its summary
-# nor a counted skip" about a tier that ran and printed exactly what it always
-# prints. A gate whose failure message names the wrong cause is worse than no gate,
-# because the reader goes looking for a missing summary line that is right there.
-#
-# `<<<` writes to a temporary file rather than a pipe, so no producer is ever
-# killed and `pipefail` reports what the match actually was.
-did_not_run="$(grep -m1 -o 'equivalence: DID NOT RUN.*' <<<"$out" || true)"
-if [ -z "$did_not_run" ]; then
-  if grep -q 'equivalence: [0-9]* cases' <<<"$out"; then
-    echo "equivalence: RAN — the summary line is above"
-  else
-    echo "bin/prime-go: internal/equivalence printed neither its summary nor a counted" >&2
-    echo "  skip, so whether it ran is unknown, and a gate that cannot count its own" >&2
-    echo "  skips cannot be trusted to have run them." >&2
-    exit 1
-  fi
-else
-  echo "equivalence: DID NOT RUN — $did_not_run"
-  if [ "${GATEWAY_EQUIVALENCE_REQUIRED:-0}" = "1" ]; then
-    echo "bin/prime-go: GATEWAY_EQUIVALENCE_REQUIRED=1 and there is nothing to compare against." >&2
-    exit 3
-  fi
-fi
+# WHAT THE BLOCK WAS WORTH, and what replaced it, so the removal is not read as
+# a weakening. It counted one tier's skips. The tier that still CAN skip is the
+# live Redis one, and the block immediately below counts that — same mechanism,
+# same three outcomes, same escalation on `*_REQUIRED=1`. And the equivalence
+# package's own tests are no longer exempt from anything: they are in
+# `go test -count=1 -v ./...` like every other package and their `--- PASS:`
+# lines are in the `suite:` count printed at the end of this script. What no
+# longer exists is the ability to say "the TypeScript side agreed", because the
+# TypeScript side no longer exists to agree or disagree.
 
 # # THE SAME COUNT, FOR THE OTHER TIER THAT CAN SKIP
 #
