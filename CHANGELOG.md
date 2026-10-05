@@ -10,31 +10,59 @@ dependency versions follow npm's own rules.
 
 ### Added
 
-- **NOT YET BUILT, RECORDED HERE SO IT IS NOT LOST WITH ITS WORKTREE: two
-  equivalence scenarios for the limiter's refusals.**
-  `worker/gateway-go-auth-01` declared `ScenarioLimitsExhausted` and
-  `ScenarioCounterStoreDown` in `internal/equivalence/scenarios.go` and then
-  stopped — the constants are in the tree, and **no case anywhere builds on
-  either**. That is a named scenario no run can reach, which is the same shape as
-  a comment asserting a property the code does not have, so it is written down
-  rather than left to look like coverage.
+- **The limiter's refusal and its store-down behaviour, compared: the two
+  equivalence scenarios `worker/gateway-go-auth-01` declared and never built.**
+  `ScenarioLimitsExhausted` and `ScenarioCounterStoreDown` were constants in
+  `internal/equivalence/scenarios.go` with **no case anywhere building on either** —
+  the same shape as a comment asserting a property the code does not have, which is
+  why the previous entry recorded them as unbuilt rather than leaving them to look
+  like coverage. That entry is now false and this one replaces it.
 
-  What they would cover, and why each is worth the work: every existing scenario
-  compares a limiter at a GENEROUS allowance, so all eleven compare the rate-limit
-  HEADERS and **none of them compares the 429** — the refusal is the half with a
-  status code and a problem body, and the half a client actually reads.
-  `limitsExhausted` is a limiter at an allowance small enough that a burst crosses
-  it, with the clock injected and fixed on both sides so the crossing is
-  reproducible without either process sleeping. `counterStoreDown` is the same
-  limiter over a store that cannot be reached, which is the fail-open decision
-  stated as a comparison rather than as a comment: served uncounted, `/readyz`
-  naming `redis` as unavailable, and no reason carried in either body or log
-  line.
+  The inventory is **thirteen** scenarios, and `internal/equivalence` reports that
+  number from the list it drove rather than from a literal, with
+  `TestTheInventoryIsEveryScenarioBothSidesDeclareAndNothingTwice` holding the two
+  equal.
 
-  They are a separate scenario each rather than modes of one, because the two must
-  not look alike — one answers 429 and the other answers 200, and a configuration
-  where both did the same thing would be indistinguishable from a limiter that was
-  never mounted.
+  - **`limitsExhausted`** — a limiter at three per minute, with the clock frozen on
+    both sides at 2026-01-01T00:00:00Z so the crossing is a function of the request
+    count and not of the wall clock. Compared: the `429`'s status, its problem body
+    byte for byte, and the rate-limit headers **by value** rather than by presence
+    (`headerValuesComparedByValue`, read from `ratelimit.RateLimitHeaders` so it
+    cannot fall behind `announce`). The burst is compared at its first and its last
+    answer, because GCRA spends the allowance continuously and a burst that
+    overspends by two reaches an identical refusal — the difference would otherwise
+    show only in the `RateLimit-Remaining` on the way there.
+  - **`counterStoreDown`** — the same limiter over a store whose `Hit` fails. The
+    fail-open decision is now a comparison: the request is **served**, no rate-limit
+    headers are written, `/readyz` reports `redis` unavailable, and **no part of the
+    failure reaches either response body** — checked against a host, a port, a
+    hostname, a credential and the connection error, on both sides. The run asserts
+    the two scenarios produced their own decisions in opposite directions:
+    `limitsExhausted` must have refused something, and `counterStoreDown` must have
+    refused **nothing**, because a run where the fail-open scenario starts refusing
+    is fail-closed and would be green on the diff alone.
+
+  Two scenarios rather than two modes of one, as planned: one answers 429 and the
+  other answers 200, and a configuration where both did the same thing would be
+  indistinguishable from a limiter that was never mounted.
+
+  **FOUND, REPORTED, NOT FIXED — the Go gateway does not count routed traffic.**
+  Measured on this tree: `GET /v1/pantry/items` under an exhausted bucket answers
+  `429` with the rate-limit family on the reference and `200` with **no** rate-limit
+  headers on the Go side. The cause is the mount order `httpapi.New` documents as
+  deliberate — the limiter is a chi `Use` middleware inside the router and the
+  pass-through wraps the router, so traffic a route table claims never reaches it,
+  where the reference registers `app.use("*", limiter)` **before**
+  `app.use("/v1/*", proxy)` and counts it. `TestTheGoSideDoesNotCountRoutedTraffic`
+  holds the difference in place: it fails the moment the Go side starts counting,
+  at which point the answer is a fix rather than a finding and the routed burst moves
+  into the comparison. It is not fixed here because the obvious fix moves the
+  credential gate relative to the limiter — the `/v1/*` verifier must run before it
+  — and that is a change to the order of the whole chain in `internal/httpapi`.
+
+- **The equivalence comparison gained a `burst` field and a header-value
+  comparison.** Both are additions: a case with no burst is asked once and compared
+  exactly as before, so the eleven existing scenarios are unchanged.
 
 - **The browser-facing surface, in Go: four `/auth` routes and the origin gate.**
   `internal/httpapi/bff.go` ports `src/bff/auth.ts` — `POST /auth/register`,

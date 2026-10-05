@@ -72,8 +72,33 @@
 //   - **A token that verifies.** `gatedUpstream` configures a verifier on the
 //     reference and a refusing gate on the Go side, and no case carries a
 //     credential, so both answer 401 from the gate before any key is read.
-//   - **The rest of Wave 3.** No BFF, no API keys, no rate limiter, so no `/auth/*`
-//     operation answers anything but `404`.
+//   - **The rest of Wave 3.** No API keys, so no `/v1/api-keys/*` operation
+//     answers anything but `404`.
+//
+// # WHAT THE BROWSE SCENARIOS AND THE LIMITER SCENARIOS ADDED
+//
+// Both were gaps this package recorded about itself rather than defects the
+// reference had. The browser surface arrived with the BFF packet and the limiter
+// with the two scenarios below, and both times the fix was to build the case
+// rather than to widen the comparison.
+//
+// # THE LIMITER'S TWO DECISIONS, AND WHY THEY ARE TWO SCENARIOS
+//
+// `limitsExhausted` and `counterStoreDown` answer differently on purpose — one
+// refuses and one serves — and a configuration in which they looked alike would
+// be indistinguishable from a limiter that was never mounted. So they are
+// separate scenarios, asked separate cases, and the run asserts each one actually
+// produced its own decision rather than trusting the case list to have asked.
+//
+// The clock is FROZEN on both sides (`internal/equivalence/limiter.go`), because
+// `RateLimit-Reset` and `Retry-After` are functions of it and a live clock makes
+// the comparison a race between two `Date.now()` calls rather than a comparison
+// of two implementations.
+//
+// The burst is compared at its FIRST and its LAST request. The refusal alone
+// cannot tell two implementations apart — a burst that overspends by two reaches
+// the same 429 with the same headers — so the admitted answer is compared too,
+// and that is where a different allowance rate shows up.
 //   - **A request line whose path is not valid percent-encoding.** `net/http`
 //     rejects `%zz` before any handler runs and answers `400`; the reference
 //     reaches its handler and answers `404`. See the report: this is a transport
@@ -183,6 +208,17 @@ type caseSpec struct {
 	// be a difference between two transports rather than between two gateways. The
 	// exclusion is recorded here rather than discovered as a flaky case.
 	headers map[string]string
+
+	// How many times this case is asked of each side in a row. One by default.
+	//
+	// It is a field on the case rather than a loop in the runner because a
+	// limiter's REFUSAL is a property of a sequence: one request at an allowance
+	// of three is served on both sides and compares nothing about a crossing.
+	// Asking the same request `burst` times and comparing every answer is what
+	// makes the crossing observable — including the allowance being spent the same
+	// number of times, which the refusal's own headers cannot show, since a burst
+	// that overspends by two reaches the same refusal.
+	burst int
 
 	// The scenarios this case is asked under. Nil means every scenario, which is
 	// right for the contract's own operations and wrong for anything that depends
@@ -385,6 +421,37 @@ type answer struct {
 	body    string
 }
 
+// askBurst drives one case `spec.burst` times in a row at one side and returns the
+// FIRST answer and the LAST one.
+//
+// First and last, not all of them, and the middle answers are not compared because
+// the two properties that matter are at the ends: the first request shows the
+// allowance as it was, and the last shows what the limiter did with it. Asking the
+// whole sequence on BOTH sides and comparing only the ends would still hold the
+// allowance, because the last answer is only reachable through the ones before it
+// — so a port that admitted a different number of requests before the refusal has
+// to show it in `RateLimit-Remaining` on the first request or in the refusal
+// itself.
+//
+// A case with no burst is asked once and returns that one answer as both, which is
+// the comparison every other case in this file has always had — the field is
+// additive rather than a change to how the existing cases are asked.
+func askBurst(t *testing.T, base string, spec caseSpec) (answer, answer) {
+	t.Helper()
+
+	rounds := spec.burst
+	if rounds < 1 {
+		rounds = 1
+	}
+
+	first := ask(t, base, spec)
+	last := first
+	for round := 1; round < rounds; round++ {
+		last = ask(t, base, spec)
+	}
+	return first, last
+}
+
 // ask drives one request at a base URL and reads the whole answer.
 func ask(t *testing.T, base string, spec caseSpec) answer {
 	t.Helper()
@@ -489,7 +556,7 @@ func normaliseBody(body string) string {
 // The empty-string-on-agreement contract is load-bearing and was a bug first: the
 // header line was written unconditionally, so every case "differed" and the
 // 60 differences the first run reported were 56 of them noise.
-func diff(spec caseSpec, scenario string, reference, port answer) string {
+func diff(spec caseSpec, scenario, which string, reference, port answer) string {
 	var b strings.Builder
 
 	if reference.status != port.status {
@@ -507,6 +574,33 @@ func diff(spec caseSpec, scenario string, reference, port answer) string {
 		inGo := port.headers.Get(name) != ""
 		if inReference != inGo {
 			fmt.Fprintf(&b, "\n    %s: typescript %s   go %s", name, presence(inReference), presence(inGo))
+		}
+	}
+
+	// And the rate-limit family BY VALUE, on top of the presence comparison above.
+	//
+	// Only for a case that is under a limiter, and only when both sides wrote the
+	// header at all: a header one side did not send is already reported above, and
+	// reporting it a second time as a value difference would make one mistake read
+	// as two. So this compares the numbers and only the numbers.
+	if spec.burst > 0 {
+		for _, name := range headerValuesComparedByValue {
+			want := reference.headers.Get(name)
+			got := port.headers.Get(name)
+			if want == "" || got == "" {
+				continue
+			}
+			// And the VALUES must match as strings — byte for byte, including the
+			// formatting. `limiter.go`'s comment on `announce` says these numbers
+			// are "formatted like JavaScript, deliberately", and `strconv`'s
+			// `FormatFloat(v, 'f', -1, 64)` being `String(v)` in JavaScript is a
+			// claim about every value a limiter can produce. A Go side that wrote
+			// `1.0` where the reference wrote `1` would tell a client something
+			// different, so the comparison is on the rendered string and not on the
+			// number behind it.
+			if want != got {
+				fmt.Fprintf(&b, "\n    %s: typescript %q   go %q", name, want, got)
+			}
 		}
 	}
 
@@ -528,7 +622,7 @@ func diff(spec caseSpec, scenario string, reference, port answer) string {
 		return ""
 	}
 
-	fmt.Fprintf(&b, "\n  %s %s  (scenario %s)", spec.method, spec.path, scenario)
+	fmt.Fprintf(&b, "\n  %s %s  (scenario %s, %s)", spec.method, spec.path, scenario, which)
 	return b.String()
 }
 
@@ -686,6 +780,14 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 	// slower and it is the only way "both sides were given the same name" stays
 	// a fact rather than a hope.
 	var differences, comparisons, relayed int
+
+	// What each limiter scenario actually decided, counted on the REFERENCE's
+	// answers. The reference is the side whose behaviour is the contract here, and
+	// a count taken from the Go side alone would let "the Go side never refused"
+	// read as "nothing was refused" rather than as the difference it is.
+	refusals := map[string]int{}
+	served := map[string]int{}
+
 	for _, scenario := range scenarios {
 		asked := 0
 
@@ -707,20 +809,84 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 			theseCases = append(append([]caseSpec{}, cases...), browser...)
 		}
 
+		// The limiter's cases, where there is a limiter, so a scenario with no
+		// limiter is not asked about one. Derived from the scenario rather than
+		// listed, for the reason `hasBrowserSurface` exists.
+		if hasLimiter(scenario) {
+			theseCases = append(append([]caseSpec{}, theseCases...), limiterCases()...)
+		}
+
 		for _, spec := range theseCases {
 			if !spec.runsUnder(scenario) {
 				continue
 			}
 			asked++
 
-			want := ask(t, referenceURL, spec)
+			// A burst is asked as a burst, and the LAST answer is the one
+			// compared for the response while the first is what proves the
+			// allowance was spent the same number of times. Both sides are asked
+			// the whole sequence before either is compared, so the Go side cannot
+			// inherit a warm bucket from the reference's first three requests —
+			// they are different processes with different stores, but the ordering
+			// is what makes that a fact rather than a hope.
+			first, want := askBurst(t, referenceURL, spec)
 			wantUpstream, wantReached := service.take(t)
 
-			got := ask(t, goServer.URL, spec)
+			goFirst, got := askBurst(t, goServer.URL, spec)
 			gotUpstream, gotReached := service.take(t)
 
+			// The admitted request, compared on its own. A refusal's headers are
+			// the same however far past the threshold the burst went, so an
+			// implementation that spends the allowance at the wrong rate produces
+			// the same 429 and a different `RateLimit-Remaining` on the way there.
 			comparisons++
-			if rendered := diff(spec, scenario, want, got); rendered != "" {
+			if rendered := diff(spec, scenario, "first request of the burst", first, goFirst); rendered != "" {
+				differences++
+				t.Errorf("the Go gateway answers differently from the TypeScript reference:%s", rendered)
+			}
+
+			// # THE REASON MUST NOT REACH THE CALLER, AND THIS IS WHERE THAT IS HELD
+			//
+			// The fail-open scenario's store and its probe both fail with a message
+			// carrying a host and a credential, and both sides log it — that is the
+			// design, and `ratelimit.failedOpen`'s own comment says so. What must not
+			// happen is the message reaching a response body: `probesDegraded` holds
+			// that for a probe under `/readyz`, and this holds it for a request that
+			// was SERVED, which is the harder case — a 200 is a body a caller reads,
+			// and a fail-open path that appended "redis is down" to it would be a
+			// leak dressed as helpfulness.
+			//
+			// Both sides are checked, and against the ONE list of the parts of the
+			// reason — declared in `store.go` beside the message they come from, so a
+			// change to that message and a change to what is forbidden from leaking
+			// are one edit rather than two.
+			//
+			// Read out of the answer rather than compared between the two sides on
+			// purpose: two sides leaking the same secret is byte equality and would
+			// pass the ordinary diff. This is checked against a list of forbidden
+			// substrings precisely because agreement is not the property.
+			if scenario == ScenarioCounterStoreDown {
+				for _, side := range []struct {
+					which  string
+					answer answer
+				}{{"typescript", want}, {"go", got}, {"typescript (first request of the burst)", first}, {"go (first request of the burst)", goFirst}} {
+					for _, part := range thePartsOfTheReasonNeitherSideMayEcho {
+						if strings.Contains(side.answer.body, part) {
+							t.Errorf("scenario %s: the %s response body carries %q, which is part of the counter store's failure. The reason goes to the log; a caller gets nothing.", scenario, side.which, part)
+						}
+					}
+				}
+			}
+
+			if want.status == http.StatusTooManyRequests {
+				refusals[scenario]++
+			}
+			if want.status < 300 {
+				served[scenario]++
+			}
+
+			comparisons++
+			if rendered := diff(spec, scenario, "last request of the burst", want, got); rendered != "" {
 				differences++
 				t.Errorf("the Go gateway answers differently from the TypeScript reference:%s", rendered)
 			}
@@ -757,6 +923,30 @@ func TestTheGoGatewayAnswersAsTheTypeScriptOneDoes(t *testing.T) {
 
 	if differences > 0 {
 		t.Errorf("%d of %d case/scenario combinations differ. The TypeScript answer is the correct one: fix the Go side, or — if the reference is genuinely wrong — report it rather than changing it here.", differences, comparisons)
+	}
+
+	// # EACH LIMITER SCENARIO MUST HAVE PRODUCED ITS OWN DECISION
+	//
+	// Counted where the answers were rather than inferred from the inventory,
+	// because a `burst` case that never reached a limiter would compare two
+	// identical `404`s and call it agreement about a refusal — and that is exactly
+	// what a mis-wired `Exempt` looks like.
+	//
+	// And the two are asserted in OPPOSITE directions, which is the reason they
+	// are two scenarios rather than one with a flag: `limitsExhausted` must have
+	// refused something, and `counterStoreDown` must have refused NOTHING. A run
+	// where the fail-open scenario starts refusing is the fail-closed mistake
+	// `internal/ratelimit`'s own comment names — "an outage in the counter store
+	// handed to every caller as a 429" — and it would otherwise be green here,
+	// because a 429 on both sides is a comparison that agrees.
+	if refusals[ScenarioLimitsExhausted] == 0 {
+		t.Errorf("scenario %q refused no request, so the 429 was never compared against the reference's own", ScenarioLimitsExhausted)
+	}
+	if refusals[ScenarioCounterStoreDown] != 0 {
+		t.Errorf("scenario %q refused %d request(s) with a counter store that cannot be reached. That is failing CLOSED: an outage in the counter store handed to every caller as a 429. The two sides agreed on it, which is why this is asserted here rather than left to the diff.", ScenarioCounterStoreDown, refusals[ScenarioCounterStoreDown])
+	}
+	if served[ScenarioCounterStoreDown] == 0 {
+		t.Errorf("scenario %q served nothing, so the fail-open decision — served, uncounted, no headers — was never compared", ScenarioCounterStoreDown)
 	}
 
 	// The count is printed on a green run too. A check that reports nothing when
@@ -903,6 +1093,7 @@ func TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe(t *testing.T) {
 		"200": "the two probes, a relayed 2xx from an upstream, and every operation once its subsystem is ported",
 		"401": "the credential gate refuses an anonymous caller to a private route, and `gatedUpstream` compares that answer against the reference's own",
 		"404": "the v0 envelope for an unknown path, a wrong method and the five unported operations — and a relayed 404 from an upstream",
+		"429": "`limitsExhausted` compares it against the reference's own: a burst over an allowance of three, its problem body, and the rate-limit headers on the refusal",
 		"503": "two different sentences: a service that could not be reached and a service that answered something unusable",
 	}
 
@@ -915,8 +1106,12 @@ func TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe(t *testing.T) {
 		"413": "the 4 KiB body cap is on registerUser, which is Wave 3",
 		"422": "no operation on this surface validates fields; identity's answers are forwarded, not re-derived",
 		"423": "a locked account is identity's answer on login, which is Wave 3",
-		"429": "there is no limiter yet; ProbePaths is the floor it will be built on",
 	}
+
+	// The 429 is producible, and it moved out of the "cannot" list when the limiter
+	// scenarios landed. It is asserted with the rest below rather than left to the
+	// comment: a table that claimed the port cannot refuse is the claim that let a
+	// whole packet of scenarios go unbuilt while looking complete.
 
 	// Every status the document declares is either producible or named above. The
 	// enum comes from the generated file rather than from this list, so a status
@@ -942,7 +1137,7 @@ func TestTheSurfaceThisComparesIsTheSurfaceTheSubstrateCanServe(t *testing.T) {
 	// And the ones that are producible are the ones the surface really writes,
 	// asserted rather than listed: a check that only reads its own table is a check
 	// that cannot notice the table being wrong.
-	for _, status := range []string{"200", "401", "404", "503"} {
+	for _, status := range []string{"200", "401", "404", "429", "503"} {
 		if _, ok := canProduce[status]; !ok {
 			t.Errorf("canProduce does not say how the port produces a %s, and it does", status)
 		}

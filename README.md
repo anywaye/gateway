@@ -990,24 +990,50 @@ equivalence check stands them up side by side on every run.
 | `GET /readyz` | ✅, with `identity` and `redis` probes | ✅, with **no** probes registered |
 | `HEAD` on the two probes | ✅ (Hono routes it to the `GET` handler) | ✅ (registered explicitly — chi does not) |
 | the v0 `404` / `500` envelope | ✅ | ✅ |
-| core's `problem+json` envelope | ✅ | ✅ |
-
-| core's `problem+json` envelope | ✅ | ✅ reachable: the pass-through's 401 and two 503s |
-| the pass-through, the route table, the principal assertion | ✅ | ✅ |
+| core's `problem+json` envelope | ✅ | ✅ reachable: the pass-through's 401, two 503s, and the limiter's 429 |
 | an anonymous caller refused on a private route (`401`) | ✅ | ✅ — the gate is a seam; verification is not ported |
 | `GET /v1/me` | ✅ | declines with the reference's `404` |
 | the four `/auth` routes | ✅ | ✅ **ported** — behind `Options.BFF`, which is nil by default |
 | bearer-token verification, JWKS cache, scopes | ✅ | **not ported** — Wave 3 |
 | API keys | ✅ | **not ported** — Wave 3 |
-| rate limiting, `RateLimit-*` headers | ✅ | **not ported** — Wave 3 |
-| the pass-through, the route table, the principal assertion | ✅ | **not ported** — Wave 3 |
+| rate limiting, `RateLimit-*` headers, the `429` | ✅ | ✅ **ported** — GCRA, `internal/ratelimit`; the refusal and the fail-open path are compared against the reference |
 | the BFF's session store | ✅ | **deliberately not ported** — see below |
+
+(The pass-through, the route table and the principal assertion are ported — see
+the row above. An earlier revision of this table carried a second, contradictory
+row saying "not ported", which had been true before the proxy packet and stopped
+being true without the row being removed.)
 
 "Declines with the reference's `404`" is a decision and not a gap that was left
 open by accident. `createApp({})` does not register `/v1/me` without a verifier,
 so the reference answers `404` there with nothing configured — and so does the Go
 service. A `501` would have been more truthful about the code and less true about
 the contract, and where the two disagree the TypeScript answer is the correct one.
+
+### One known divergence: the Go gateway does not count routed traffic
+
+The limiter is ported and its refusal is compared against the reference, and the
+comparison found this. With the allowance exhausted, on a path a route table
+claims:
+
+| | reference | Go |
+| --- | --- | --- |
+| `GET /v1/pantry/items` | `429` with the whole `RateLimit-*` family | `200`, **no** rate-limit headers |
+
+The cause is the mount order. `httpapi.New` registers the limiter as a chi `Use`
+middleware **inside** the router and wraps the pass-through around it, so traffic
+the table claims never reaches the limiter; the reference registers
+`app.use("*", limiter)` **before** `app.use("/v1/*", proxy)` and counts it. An edge
+whose limiter does not run on forwarded traffic is not limiting the traffic that
+costs it money.
+
+`TestTheGoSideDoesNotCountRoutedTraffic` in `internal/equivalence` holds the
+difference in place rather than as a note: it fails the moment the Go side starts
+counting, at which point the answer is a fix rather than a finding and the routed
+burst moves into the comparison. It is **not fixed here** because the obvious fix
+moves the credential gate relative to the limiter — the `/v1/*` verifier must run
+before it, so an unverifiable token must not be counted — and that is a change to
+the order of the whole chain in `internal/httpapi`.
 
 ### The browser surface is ported, and the session store is not
 
@@ -1080,13 +1106,13 @@ already agree on rather than pretending the verifier exists.
 `internal/equivalence` stands the TypeScript reference up as a subprocess, drives
 the same requests at both, and fails where the answers differ. It compares status,
 `Content-Type`, the presence of the contract-declared headers, and the body **byte
-for byte**, across **24 base cases × 9 configurations = 306 comparisons**, plus a
-fourth set of browser cases that only exist where the browser surface is mounted.
+for byte**. The run prints the number of comparisons it actually made and CI fails
+under a floor, so a shrinking case list is a red rather than a quieter green.
 
-The base 24 are derived: every operation `openapi/v1.yaml` declares is read out of
-the generated registrations, which `bin/prime-go` holds in step with the document by
-regenerating and diffing, so an operation added to the contract is compared the day
-it lands. The remainder are hand-written and are the edge: wrong method, trailing
+The base cases are derived: every operation `openapi/v1.yaml` declares is read out
+of the generated registrations, which `bin/prime-go` holds in step with the document
+by regenerating and diffing, so an operation added to the contract is compared the
+day it lands. The remainder are hand-written and are the edge: wrong method, trailing
 slash, doubled slash, the root, wrong case, query string, traversal, `HEAD`.
 
 The **browser cases** are in two halves with the same justification. Four are
@@ -1101,6 +1127,27 @@ that is not an object, and a body past the cap. The signed-in cases are only ask
 where a sign-in actually succeeds, and that is **derived from the scenario's own
 identity overrides** rather than from a list of scenario names — two lists of one
 fact is how a scenario that stopped refusing a login kept being asked them.
+
+The **limiter cases** are asked as bursts, because the limiter's decision is a
+property of a sequence: one request at an allowance of three is served on both
+sides and says nothing about a crossing. Both limiters read a **frozen clock**
+(2026-01-01T00:00:00Z, asserted equal to the reference's literal from its own
+source), so `RateLimit-Reset` and `Retry-After` are exact numbers rather than a
+race between two `Date.now()` calls. Each burst is compared at its first and its
+last answer, because GCRA spends the allowance continuously and a burst that
+overspends by two reaches an identical refusal — the difference would otherwise
+show only in the `RateLimit-Remaining` on the way there. Those headers are compared
+**by value** rather than by presence, which is the one place this check goes beyond
+the header names, and a 429 that omits `Retry-After` or carries a stale
+`RateLimit-Reset` tells a client something different from one that does not.
+
+The two limiter scenarios assert their decisions in **opposite** directions:
+`limitsExhausted` must have refused something, and `counterStoreDown` — the same
+limiter over a counter store that cannot be reached — must have refused **nothing**.
+A fail-closed run is green on the diff alone, because both sides would agree; the
+assertion is what catches it. The fail-open case also checks that no part of the
+store's failure reaches either response body, against a host, a port, a hostname, a
+credential and the connection error.
 
 Two things the check normalises, and both are stated because a byte-for-byte
 comparison with an unstated exception is a comparison you cannot trust:

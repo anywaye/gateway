@@ -83,17 +83,42 @@ const (
 	ScenarioBffAccountLocked  = "bffAccountLocked"
 	ScenarioBffIdentityBroken = "bffIdentityBroken"
 	ScenarioBffWithdrawn      = "bffSessionWithdrawn"
+
+	// The limiter's REFUSAL: a limiter at an allowance small enough that a burst
+	// crosses it, with the clock frozen so the crossing is a function of the
+	// request count and not of the wall clock.
+	//
+	// Every other scenario runs at an allowance no burst in this suite can reach,
+	// so this is the only one that compares the `429` — its status, its problem
+	// body, and the rate-limit headers ON the refusal. A client reads those, not
+	// the headers on the requests that were admitted.
+	ScenarioLimitsExhausted = "limitsExhausted"
+
+	// The limiter over a counter store that cannot be reached, which FAILS OPEN:
+	// served, uncounted, no rate-limit headers, and `/readyz` naming `redis`.
+	//
+	// A separate scenario from the refusal above, and the reason is the whole
+	// point of both: one answers 429 and the other answers 200. A configuration
+	// where they looked alike would be indistinguishable from a limiter that was
+	// never mounted, so the two must not look alike.
+	ScenarioCounterStoreDown = "counterStoreDown"
 )
 
 // scenarios is the inventory, in the order the runner drives them.
 //
-// ELEVEN, and that is this merge's doing rather than either packet's: the proxy
-// packet added `routedUpstream` and `gatedUpstream`, the BFF packet added the five
-// `bff*` scenarios, and both edited this list from the same three probe scenarios
-// without either seeing the other's. The union is written out in full here
-// because `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas` reads the
+// THIRTEEN, and the last two are this packet's: `limitsExhausted` and
+// `counterStoreDown` were named by `worker/gateway-go-auth-01` and no case
+// anywhere built on them, which is the same shape as a comment asserting a
+// property the code does not have. The count is asserted rather than written
+// down, in `TestTheInventoryIsEveryScenarioBothSidesDeclare`.
+//
+// The union is written out in full rather than assembled, because
+// `TestTheGoSideHasAnAnswerForEveryScenarioTheReferenceHas` reads the
 // REFERENCE's list and holds the two equal — a scenario named in one and not the
-// other is that test going red, which is the mechanism that caught the gap.
+// other is that test going red, which is the mechanism that caught the gap. The
+// first eleven got that way for the same reason: the proxy packet added two and
+// the BFF packet added five, from the same three, without either seeing the
+// other.
 var scenarios = []string{
 	ScenarioBare,
 	ScenarioOneProbeOk,
@@ -106,7 +131,13 @@ var scenarios = []string{
 	ScenarioBffAccountLocked,
 	ScenarioBffIdentityBroken,
 	ScenarioBffWithdrawn,
+	ScenarioLimitsExhausted,
+	ScenarioCounterStoreDown,
 }
+
+// The inventory length, asserted by name so a scenario added without moving this
+// number is a failing gate rather than a summary line that quietly reads nine.
+const inventorySize = 13
 
 // hasBrowserSurface is the derived set of scenarios that configure a browser
 // surface, and it is what the case list is built from.
@@ -128,8 +159,24 @@ func hasBrowserSurface(scenario string) bool {
 	return false
 }
 
+// hasLimiter is whether a scenario mounts one, and it is derived from the two
+// scenarios that build a limiter rather than typed as a list.
+//
+// The same reason `hasBrowserSurface` exists and the same failure it prevents: a
+// scenario that mounts a limiter and is not in this set has its 429 and its
+// fail-open answer compared by nothing, and the summary line would still read
+// thirteen scenarios.
+func hasLimiter(scenario string) bool {
+	return scenario == ScenarioLimitsExhausted || scenario == ScenarioCounterStoreDown
+}
+
 // The scenarios that need a recording upstream in front of them.
-var routedScenarios = map[string]bool{ScenarioRoutedUpstream: true, ScenarioGatedUpstream: true}
+var routedScenarios = map[string]bool{
+	ScenarioRoutedUpstream:   true,
+	ScenarioGatedUpstream:    true,
+	ScenarioLimitsExhausted:  true,
+	ScenarioCounterStoreDown: true,
+}
 
 // The dependency names the degraded scenario registers, in the order both sides
 // declare them.
@@ -278,6 +325,27 @@ func optionsFor(scenario, upstreamOrigin string) (httpapi.Options, error) {
 	case ScenarioBff, ScenarioBffBadCredentials, ScenarioBffUnknownAccount,
 		ScenarioBffAccountLocked, ScenarioBffIdentityBroken, ScenarioBffWithdrawn:
 		return browserSurface(overridesFor(scenario))
+
+	case ScenarioLimitsExhausted, ScenarioCounterStoreDown:
+		if upstreamOrigin == "" {
+			return httpapi.Options{}, fmt.Errorf("equivalence: scenario %q needs a recording upstream and none was started, so the limiter's own answer would be compared against a gateway that forwarded nothing", scenario)
+		}
+
+		limiter, err := limiterFor(scenario)
+		if err != nil {
+			return httpapi.Options{}, fmt.Errorf("equivalence: scenario %q: %w", scenario, err)
+		}
+
+		// `redis` in both, deliberately: it is the name the store has in a
+		// deployment, and it is the name `/readyz` must use so the gap between
+		// "served" and "unlimited" is visible rather than silent. The two scenarios
+		// differ only in whether that probe answers.
+		options := httpapi.Options{
+			Probes:  []httpapi.NamedProbe{{Name: degradedHealthy, Probe: probeFor(scenario)}},
+			Routes:  routesFor(upstreamOrigin),
+			Limiter: limiter,
+		}
+		return options, nil
 
 	default:
 		return httpapi.Options{}, fmt.Errorf("equivalence: no Go scenario named %q; known: %v", scenario, scenarios)
