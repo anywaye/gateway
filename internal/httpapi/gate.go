@@ -93,65 +93,73 @@ func PrincipalFrom(r *http.Request) (Principal, bool) {
 // credentialGate answers 401 for a caller it cannot authenticate, and lets every
 // other request through.
 //
+// It returns the MIDDLEWARE rather than a wrapped handler, because it is one
+// element of `everyRequest`'s list and the order inside that list is the property
+// this file exists to hold. Wrapping here would have meant deciding the position
+// of the gate against the limiter at the call site instead of in the one list both
+// are named in.
+//
 // `nil` when no gate is configured, which is **not** the same gate as one that
 // refuses everything: `src/index.ts` does not register the middleware at all when
 // `options.jwt` is absent, so a gateway built with a route table and no verifier
 // relays an anonymous request to a private route. Reproducing that faithfully is
 // what lets the equivalence check compare two gateways that are both
-// unconfigured — and it is why this is a nil check rather than a boolean that
+// unconfigured — and it is why this is a nil rather than an identity middleware
 // somebody could set to the wrong answer by accident.
 //
 // The `nil` is the state every deployment that has not configured a verifier is in,
 // and it is a documented one rather than an accident: `Options.Authenticate`'s own
 // comment says what an unconfigured gateway forwards.
-func credentialGate(authenticate Authenticate, routes RouteTable, next http.Handler) http.Handler {
+func credentialGate(authenticate Authenticate, routes RouteTable) func(http.Handler) http.Handler {
 	if authenticate == nil {
-		return next
+		return nil
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := NormaliseRequestPath(r.URL.EscapedPath())
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := NormaliseRequestPath(r.URL.EscapedPath())
 
-		// Mounted on `/v1/*` and nowhere else. `/healthz` and `/readyz` answer an
-		// orchestrator that has no credential and must not be throttled into a
-		// restart, and `/auth/*` is the browser surface, which answers with its own
-		// gate. The mount is a prefix test rather than chi's `Use`, because the
-		// pass-through and the contract's routes share one handler chain here and
-		// `/v1/*` is the shape `RouteMount` already names.
-		if !underRouteMount(path) {
-			next.ServeHTTP(w, r)
-			return
-		}
+			// Mounted on `/v1/*` and nowhere else. `/healthz` and `/readyz` answer an
+			// orchestrator that has no credential and must not be throttled into a
+			// restart, and `/auth/*` is the browser surface, which answers with its own
+			// gate. The mount is a prefix test rather than chi's `Use`, because the
+			// pass-through and the contract's routes share one handler chain here and
+			// `/v1/*` is the shape `RouteMount` already names.
+			if !underRouteMount(path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		if _, already := PrincipalFrom(r); already {
-			next.ServeHTTP(w, r)
-			return
-		}
+			if _, already := PrincipalFrom(r); already {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		// MD18's exception, asked of the same resolver the pass-through asks.
-		// `IsPublicRoute` reads `ResolveRoute`, so the prefix that mounts without a
-		// credential is the prefix that forwards, and a change to the matching rule
-		// cannot leave this gate and that mount disagree about which paths are open.
-		if IsPublicRoute(routes, path) {
-			next.ServeHTTP(w, r)
-			return
-		}
+			// MD18's exception, asked of the same resolver the pass-through asks.
+			// `IsPublicRoute` reads `ResolveRoute`, so the prefix that mounts without a
+			// credential is the prefix that forwards, and a change to the matching rule
+			// cannot leave this gate and that mount disagree about which paths are open.
+			if IsPublicRoute(routes, path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		principal, err := authenticate(r)
-		if err != nil || principal == nil {
-			writeProblem(w, r, Problem{
-				Status: api.N401,
-				Code:   api.ProblemCodeUnauthorized,
-				// `src/middleware/jwt.ts`'s own words, and the reason this is a
-				// fixed string rather than an interpolated error: the message can
-				// carry a dependency host, a query or a token.
-				Detail: "a bearer token is required",
-			})
-			return
-		}
+			principal, err := authenticate(r)
+			if err != nil || principal == nil {
+				writeProblem(w, r, Problem{
+					Status: api.N401,
+					Code:   api.ProblemCodeUnauthorized,
+					// `src/middleware/jwt.ts`'s own words, and the reason this is a
+					// fixed string rather than an interpolated error: the message can
+					// carry a dependency host, a query or a token.
+					Detail: "a bearer token is required",
+				})
+				return
+			}
 
-		next.ServeHTTP(w, withPrincipal(r, *principal))
-	})
+			next.ServeHTTP(w, withPrincipal(r, *principal))
+		})
+	}
 }
 
 // underRouteMount is what `RouteMount`'s `/v1/*` matches.

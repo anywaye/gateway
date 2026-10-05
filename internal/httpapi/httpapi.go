@@ -233,8 +233,8 @@ func New(options Options) (http.Handler, error) {
 	// # THE MOUNTS, IN THIS ORDER, AND THE ORDER IS THE WHOLE ARGUMENT
 	//
 	// 1. the repeated-header reduction, which is not a gate and must be first,
-	// 2. the bearer gate on `/v1/*`,
-	// 3. the limiter on everything.
+	// 2. authentication, resolved before anything decides to spend an upstream call,
+	// 3. the limiter on everything, routed traffic included.
 	//
 	// Authentication BEFORE the limiter, and the reason is the reference's: "the
 	// key is the strongest identity the request has, and the strongest identity is
@@ -252,20 +252,54 @@ func New(options Options) (http.Handler, error) {
 	// refusal, and without this middleware the two answers differ on status, in
 	// content type and in whether a cookie was set.
 	//
-	// chi requires `Use` before any route is registered, and
-	// `api.HandlerWithOptions` is what registers the seven, so all three mounts come
-	// before that call. There is no ordering hazard here the way there is in Hono,
-	// where a `use` mounted after a route never runs — which is why the comment in
-	// `src/index.ts` about "the route is registered further down, after the
-	// limiter" has no counterpart in this file.
-	router.Use(collapseRepeatedHeaders)
-
-	if options.Verifier != nil {
-		router.Use(onPrefix("/v1/", options.Verifier.Require(writeAuthRefusal)))
+	// ## ONLY THE BEARER GATE IS A `Use` HERE, AND THAT IS THE FIX
+	//
+	// The other two are mounted by `everyRequest`, and the reason is the shape of
+	// this router rather than a preference. **chi's `Use` wraps the routes
+	// registered on the router it is called on.** It is not a chain the whole
+	// handler passes through — the pass-through in `New` is mounted ON TOP of this
+	// router and, for a path the route table claims, never calls it at all. So a
+	// limiter mounted here is a limiter that runs on gateway's own routes and not
+	// on the traffic gateway forwards, which is the expensive kind: it reaches an
+	// upstream that does work.
+	//
+	// That was measured, not argued: with the limiter mounted here and both sides
+	// frozen at 2026-01-01T00:00:00Z on an allowance of three, `GET
+	// /v1/pantry/items` was a `429` with the whole `RateLimit-*` family on the
+	// reference and a `200` with no rate-limit headers at all here. The port had
+	// believed itself immune to an ordering hazard Hono has and chi does not — the
+	// hazard is real in both, and in chi it is worse: in Hono a `use` registered
+	// after a route does not run either, but a `Use` is still evaluated for every
+	// request that reaches the router, so the mistake is only invisible until
+	// something is mounted in front.
+	//
+	// chi does still require `Use` before any route is registered, and
+	// `api.HandlerWithOptions` is what registers the seven — which is why this
+	// list is computed here and mounted in one call. The bearer gate belongs to
+	// the contract's own routes; the credential gate above the pass-through is
+	// `Authenticate`, and it is a different seam on purpose (see `authentication`).
+	//
+	// ## THE TWO PLACEMENTS OF ONE CHAIN, AND WHY IT IS NOT MOUNTED IN BOTH
+	//
+	// With no pass-through the whole chain belongs to chi: the reduction, the
+	// bearer gate, the limiter — `everyRequest`'s order, all three on the router.
+	// With a pass-through only the bearer gate stays here and the other two are
+	// wrapped around the proxy further down.
+	//
+	// The limiter is the one that cannot be in both. The pass-through calls
+	// `next` for a path no table claims, so a limiter on the router counts those
+	// requests a second time on top of the wrapper's count: measured, the Go side
+	// reported `RateLimit-Remaining: 1` on the first request of a run where the
+	// reference reported `2`, because it had spent twice what the reference had.
+	// A bucket spent twice per request is a limiter with half the allowance it
+	// announces — and a comparison that only compares statuses reads it as
+	// agreement.
+	limiter := middlewareOf(options.Limiter)
+	insideLimiter := limiter
+	if options.Routes != nil {
+		insideLimiter = nil
 	}
-	if options.Limiter != nil {
-		router.Use(options.Limiter.Wrap)
-	}
+	router.Use(everyRequest(insideLimiter, bearerGate(options))...)
 
 	svc := &server{probes: options.Probes, bff: bff, verifier: options.Verifier}
 	api.HandlerWithOptions(
@@ -289,6 +323,10 @@ func New(options Options) (http.Handler, error) {
 	router.Method(http.MethodHead, "/readyz", headOf(svc.Readiness))
 
 	if options.Routes == nil {
+		// Nothing in front of the router to mount on, so `everyRequest`'s list is
+		// already on chi (above, with the bearer gate in it) and this returns the
+		// bare `*chi.Mux` — which `chi.Walk` can read, and which is why
+		// `routes_test.go` can walk a gateway built from an empty configuration.
 		return router, nil
 	}
 
@@ -303,10 +341,9 @@ func New(options Options) (http.Handler, error) {
 		return nil, err
 	}
 
-	// The pass-through, in front of the router, and the credential gate in front of
-	// that — the same order `src/index.ts` registers them, and the order is the
-	// property: a request is authenticated *before* anything decides to spend an
-	// upstream call on it.
+	// The pass-through, and the credential gate in front of that — the same order
+	// `src/index.ts` registers them, and the order is the property: a request is
+	// authenticated *before* anything decides to spend an upstream call on it.
 	//
 	// ## WHY THE ROUTER IS WRAPPED RATHER THAN MOUNTED, AND WHAT THAT COSTS
 	//
@@ -318,20 +355,90 @@ func New(options Options) (http.Handler, error) {
 	// permitted `/v1` prefix in the table — relay it.
 	//
 	// `routeProxy.handle` therefore names the exclusion itself (see its comment)
-	// and the chain is assembled here as gate → pass-through → router. Wrapping the
-	// router rather than mounting into it costs one thing: the returned value is no
-	// longer a bare `*chi.Mux`. It still *is* a `chi.Routes`, because `mount`
-	// embeds the router and overrides only `ServeHTTP` — so `chi.Walk` still reads
-	// the generated registrations, and `TestTheRouterServesExactlyWhatTheGenerated-
-	// DocumentDeclares` keeps working on a configured gateway as well as an empty
-	// one.
+	// and the chain is assembled here as gate → limiter → pass-through → router,
+	// with the header reduction outside both. Wrapping the router rather than
+	// mounting into it costs one thing: the returned value is no longer a bare
+	// `*chi.Mux`. It still *is* a `chi.Routes`, because `mount` embeds the router
+	// and overrides only `ServeHTTP` — so `chi.Walk` still reads the generated
+	// registrations, and `TestTheRouterServesExactlyWhatTheGeneratedDocument-
+	// Declares` keeps working on a configured gateway as well as an empty one.
 	proxied := newRouteProxy(proxyOptions{
 		Routes:    table,
 		Timeout:   options.UpstreamTimeout,
 		Assertion: options.Assert,
 	}).handle(router)
 
-	return &mount{Router: router, handler: credentialGate(authentication(options), table, proxied)}, nil
+	gates := everyRequest(limiter, credentialGate(authentication(options), table))
+	return &mount{Router: router, handler: compose(proxied, gates...)}, nil
+}
+
+// everyRequest is the middleware every request passes through, in order: the
+// repeated-header reduction, then `gate` when there is one, then the limiter.
+//
+// ## WHY IT IS ONE LIST AND NOT THREE MOUNTS
+//
+// The order is the property — a request refused by a gate is not counted, and the
+// reduction rewrites what the gates read — and an order written out as three
+// separate statements in two branches of `New` is an order one of the branches can
+// forget. `New` registers this list with chi's `Use` when there is no pass-through
+// and wraps the pass-through with it when there is; both are the same chain, so a
+// fourth middleware added to gateway's request path is added in one place.
+//
+// ## THE LIMITER IS WRAPPED AROUND THE PASS-THROUGH, AND THAT IS THE WHOLE FIX
+//
+// chi's `Use` wraps the routes registered on the router it is called on. The
+// pass-through is mounted on top of that router and, for a path the route table
+// claims, never calls it — so a limiter mounted with `Use` counted gateway's own
+// routes and forwarded nothing at all, which is the traffic that costs an upstream
+// money. Wrapped here it runs on both, exactly once each.
+//
+// Once per request is why `New` passes the limiter to only one of the two
+// placements; see the comment at the mount for what double counting measured like.
+//
+// ## A `nil` GATE IS NOT A GATE THAT REFUSES
+//
+// `credentialGate` returns nil when there is no `Authenticate`, and `New` passes a
+// gate only when there are routes to gate, so `gate == nil` here means a gateway
+// with no verifier rather than one that refuses everything.
+func everyRequest(limiter, gate func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
+	chain := []func(http.Handler) http.Handler{collapseRepeatedHeaders}
+	if gate != nil {
+		chain = append(chain, gate)
+	}
+	if limiter != nil {
+		chain = append(chain, limiter)
+	}
+	return chain
+}
+
+// compose wraps `next` in `middlewares`, the first outermost — the order chi
+// applies a `Use` list in, spelled out for the case where the chain is not chi's
+// to build.
+func compose(next http.Handler, middlewares ...func(http.Handler) http.Handler) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		next = middlewares[i](next)
+	}
+	return next
+}
+
+// bearerGate is the `/v1/*` token gate, or nil when no verifier is configured.
+//
+// Nil rather than a middleware that permits everything, because a gate that cannot
+// refuse is not a gate and the honest spelling of "there is none" is the absence —
+// the same reason `credentialGate` returns nil rather than `next`.
+func bearerGate(options Options) func(http.Handler) http.Handler {
+	if options.Verifier == nil {
+		return nil
+	}
+	return onPrefix("/v1/", options.Verifier.Require(writeAuthRefusal))
+}
+
+// middlewareOf is an optional limiter as an optional middleware.
+func middlewareOf(limiter RateLimiter) func(http.Handler) http.Handler {
+	if limiter == nil {
+		return nil
+	}
+	return limiter.Wrap
 }
 
 // authentication is the gate the pass-through is mounted behind.
