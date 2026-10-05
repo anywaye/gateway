@@ -22,7 +22,7 @@ import (
 // The principal assertion: gateway's own signature over who the caller is, sent to
 // one upstream and to nothing else.
 //
-// Ported from `src/routes/assertion.ts`.
+// Ported from `src/routes/assertion.ts` (removed at cutover).
 //
 // ## THE GAP THIS EXISTS TO CLOSE, AND WHY IT IS A FACT RATHER THAN A BUG
 //
@@ -353,7 +353,7 @@ func declaredClaims(principal Principal, names []string) map[string]any {
 //
 // ## THE PUBLIC HALF IS TAKEN FROM THE PUBLIC KEY, AND THE STRUCT IS THE PROOF
 //
-// `src/routes/assertion.ts` measures this rather than assuming it: `exportJWK`
+// `src/routes/assertion.ts` (removed at cutover) measures this rather than assuming it: `exportJWK`
 // given a Node **private** `KeyObject` returns `kty, n, e, d, p, q, dp, dq, qi` —
 // the whole private key, RSA primes included. The first draft of that function
 // exported the private key it had been handed, and nothing about the token set

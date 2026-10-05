@@ -1,6 +1,6 @@
 // Which allowance a route draws on, in configuration rather than in code.
 //
-// The port of `src/middleware/limits.ts`, which is the specification: the table
+// The port of `src/middleware/limits.ts` (removed at cutover), which is the specification: the table
 // contents, the policy names, the longest-prefix-on-a-segment-boundary resolution
 // and the validation are reproduced rather than redesigned, because the policy
 // name is announced in `RateLimit-Policy` and is half the counter key. A limit
@@ -285,7 +285,7 @@ func ResolveLimit(table LimitTable, path string) Limit {
 
 // PolicyResolver is the table expressed as the two hooks `Options.Policy` and
 // `Options.Resolve` want, and it is the whole of `buildLimiter`'s table handling
-// in `src/index.ts`.
+// in `src/index.ts` (removed at cutover).
 //
 // This is the seam the port needed. Both hooks already existed and nothing set
 // them, so the Go gateway drew every request on one default allowance — 600/min on

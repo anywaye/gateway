@@ -29,7 +29,7 @@ var stderr io.Writer = os.Stderr
 
 // The pass-through: a path prefix, an upstream, and gateway's own credential.
 //
-// Ported from `src/routes/proxy.ts`. This is the half of routing that touches the
+// Ported from `src/routes/proxy.ts` (removed at cutover). This is the half of routing that touches the
 // network, and it is deliberately thin. `net/http`'s own client is the tool — a
 // proxy library would be a dependency with no cause, in a repository whose rule is
 // that a dependency has to earn itself — and there is no retry, no circuit breaker
@@ -145,7 +145,7 @@ type routeProxy struct {
 // proxyOptions is what the pass-through is built from. An argument rather than
 // three package-level values, for `guard/AGENTS.md`'s reason: a test can build two
 // differently-configured gateways in one process, which is exactly what
-// `internal/equivalence` does.
+// `internal/equivalence` did.
 type proxyOptions struct {
 	Routes    RouteTable
 	Timeout   time.Duration
@@ -406,7 +406,7 @@ func bodyOf(r *http.Request) io.Reader {
 //
 // Stated as its own predicate because it was a range check once, and a range check
 // that reads "300 to 499" is a 200 translated into a 503 — which the first run of
-// `src/routes/proxy.test.ts` did, in the one sentence this comment is about.
+// `src/routes/proxy.test.ts` (removed at cutover) did, in the one sentence this comment is about.
 //
 // Exported so the tests can hold the boundary from both sides: a table over every
 // status class, and the same table again through a real upstream.

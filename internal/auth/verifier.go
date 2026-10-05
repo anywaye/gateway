@@ -15,7 +15,7 @@
 // hand-marshals `/readyz`'s `deps`, and `rateLimitRedis.ts` hand-rolls RESP2
 // rather than take a client: **a port whose whole job is byte-equivalence with
 // the reference cannot delegate the bytes to a third party.** Every refusal
-// string below is `jwt.ts`'s verbatim, because `internal/equivalence` compares
+// string below is `jwt.ts`'s verbatim, because `internal/equivalence` compared
 // problem documents byte for byte and `refusalOf`'s mapping of jose error codes
 // onto five sentences is part of the observable contract. A library would give
 // us its own error taxonomy and a translation layer between the two, and the
@@ -45,7 +45,7 @@ import (
 
 // Options is the verifier's configuration, and it is validated at construction.
 //
-// `Options` mirrors `JwtOptions` in `src/middleware/jwt.ts` field for field, with
+// `Options` mirrors `JwtOptions` in `src/middleware/jwt.ts` (removed at cutover) field for field, with
 // the two millisecond numbers as `time.Duration` because Go has a type for a
 // span of time and spelling one in milliseconds is how a caller ends up with a
 // nanosecond value where a second was meant. The environment reader converts.
@@ -175,7 +175,7 @@ func assertHTTPURL(value string) error {
 // Principal is what a verified request carries. Handlers read this and nothing
 // else.
 //
-// Ported from `Principal` in `src/middleware/jwt.ts`, including the field whose
+// Ported from `Principal` in `src/middleware/jwt.ts` (removed at cutover), including the field whose
 // comment there explains why it is a field rather than a claim lookup at each
 // use: the one place that decides what an account is is the one place that read
 // the token.
@@ -408,7 +408,7 @@ func (e errString) Error() string { return string(e) }
 //     `[...requiredClaims, "aud", "iss"]` and a token missing both is told it is
 //     missing `aud`. Getting this backwards changes the message for one token
 //     shape and nothing else, which is exactly the kind of difference
-//     `internal/equivalence` exists to find.
+//     the equivalence check existed to find.
 //
 //  2. `iss` is compared before `aud`. Same reason.
 //

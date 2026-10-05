@@ -13,7 +13,7 @@ import (
 )
 
 // This file holds core's error envelope — the one every rejection in gateway
-// goes through, ported from `src/problem.ts`.
+// goes through, ported from `src/problem.ts` (removed at cutover).
 //
 // Nothing in this packet writes a problem yet: the two refusals the substrate
 // serves are the v0 `404` and the v0 `500`, both of which are the other
@@ -173,7 +173,7 @@ func TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody(t *testing.T) {
 // A code with no title is a defect in this repository, and the writer refuses
 // rather than rendering a document the contract does not describe.
 //
-// The alternative — a lookup with a fallback, which is what `src/problem.ts`
+// The alternative — a lookup with a fallback, which is what `src/problem.ts` (removed at cutover)
 // does and which renders `title: undefined` into the JSON — produces a body that
 // looks like a problem document and is not one. So an unknown code is rewritten
 // to a code this file can justify, with the status that code is for, and

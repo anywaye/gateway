@@ -11,7 +11,7 @@
 // deployment with `REDIS_URL` set limits at all.
 //
 // This file closes that gap. It is the counterpart of
-// `src/middleware/rateLimitRedisLive.test.ts`, and it exists because two things
+// `src/middleware/rateLimitRedisLive.test.ts` (removed at cutover), and it exists because two things
 // about a real server are invisible from here:
 //
 //  1. REDIS TRUNCATES A LUA NUMBER TOWARD ZERO on the way out. `math.ceil` in the
@@ -797,7 +797,7 @@ func TestTheBucketCharsetIsEnforcedAgainstARealServer(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // expectSameVerdict is `expectSameVerdict` from
-// `src/middleware/rateLimitRedisLive.test.ts`, in Go.
+// `src/middleware/rateLimitRedisLive.test.ts` (removed at cutover), in Go.
 //
 // # THE TIMESTAMPS ARE COMPARED, AND NOT WITH A TOLERANCE
 //

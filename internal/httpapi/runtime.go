@@ -96,7 +96,7 @@ type Config struct {
 //
 // # THE VERIFIER IS BUILT UNCONDITIONALLY, LIKE THE REFERENCE'S
 //
-// `runtimeOptions` in `src/index.ts` always passes `jwt:` — there is no "unset
+// `runtimeOptions` in `src/index.ts` (removed at cutover) always passes `jwt:` — there is no "unset
 // issuer" state there, because the default is a real issuer. So the Go reader does
 // the same: a gateway started by `cmd/gateway` always verifies tokens, always
 // fetches a key set, and always rate-limits. The shape with none of that is
@@ -108,7 +108,7 @@ type Config struct {
 // A table is a routing decision, and the deployments that have not made one are
 // the reason `ROUTE_TABLE` is optional. Everything else above has a default worth
 // having. A gateway with no table answers 404 for everything, which is exactly
-// what `src/index.ts` does when it is handed no `routes`, and it is not a
+// what `src/index.ts` (removed at cutover) does when it is handed no `routes`, and it is not a
 // degraded mode: it is a gateway whose operator has not told it where anything
 // goes yet.
 func RuntimeOptions(env Env) (Config, error) {
@@ -253,7 +253,7 @@ func (c Config) CloseResources() {
 	}
 }
 
-// defaultPort is what an unset `PORT` means, and it is `src/index.ts`'s number.
+// defaultPort is what an unset `PORT` means, and it is `src/index.ts` (removed at cutover)'s number.
 const defaultPort = "8080"
 
 // DefaultPort is `defaultPort`, exported for one caller: `cmd/gateway`'s
@@ -266,7 +266,7 @@ const defaultPort = "8080"
 const DefaultPort = defaultPort
 
 // defaultClientID is the audience gateway accepts when nothing says otherwise:
-// gateway itself. `DEFAULT_CLIENT_ID` in `src/index.ts`.
+// gateway itself. `DEFAULT_CLIENT_ID` in `src/index.ts` (removed at cutover).
 const defaultClientID = "gateway"
 
 // portFromEnv reads `PORT`, or reports the default.

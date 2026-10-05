@@ -26,9 +26,12 @@ import (
 // page is a token a cross-site script can read; a session id in an HttpOnly
 // cookie is not.
 //
-// Ported from `src/bff/auth.ts`, which is the REFERENCE and stays the reference:
-// where this file and that one disagree, that one is right, and the difference is
-// a finding about the port rather than a choice made here.
+// Ported from `src/bff/auth.ts` (removed at cutover), which WAS the reference:
+// where this file and that one disagreed, that one was right, and the difference
+// was a finding about the port rather than a choice made here. `CHANGELOG.md`
+// records what the two answered between them; there is nothing to compare against
+// now, so this file is the only account of why the browser surface answers the way
+// it does.
 //
 // # THE PROPERTIES THIS FILE EXISTS TO HOLD
 //
@@ -87,7 +90,7 @@ const maxBodyBytes = 4 << 10
 // Doer is the part of `*http.Client` this file uses.
 //
 // An interface so the suite never opens a socket, and for the reason
-// `src/bff/auth.ts` gives its own `FetchFn`: the assertions here are about what
+// `src/bff/auth.ts` (removed at cutover) gives its own `FetchFn`: the assertions here are about what
 // gateway SENDS and what it does with the ANSWER, and a real server would add
 // the network's opinions to both.
 type Doer interface {
@@ -100,7 +103,7 @@ type Doer interface {
 // package, for the property `Options` states: there is nowhere in
 // `internal/httpapi` that CAN read the environment, so a test can build two
 // differently configured apps in one process — which is exactly what
-// `internal/equivalence` does.
+// `internal/equivalence` did.
 type BffOptions struct {
 	// IdentityURL is identity's base URL: http(s), and with no path. This is NOT
 	// the token issuer. The issuer is the https origin tokens are *verified*
@@ -442,7 +445,7 @@ func (b *Bff) Logout(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		// `unreachable()`, NOT `unusable()`, and that is the reference's own choice
-		// rather than an omission: `src/bff/auth.ts`'s logout answers
+		// rather than an omission: `src/bff/auth.ts` (removed at cutover)'s logout answers
 		// `revoked ? 204 : unreachable()`, so a non-revoking answer on THIS route is
 		// reported as "we could not complete the sign-out" and is not written to the
 		// log. The port answered `unusable()` here, which logged a line and named a
@@ -539,7 +542,7 @@ func (b *Bff) Me(w http.ResponseWriter, r *http.Request) {
 // RequireSameOrigin refuses a request that is not provably same-origin.
 //
 // It is mounted on the three MUTATING routes and not on `GET /auth/me`, and the
-// reason is `src/index.ts`'s: the gate is for requests that change something, and
+// reason is `src/index.ts` (removed at cutover)'s: the gate is for requests that change something, and
 // on the prefix it would demand an `Origin` header from a read that has nothing
 // to protect.
 //
@@ -610,8 +613,8 @@ func isSameOrigin(r *http.Request) bool {
 	// on one side and this gate's `403` on the other.
 	//
 	// So the direction of the fix is the one the evidence points at, not the one that
-	// looks stricter: TypeScript is the reference, and a "stricter" gate that answers
-	// differently is a divergence.
+	// looks stricter: TypeScript was the reference, and a "stricter" gate that answered
+	// differently was a divergence.
 	site := firstValue(r.Header.Values("Sec-Fetch-Site"))
 	origin := firstValue(r.Header.Values("Origin"))
 
@@ -654,7 +657,7 @@ func firstValue(values []string) string {
 //
 // So without this middleware the Go service would answer `400 text/plain` to
 // something the reference serves, and the two answers would differ in status, in
-// content type and in whether a cookie was set. `internal/equivalence` has a case for
+// content type and in whether a cookie was set. `internal/equivalence` had a case for
 // it precisely because this was found rather than foreseen.
 //
 // # AND WHY IT IS FIRST-VALUE RATHER THAN "REFUSE IT"
@@ -795,7 +798,7 @@ func (b *Bff) readSubmittedBody(w http.ResponseWriter, r *http.Request) (string,
 //
 // The first is ordering: `api.User` declares `Email` before `ID`, so marshalling
 // it writes `{"email":…,"id":…}` where the reference writes `{"id":…,"email":…}`.
-// `internal/equivalence` compares bodies byte for byte, so that is a failure and
+// `internal/equivalence` compared bodies byte for byte, so that is a failure and
 // not a note.
 //
 // The second is width: this is an ALLOWLIST rather than a filter, so a field
@@ -1033,7 +1036,7 @@ func parseContentLength(value string) (int, bool) {
 //
 // `nil` rather than an empty reader, because the two produce different requests:
 // an empty reader carries `Content-Length: 0` and a body the transport will try
-// to write, where `src/bff/auth.ts` sends no body at all for a `GET` or a
+// to write, where `src/bff/auth.ts` (removed at cutover) sends no body at all for a `GET` or a
 // `DELETE`. The assertions in `bff_test.go` are about the request that leaves.
 func bodyReader(body string) io.Reader {
 	if body == "" {

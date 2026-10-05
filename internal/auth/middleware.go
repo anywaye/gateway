@@ -1,6 +1,6 @@
 // The two gates, as `net/http` middleware.
 //
-// `requireJwt` and `requireScope` in `src/middleware/jwt.ts` are Hono
+// `requireJwt` and `requireScope` in `src/middleware/jwt.ts` (removed at cutover) are Hono
 // `MiddlewareHandler`s. Their Go spelling is a `func(http.Handler) http.Handler`,
 // because that is what `chi`'s `r.Use` takes, and the shape difference is worth a
 // sentence: Hono's version is handed a context and a `next`, and a refusal is a
@@ -124,7 +124,7 @@ func (v *Verifier) Require(refuse Refuser) func(http.Handler) http.Handler {
 //
 // A route with the scope gate and no auth in front of it is a wiring mistake, not
 // an authorization decision: nothing has been proven yet, so the answer is 401
-// and not 403. `src/middleware/jwt.ts` makes the same distinction and calls it
+// and not 403. `src/middleware/jwt.ts` (removed at cutover) makes the same distinction and calls it
 // out as a wiring mistake by name.
 //
 // It takes the refusal writer for the same reason `Require` does, and that is why
@@ -172,7 +172,7 @@ func containsString(haystack []string, needle string) bool {
 }
 
 // bearerToken is RFC 6750 §2.1, and it is the same regular expression
-// `bearerToken` in `src/middleware/jwt.ts` uses: `/^bearer +(\S+)$/i`.
+// `bearerToken` in `src/middleware/jwt.ts` (removed at cutover) uses: `/^bearer +(\S+)$/i`.
 //
 // Case-insensitive scheme, one or more spaces after it, and a token with no
 // whitespace in it — so `Authorization: Bearer a b` is not a credential and

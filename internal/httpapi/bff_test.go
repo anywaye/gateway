@@ -23,7 +23,7 @@ import (
 // what happened. `api.Problem` declares its fields alphabetically because
 // `oapi-codegen` emits a struct in the order it finds them in the document's
 // `properties` map, so marshalling it writes `code, detail, instance, status, title,
-// trace_id, type` where `src/problem.ts` writes `type, title, status, detail,
+// trace_id, type` where `src/problem.ts` (removed at cutover) writes `type, title, status, detail,
 // instance, code, trace_id`. Byte-identical content, different order, and
 // `internal/equivalence` reported 13 differences on it.
 //
@@ -47,7 +47,7 @@ func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 	want := `{"type":"https://errors.cafaye.com/unauthorized","title":"Unauthorized","status":401,` +
 		`"detail":"email or password is not correct","instance":"/auth/login","code":"unauthorized","trace_id":"<id>"}`
 	if body != want {
-		t.Errorf("the problem document is\n  %s\nand it must be\n  %s\n\nThe field ORDER is part of the contract: `internal/equivalence` compares bodies byte for byte, and `api.Problem`'s generated order is alphabetical where `src/problem.ts` is not.", body, want)
+		t.Errorf("the problem document is\n  %s\nand it must be\n  %s\n\nThe field ORDER is part of the contract: `internal/equivalence` compared bodies byte for byte, and `api.Problem`'s generated order is alphabetical where `src/problem.ts` (removed at cutover) is not.", body, want)
 	}
 
 	// And the 422's `errors`, which is the one optional key: absent rather than
@@ -77,7 +77,7 @@ func TestAValidationFailureKeepsFieldBeforeCodeAndIsLast(t *testing.T) {
 	}
 }
 
-// The browser surface's properties, in the order `src/bff/auth.test.ts` states
+// The browser surface's properties, in the order `src/bff/auth.test.ts` (removed at cutover) states
 // them and in the order the packet lists them.
 //
 // # THE SESSION STORE IS A FIXTURE
@@ -502,7 +502,7 @@ func TestAHeaderSentTwiceTakesTheFirstValue(t *testing.T) {
 //
 // The tripwire for a NEW header parameter. If the document adds one that
 // `collapseRepeatedHeaders` does not collapse, this test is not what catches it —
-// `internal/equivalence` is, because it compares every operation the document
+// `internal/equivalence` was, because it compares every operation the document
 // declares. What this one says is that the guard is still doing nothing, which is
 // the state a reader of `paramRefusal` needs to know.
 func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
@@ -959,7 +959,7 @@ func TestSigningOutWhileIdentityIsDownStillSignsOutAndSays503(t *testing.T) {
 // Identity answering something that is NOT a revocation is reported as unreachable,
 // which is the reference's own choice and not an omission.
 //
-// `src/bff/auth.ts`'s logout is `revoked ? 204 : unreachable()`. The port answered
+// `src/bff/auth.ts` (removed at cutover)'s logout is `revoked ? 204 : unreachable()`. The port answered
 // `unusable()` — "identity answered with something this contract does not cover" —
 // which is a different `detail` and an extra log line, and `internal/equivalence`
 // found the difference on its first run with both answers printed.
@@ -1419,7 +1419,7 @@ func TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees(t *testing.T) {
 //
 // BOTH ways down, because they are different code paths: a transport failure
 // (`call` returns an error) and a dependency that is up and answering `5xx` — which
-// is what most outages actually look like, and the case `src/bff/auth.ts` calls out
+// is what most outages actually look like, and the case `src/bff/auth.ts` (removed at cutover) calls out
 // as the one that used to pass through with no log line at all.
 func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 	cases := map[string]struct {

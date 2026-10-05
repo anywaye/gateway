@@ -46,7 +46,7 @@ type recordedRequest struct {
 // remembers what it was asked.
 //
 // A real socket rather than an injected client, and that is a deliberate departure
-// from `src/routes/proxy.test.ts`, which injects `fetch` so the suite never opens
+// from `src/routes/proxy.test.ts` (removed at cutover), which injects `fetch` so the suite never opens
 // one. There are three properties here that only a real client can demonstrate —
 // that a redirect is not followed, that a hung upstream is bounded by a deadline,
 // and that a body streams — and an injected fetch would assert about a stub rather
@@ -1023,7 +1023,7 @@ func TestACredentialTheGateEstablishedReachesThePassThrough(t *testing.T) {
 // TestGatewayOwnsItsOwnRouteEvenUnderTheBroadestPrefix is the port's one structural
 // difference from the reference, stated as a test.
 //
-// `src/index.ts` registers `/v1/me` before the pass-through and Hono answers in
+// `src/index.ts` (removed at cutover) registers `/v1/me` before the pass-through and Hono answers in
 // registration order. chi has no such order for a middleware and a route, so the
 // exclusion is written into `routeProxy.handle`. `/v1` is a **permitted** prefix —
 // it claims the whole API surface — and it is the only table that can reach

@@ -6,7 +6,7 @@
 // function in this module that is allowed to — hands the result to
 // `httpapi.New` as an argument, and listens.
 //
-// `src/index.ts` is the same shape in TypeScript, and the boundary is the
+// `src/index.ts` (removed at cutover) is the same shape in TypeScript, and the boundary is the
 // property `guard/AGENTS.md` asks for: *"Configuration arrives as an argument,
 // never as a module-level global read from the environment, so a test can build
 // two differently-configured apps in one process."* Importing this package does

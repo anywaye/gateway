@@ -52,7 +52,7 @@ const unknown = "unknown"
 
 // Key is the bucket name. Two callers share a bucket exactly when this is equal.
 //
-// `rateLimitKey` in `src/middleware/limitKey.ts`, branch for branch.
+// `rateLimitKey` in `src/middleware/limitKey.ts` (removed at cutover), branch for branch.
 func Key(source KeySource) string {
 	if source.AccountID != "" {
 		return "account:" + source.AccountID
@@ -232,7 +232,7 @@ func addressOf(entry string) string {
 	// THE ZONE IS STRIPPED FOR THE PARSE AND KEPT IN THE ANSWER, and that is not
 	// tidiness — it is a measured divergence from the reference.
 	//
-	// `src/middleware/limitKey.ts` parses with Node's `net.isIP`, which accepts
+	// `src/middleware/limitKey.ts` (removed at cutover) parses with Node's `net.isIP`, which accepts
 	// `fe80::1%eth0` and returns 6 for it (measured: `node -e` over the same
 	// literals). `net.ParseIP` — Go's equivalent — returns nil for it, because a zone
 	// is a scope identifier the parser is not given an interface table for. So a

@@ -13,7 +13,7 @@
 //
 //  1. **Key order.** `oapi-codegen` writes the struct's fields alphabetically
 //     (`AccountID, Claims, Scope, Sub`), so `writeJSON` renders
-//     `{"accountId":…,"claims":{…},"scope":[…],"sub":…}`. `src/middleware/jwt.ts`
+//     `{"accountId":…,"claims":{…},"scope":[…],"sub":…}`. `src/middleware/jwt.ts` (removed at cutover)
 //     builds the object literal as `{sub, scope, accountId, claims}`, and Hono's
 //     `c.json()` preserves insertion order, so the reference renders
 //     `{"sub":…,"scope":[…],"accountId":…,"claims":{…}}`. `internal/equivalence`

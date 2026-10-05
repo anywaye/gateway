@@ -26,7 +26,7 @@ const (
 // One dependency's health.
 //
 // A nil error is `"ok"` and a non-nil one is `"unavailable"`, with nothing else
-// expressible. That is the same contract `src/probe.ts` states — "a probe that
+// expressible. That is the same contract `src/probe.ts` (removed at cutover) states — "a probe that
 // throws, rejects, hangs or answers with anything but `"ok"` is `unavailable`" —
 // reached by a different spelling: TypeScript can only return `"ok"`, return
 // something else, or throw, and all three collapse to one value here. The Go
@@ -52,7 +52,7 @@ type Probe func(ctx context.Context) error
 // map keys — so a map would answer `{"redis":"unavailable","identity":"ok"}`
 // where the TypeScript implementation answers `{"identity":"ok","redis":
 // "unavailable"}`, because `Object.entries` preserves insertion order. Both are
-// the same object, and `internal/equivalence` compares the bytes, so the order a
+// the same object, and `internal/equivalence` compared the bytes, so the order a
 // caller wrote is the order the response carries.
 //
 // The slice is also what makes "one entry per registered dependency" checkable:
@@ -132,8 +132,8 @@ func runProbe(ctx context.Context, probe Probe) (status ProbeStatus) {
 	answered := make(chan error, 1)
 	go func() {
 		// Deferred, so a panic is turned into an outcome rather than taking the
-		// process down: `src/probe.ts` puts "throws" in the same list as
-		// "hangs", and a panic is Go's spelling of a throw.
+		// process down: `src/probe.ts` (removed at cutover) put "throws" in the same
+		// list as "hangs", and a panic is Go's spelling of a throw.
 		defer func() {
 			if r := recover(); r != nil {
 				answered <- errors.New("probe panicked")

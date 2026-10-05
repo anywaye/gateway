@@ -17,7 +17,7 @@ import (
 // the route it is about is one an anonymous caller may reach. Both are answers,
 // and neither is a verification. `Authenticate` is the seam verification plugs
 // into, and it is nil whenever no verifier is configured — which is the shape
-// `internal/equivalence` compares the Go gateway against a reference configured
+// `internal/equivalence` compared the Go gateway against a reference configured
 // with no `jwt` in, for exactly that reason. A configured `Options.Verifier` fills
 // it; see `New` and `authentication`.
 //
@@ -45,7 +45,7 @@ import (
 // `(nil, err)` and having one writer turn it into the reference's 401 means there
 // is exactly one sentence for "no credential", and a verifier cannot accidentally
 // answer 403 for a caller it never authenticated — which is the mistake
-// `src/middleware/jwt.ts`'s `requireScope` documents when it answers 401 for a
+// `src/middleware/jwt.ts` (removed at cutover)'s `requireScope` documents when it answers 401 for a
 // route with no auth in front of it.
 //
 // A non-nil error with a non-nil principal is a defect in the gate and is refused
@@ -100,7 +100,7 @@ func PrincipalFrom(r *http.Request) (Principal, bool) {
 // are named in.
 //
 // `nil` when no gate is configured, which is **not** the same gate as one that
-// refuses everything: `src/index.ts` does not register the middleware at all when
+// refuses everything: `src/index.ts` (removed at cutover) does not register the middleware at all when
 // `options.jwt` is absent, so a gateway built with a route table and no verifier
 // relays an anonymous request to a private route. Reproducing that faithfully is
 // what lets the equivalence check compare two gateways that are both
@@ -149,7 +149,7 @@ func credentialGate(authenticate Authenticate, routes RouteTable) func(http.Hand
 				writeProblem(w, r, Problem{
 					Status: api.N401,
 					Code:   api.ProblemCodeUnauthorized,
-					// `src/middleware/jwt.ts`'s own words, and the reason this is a
+					// `src/middleware/jwt.ts` (removed at cutover)'s own words, and the reason this is a
 					// fixed string rather than an interpolated error: the message can
 					// carry a dependency host, a query or a token.
 					Detail: "a bearer token is required",

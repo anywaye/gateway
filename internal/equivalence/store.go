@@ -2,17 +2,20 @@
 // stores.
 //
 // This file is separate from `scenarios.go` because it is the ONE thing these two
-// scenarios need that the other eleven do not — a counter store the runner can
-// make misbehave — and because the numbers below are the equivalence check's own
-// fixtures, checked against the reference's.
+// scenarios need that the other eleven do not — a counter store a test can make
+// misbehave — and because the numbers below are this package's own fixtures. They
+// were once checked against the TypeScript reference's, by reading the other
+// language's literal out of its source; that check is gone with the reference and
+// what is left is `TestTheClockTheLimiterReadsIsTheOneTheFixtureClaims`, which
+// asserts the constant against the instant every comment here names.
 //
 // # THE CLOCK IS FROZEN, AND THE REASON IS THE HEADERS
 //
 // `RateLimit-Reset` and `Retry-After` are both derived from the clock the limiter
-// reads. Compare the refusal on a live clock and the comparison is of two
-// `Date.now()` calls a few milliseconds apart, which fail on arithmetic nobody is
-// reading. Frozen, every number below is exact and the refusal is a function of the
-// request count alone.
+// reads. Ask the same refusal on a live clock and every number in it moves between
+// two reads of `time.Now()`, so a failure says something about the fixture rather
+// than about the gateway. Frozen, every number below is exact and the refusal is a
+// function of the request count alone.
 //
 // # THE ALLOWANCE IS THREE, AND WHY NOT ONE
 //
@@ -20,8 +23,8 @@
 // request lands exactly on the threshold and the fourth is refused — `count` in
 // `internal/ratelimit/store.go` is strictly greater-than, which is what lets a
 // burst of exactly `limit` through. A limit of one refuses on the second request
-// and never reaches the boundary at all, so it would compare a refusal without
-// comparing the crossing.
+// and never reaches the boundary at all, so it would give a refusal without the
+// crossing.
 package equivalence
 
 import (
@@ -33,16 +36,17 @@ import (
 	"github.com/cafaye/gateway/internal/ratelimit"
 )
 
-// The instant both sides' limiters read. 2026-01-01T00:00:00Z, whole seconds so
-// no rounding question can be blamed on the fixture, and the same literal the
-// reference declares as `FIXED_NOW_MS` — asserted equal by
-// `TestTheClockBothLimitersReadIsTheSameInstant`, because a Go side at a
-// different instant would render a different `X-RateLimit-Reset` and the
-// comparison would fail on the fixture rather than on the port.
+// The instant this package's limiter reads. 2026-01-01T00:00:00Z, whole seconds
+// so no rounding question can be blamed on the fixture. It was the same literal
+// the TypeScript reference declared as `FIXED_NOW_MS` — equal by reading that
+// file, so a drifted constant showed up as a difference in `X-RateLimit-Reset`
+// that read like a port defect. With the reference gone that class of drift has
+// nowhere to hide, so `TestTheClockTheLimiterReadsIsTheOneTheFixtureClaims`
+// holds the constant to the instant every comment here claims instead.
 const (
 	equivalenceNowMillis int64 = 1_767_225_600_000
 
-	// Three per minute, matching the reference's `limiterTable`. See the file
+	// Three per minute, which was the reference's `limiterTable` too. See the file
 	// comment for why three and not one.
 	equivalenceLimit  = 3
 	equivalenceWindow = time.Minute

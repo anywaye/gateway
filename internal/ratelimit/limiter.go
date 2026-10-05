@@ -36,7 +36,7 @@ import (
 //
 // `RATE_LIMIT_REQUESTS=0` has to be a refusal to boot rather than a surprise on
 // the first request of the week, and that is checked in `NewLimiter` rather than
-// per request. `src/middleware/rateLimit.ts` validates the same three numbers in
+// per request. `src/middleware/rateLimit.ts` (removed at cutover) validates the same three numbers in
 // the same place and says why.
 type Options struct {
 	// Requests allowed per window. An integer >= 1.
@@ -83,7 +83,7 @@ type Options struct {
 }
 
 // DefaultWindow is the shipped window, and it is `DEFAULT_LIMIT_TABLE` in
-// `src/middleware/limits.ts`.
+// `src/middleware/limits.ts` (removed at cutover).
 const DefaultWindow = 60 * time.Second
 
 // DefaultPolicy is the shipped policy name, and it is the `gateway-api` the
@@ -388,7 +388,7 @@ func (l *Limiter) announce(w http.ResponseWriter, active allowance, verdict Verd
 // them all and must not spell them from memory: `openapi/v1.yaml` puts each one on
 // the `429`, and a rate-limit header family the document and the middleware name
 // differently is a client reading `RateLimit-Remaining` from a header nobody
-// documented. `internal/equivalence` compares this list against the headers the
+// documented. `internal/equivalence` compared this list against the headers the
 // reference actually sends.
 //
 // `Retry-After` is deliberately not here. It is not part of the allowance — it is

@@ -19,7 +19,7 @@
 //
 // # THERE IS NO IN-MEMORY IMPLEMENTATION HERE, AND THAT IS STILL THE ANSWER
 //
-// `src/bff/session.ts` ships `memorySessionStore()`: a `Map` in one process,
+// `src/bff/session.ts` (removed at cutover) ships `memorySessionStore()`: a `Map` in one process,
 // marked `TODO(guard-06)`/`TODO(guard-07)` for Redis. Porting it into Go would
 // have been copying the worse of two designs into the language that makes the
 // better one easier to write, so this package declares the seam and stops.
@@ -135,7 +135,7 @@ type Session struct {
 // SessionStore is the contract every session backend implements.
 //
 // THREE METHODS AND NOTHING ELSE, deliberately, ported from
-// `src/bff/session.ts` and not one more. A `Size`, a `List` and a `Count` are
+// `src/bff/session.ts` (removed at cutover) and not one more. A `Size`, a `List` and a `Count` are
 // all things a caller could want and none of them anything the BFF needs, and
 // every one of them added here is a method the Redis implementation has to grow.
 //

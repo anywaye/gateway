@@ -149,7 +149,7 @@ type parityCase struct {
 // # WHERE THE `want` VALUES CAME FROM
 //
 // Not from `count()`, and not from this package. Every one was read off the
-// REFERENCE — `memoryRateLimitStore` from `src/middleware/rateLimitStore.ts`, driven
+// REFERENCE — `memoryRateLimitStore` from `src/middleware/rateLimitStore.ts` (removed at cutover), driven
 // by these rows' instants and printed — and the transcript is in
 // `REPORT-gateway-go-auth-01.md`. A table derived from the implementation under test
 // is a test that cannot fail; a table read off the implementation being ported is the
@@ -330,7 +330,7 @@ func TestTheTwoCountersAgreeRequestForRequest(t *testing.T) {
 					continue
 				}
 				if !sameDecision(fromMemory, tc.want[i]) {
-					t.Errorf("step %d at +%s: both counters say %+v, and the reference says %+v. The table is the specification — it was read off `memoryRateLimitStore` in `src/middleware/rateLimitStore.ts` — so a disagreement here is a defect in BOTH, not a disagreement between them.", i, offset, fromMemory, tc.want[i])
+					t.Errorf("step %d at +%s: both counters say %+v, and the reference says %+v. The table is the specification — it was read off `memoryRateLimitStore` in `src/middleware/rateLimitStore.ts` (removed at cutover) — so a disagreement here is a defect in BOTH, not a disagreement between them.", i, offset, fromMemory, tc.want[i])
 				}
 			}
 
@@ -534,7 +534,7 @@ func sameDecision(received Verdict, expected Verdict) bool {
 // comes back as `2`. That is a property of the server's Lua-to-RESP conversion, not of
 // `GCRALua`, and it is why the two backends agree on what they DECIDE and not on the
 // last decimal of a timestamp. The reference says this in the same words, in
-// `expectSameVerdict` in `src/middleware/rateLimitRedisLive.test.ts`, and pins it the
+// `expectSameVerdict` in `src/middleware/rateLimitRedisLive.test.ts` (removed at cutover), and pins it the
 // same way: exact on the two decision fields, and the two instants equal to the memory
 // store's truncated toward zero.
 //

@@ -1,7 +1,7 @@
 // The cached key set: its TTL, its refresh, and the budget that keeps a burst of
 // forged `kid`s from turning into a burst of fetches.
 //
-// Ported from the closure inside `createJwtVerifier` in `src/middleware/jwt.ts`
+// Ported from the closure inside `createJwtVerifier` in `src/middleware/jwt.ts` (removed at cutover)
 // — the variables named `cache`, `window` and `refreshSpentIn`, and the two
 // decisions the comment there records as having been got wrong at least once.
 // Both are preserved, and the reasons are the same reasons.

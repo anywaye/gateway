@@ -177,7 +177,7 @@ func TestTheKeySetCacheHasABoundedTTLAndRefreshesOnAnUnknownKid(t *testing.T) {
 // PROPERTY 2 — single-flight.
 //
 // The mutation that breaks this: claiming the refresh budget AFTER the fetch
-// instead of before, which is precisely the mistake `src/middleware/jwt.ts`
+// instead of before, which is precisely the mistake `src/middleware/jwt.ts` (removed at cutover)
 // documents — twenty-five requests, twenty-five fetches, aimed at identity, from
 // anonymous pre-auth traffic nobody can rate-limit.
 //
@@ -288,7 +288,7 @@ func TestKeyRefreshIsSingleFlight(t *testing.T) {
 //
 // # WHAT WAS MEASURED
 //
-// `src/middleware/jwt.ts` claims the refresh budget BEFORE its `await` and its
+// `src/middleware/jwt.ts` (removed at cutover) claims the refresh budget BEFORE its `await` and its
 // comment says claiming it after bought twenty-five fetches for twenty-five
 // requests. Planting exactly that mutation HERE — moving the assignment below the
 // fetch — changes nothing and the suite stays green:
@@ -351,7 +351,7 @@ func TestTheSingleFlightIsTheLockAndNotTheStatementOrder(t *testing.T) {
 		case at < 0:
 			t.Errorf("keysFor no longer calls %s. The cache is smaller than this packet expects; if that is deliberate then the four properties above need re-reading, because each of them is a statement about what this function does.", call)
 		case at < lockAt:
-			t.Errorf("%s is called before keysFor takes c.mu. Every goroutine naming a `kid` reaches that line, so work outside the lock is work all of them do — and a fetch outside the lock is one fetch per request, which is the amplifier `src/middleware/jwt.ts` documents in detail.", call)
+			t.Errorf("%s is called before keysFor takes c.mu. Every goroutine naming a `kid` reaches that line, so work outside the lock is work all of them do — and a fetch outside the lock is one fetch per request, which is the amplifier `src/middleware/jwt.ts` (removed at cutover) documents in detail.", call)
 		}
 	}
 }
