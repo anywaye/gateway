@@ -174,19 +174,61 @@ dependency versions follow npm's own rules.
   other answers 200, and a configuration where both did the same thing would be
   indistinguishable from a limiter that was never mounted.
 
-  **FOUND, REPORTED, NOT FIXED — the Go gateway does not count routed traffic.**
-  Measured on this tree: `GET /v1/pantry/items` under an exhausted bucket answers
-  `429` with the rate-limit family on the reference and `200` with **no** rate-limit
-  headers on the Go side. The cause is the mount order `httpapi.New` documents as
-  deliberate — the limiter is a chi `Use` middleware inside the router and the
-  pass-through wraps the router, so traffic a route table claims never reaches it,
-  where the reference registers `app.use("*", limiter)` **before**
-  `app.use("/v1/*", proxy)` and counts it. `TestTheGoSideDoesNotCountRoutedTraffic`
-  holds the difference in place: it fails the moment the Go side starts counting,
-  at which point the answer is a fix rather than a finding and the routed burst moves
-  into the comparison. It is not fixed here because the obvious fix moves the
-  credential gate relative to the limiter — the `/v1/*` verifier must run before it
-  — and that is a change to the order of the whole chain in `internal/httpapi`.
+  **The routed case, added since the finding above was written.** One of
+  `limiterCases` is now on a path the route table **claims** — `GET
+  /v1/pantry/items` — so the comparison covers forwarded traffic and not only the
+  router's own routes. It is asked **last**, because the allowance is one bucket per
+  identity rather than one per path: the two unrouted bursts spend it first, and the
+  routed one then compares a `429` that the routed path spent. Asked first it would
+  spend the allowance on the routed path and the two above would be comparing a 429
+  against a path the limiter never saw.
+
+  **The finding itself is FIXED** — see the entry below this section. The
+  paragraphs above describe what was true when it was written; they are not edited,
+  because a changelog that rewrites history is not a changelog.
+
+### Fixed
+
+- **The Go limiter now runs on the traffic the route table forwards.** This closes
+  the divergence the previous entry recorded as reported-and-unfixed: under an
+  exhausted bucket, `GET /v1/pantry/items` was a `429` with the whole `RateLimit-*`
+  family on the reference and a `200` with **no** rate-limit headers at all on the Go
+  side. An edge whose limiter does not run on forwarded traffic is not limiting the
+  traffic that costs it money, and forwarded traffic is the expensive kind — it
+  reaches an upstream that does work.
+
+  The cause was the mount, and the reason it was wrong is worth recording: **chi's
+  `Mux.Use` wraps the routes registered on the router it is called on.** The
+  pass-through is mounted *on top of* that router and, for a path a table claims,
+  never calls it, so the limiter counted gateway's own routes and forwarded nothing.
+  The reference registers `app.use("*", limiter)` before `app.use("/v1/*", proxy)`
+  and counts it. `httpapi.New` had carried a comment claiming chi had no ordering
+  hazard where Hono had one — that belief is what produced this, and the comment is
+  corrected.
+
+  `everyRequest` now builds the request chain once, in the reference's order: the
+  repeated-header reduction, then the credential gate, then the limiter. It is
+  registered with `Use` when there is no pass-through and wrapped around the
+  pass-through when there is, and the limiter goes to **exactly one** of the two —
+  the pass-through calls the router for a path no table claims, so a limiter in both
+  places counts those requests twice. That was measured during the fix: the Go side
+  reported `RateLimit-Remaining: 1` where the reference reported `2` on the first
+  request of a run, and the comparison stayed green on status alone while the two
+  sides' arithmetic parted company by one request per case. `credentialGate` returns
+  the middleware rather than a wrapped handler, so the gate and the limiter are
+  ordered in the one list both are named in, and authentication still resolves
+  **before** the limiter: a request refused by the gate is counted against nothing.
+
+  `TestTheGoSideDoesNotCountRoutedTraffic` is **renamed and inverted** to
+  `TestTheGoSideCountsRoutedTraffic` — it failed the moment the mount was fixed,
+  which is the signal to replace a test rather than adjust one. It now asserts the
+  refusal *and* the announced header values, because a limiter that counted a routed
+  request twice refuses identically and differs only in `RateLimit-Remaining`, and
+  it asserts the upstream was not contacted.
+
+  No rate limit, window or policy name changed: this is **where** the limiter runs,
+  not what it allows. `equivalence: 51 cases across 13 scenarios = 914 comparisons, 0
+  differences` (912 before; the two are the routed burst's ends).
 
 - **The equivalence comparison gained a `burst` field and a header-value
   comparison.** Both are additions: a case with no burst is asked once and compared
