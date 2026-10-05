@@ -139,45 +139,6 @@ var scenarios = []string{
 // number is a failing gate rather than a summary line that quietly reads nine.
 const inventorySize = 13
 
-// hasBrowserSurface is the derived set of scenarios that configure a browser
-// surface, and it is what the case list is built from.
-//
-// DERIVED from the inventory rather than typed, because a scenario that mounts the
-// browser surface but is not in this set is a scenario whose four `/auth` answers
-// nothing here compares.
-func hasBrowserSurface(scenario string) bool {
-	for _, name := range scenarios {
-		if name == scenario {
-			return scenario == ScenarioBff ||
-				scenario == ScenarioBffBadCredentials ||
-				scenario == ScenarioBffUnknownAccount ||
-				scenario == ScenarioBffAccountLocked ||
-				scenario == ScenarioBffIdentityBroken ||
-				scenario == ScenarioBffWithdrawn
-		}
-	}
-	return false
-}
-
-// hasLimiter is whether a scenario mounts one, and it is derived from the two
-// scenarios that build a limiter rather than typed as a list.
-//
-// The same reason `hasBrowserSurface` exists and the same failure it prevents: a
-// scenario that mounts a limiter and is not in this set has its 429 and its
-// fail-open answer compared by nothing, and the summary line would still read
-// thirteen scenarios.
-func hasLimiter(scenario string) bool {
-	return scenario == ScenarioLimitsExhausted || scenario == ScenarioCounterStoreDown
-}
-
-// The scenarios that need a recording upstream in front of them.
-var routedScenarios = map[string]bool{
-	ScenarioRoutedUpstream:   true,
-	ScenarioGatedUpstream:    true,
-	ScenarioLimitsExhausted:  true,
-	ScenarioCounterStoreDown: true,
-}
-
 // The dependency names the degraded scenario registers, in the order both sides
 // declare them.
 //
@@ -430,6 +391,23 @@ func (u *upstream) take(t interface{ Fatalf(string, ...any) }) (upstreamAnswer, 
 	return u.last, true
 }
 
+// count is how many requests the upstream has received since the last `take` or
+// `count`, and it forgets them too.
+//
+// A separate method rather than a loop over `take` because the upstream records
+// the LAST request and a counter: `take` therefore reports one request per call
+// however many arrived, so asking "how many requests did this burst spend on the
+// service" by calling it until it stops empty measures the number of calls. That
+// is the count a case about relaying wants to be wrong about, silently.
+func (u *upstream) count() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	arrived := u.arrived
+	u.arrived = 0
+	return arrived
+}
+
 func (u *upstream) serve(w http.ResponseWriter, r *http.Request) {
 	body := make([]byte, 0)
 	if r.Body != nil {
@@ -563,18 +541,6 @@ func overridesFor(scenario string) map[string]identityAnswer {
 	default:
 		return nil
 	}
-}
-
-// canSignIn is whether a sign-in exchange succeeds in this scenario, DERIVED from
-// the overrides rather than named.
-//
-// The signed-in cases — a correct session on the read, signing out with a live
-// cookie — only mean anything where login works. Asking them where it does not
-// would compare a `401` with a `401` and call it agreement about a session; and
-// `signIn` failing loudly is the right answer with the wrong message.
-func canSignIn(scenario string) bool {
-	_, refused := overridesFor(scenario)["/v1/session"]
-	return !refused
 }
 
 // browserSurface is a gateway with the four `/auth` routes mounted and identity
