@@ -13,6 +13,7 @@ import (
 
 	"github.com/cafaye/gateway/internal/api"
 	"github.com/cafaye/gateway/internal/auth"
+	"github.com/cafaye/gateway/internal/ratelimit"
 )
 
 // The pass-through, and the security properties it exists to hold.
@@ -763,6 +764,211 @@ func TestAnAnonymousCallerToAPrivateRouteGets401AndTheUpstreamIsNeverContacted(t
 	if service.Count() != 0 {
 		t.Errorf("the upstream was contacted %d time(s) for a request the gateway refused. A 401 after the call is a 401 that still spent a service's capacity.", service.Count())
 	}
+}
+
+// A refused request is counted against nothing, and that is the ordering.
+//
+// # WHY THIS TEST EXISTS RATHER THAN A COMMENT ON `everyRequest`
+//
+// Because the equivalence comparison cannot see it. Every scenario in
+// `internal/equivalence` asks a routed path with a bucket already spent or an
+// unreachable store, so it never gets far enough to have a gate refuse anything —
+// and a limiter mounted ABOVE the gate would answer a 401 with a 429 on the first
+// request, which is a difference, but a difference about the wrong thing. This
+// asks the request that matters and reads the store, which is the only place the
+// count is visible from.
+//
+// Planted, both ways, while fixing the routed mount:
+//
+//   - the limiter below the gate: this passes, and that is the point.
+//   - the limiter above the gate: this fails on the store's own record, naming the
+//     request the gateway refused.
+//
+// # WHAT THE AMPLIFIER WOULD BE
+//
+// A flood of forged tokens would each be refused at the gate and each be counted
+// under `ip:unknown` — because that is all a rejected request has. They would
+// exhaust the shared anonymous bucket and every legitimate anonymous caller with
+// it. Counting a refusal is how a credential-garbage flood denies service to
+// callers who did nothing wrong, so the rule is that authentication resolves
+// first and the limiter sees the identity a request actually proved.
+func TestARequestTheAuthGateRefusedIsNotCounted(t *testing.T) {
+	silenceLog(t)
+	service := newUpstream(t, nil)
+	store := newCountingStore(t)
+
+	options := Options{
+		Routes: RouteTable{
+			"/v1/pantry":  {BaseURL: service.Origin()},
+			"/v1/catalog": {BaseURL: service.Origin(), Public: true},
+		},
+		Authenticate: func(*http.Request) (*Principal, error) { return nil, errNoCredential },
+		Limiter:      countingLimiter(t, store),
+	}
+
+	rec := ask(t, options, http.MethodGet, "/v1/pantry/items", nil)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("an anonymous caller to a private route got %d, want 401. This test is about what the limiter recorded for it, so it needs the refusal to have happened.", rec.Code)
+	}
+	if got := store.count(); got != 0 {
+		t.Errorf("the limiter recorded %d hit(s) for a request the auth gate refused. A refused request must be counted against nothing: counted, a flood of forged tokens spends the shared anonymous bucket for every legitimate anonymous caller.", got)
+	}
+	if got := rec.Header().Get("RateLimit-Remaining"); got != "" {
+		t.Errorf("a 401 carries RateLimit-Remaining: %q, so it announces an allowance this request did not spend. A caller told about a bucket it was not counted against is being told a lie about its own limit.", got)
+	}
+}
+
+// The other half of the same property: the request the gate ACCEPTS is counted, so
+// the test above is not passing because the limiter was never reached.
+//
+// Without this, a gateway that never ran the limiter on routed traffic would pass
+// the test above — which is exactly the defect the mount change fixed, and exactly
+// the shape that makes a "the refused request was not counted" assertion
+// unfalsifiable.
+func TestARequestTheAuthGateAcceptedIsCounted(t *testing.T) {
+	silenceLog(t)
+	service := newUpstream(t, nil)
+	store := newCountingStore(t)
+
+	options := Options{
+		Routes: RouteTable{"/v1/pantry": {BaseURL: service.Origin()}},
+		Authenticate: func(*http.Request) (*Principal, error) {
+			return &Principal{Sub: "acct_1"}, nil
+		},
+		Limiter: countingLimiter(t, store),
+	}
+
+	rec := ask(t, options, http.MethodGet, "/v1/pantry/items", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an authenticated caller to a private route got %d, want 200 from the upstream.", rec.Code)
+	}
+	if got := store.count(); got != 1 {
+		t.Errorf("the limiter recorded %d hit(s) for an authenticated routed request, want 1. This is the other half of the refusal test above: without it, a gateway whose limiter never runs on forwarded traffic passes both.", got)
+	}
+	if got := rec.Header().Get("RateLimit-Remaining"); got == "" {
+		t.Error("a forwarded request answered no RateLimit-Remaining, so the limiter ran but announced nothing. A limiter that counts silently is one a client cannot pace itself against.")
+	}
+}
+
+// The header reduction runs before every gate, on forwarded traffic as well as on
+// the router's own routes.
+//
+// # WHAT IT PROVES, AND WHAT IT DOES NOT
+//
+// It proves the reduction RUNS on a forwarded request, which it did not when it was
+// a chi `Use` — that was the gap, and dropping it from the routed chain fails this
+// (planted, measured).
+//
+// It does **not** prove the reduction runs before the gate *on this path*, because
+// nothing on a forwarded path reads `Origin`: the same-origin gate belongs to the
+// browser surface, and `/v1/*` is proxied. That ordering is asserted where it is
+// observable, on a `/auth/*` path, by `TestAHeaderSentTwiceTakesTheFirstValue` in
+// `bff_test.go`. A moved-down reduction in `everyRequest` was planted and left all
+// 171 tests in this package green, which is why this comment says what it checks
+// rather than what the mount comment says.
+//
+// The observation point is the request object itself rather than the response,
+// because the response cannot distinguish "the reduction ran and the gate saw one
+// value" from "nothing read the header at all".
+func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) {
+	silenceLog(t)
+	service := newUpstream(t, nil)
+
+	// A browser surface AND a route table, because the assertion needs both halves
+	// of the chain: the origin gate reads the reduced header, and the path is one a
+	// table claims, so the request reaches that gate through the wrapper `everyRequest`
+	// builds rather than through chi's `Use`.
+	h := build(t, func(*http.Request) (*http.Response, error) {
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+	})
+	handler, err := New(Options{
+		BFF:    bffOf(h),
+		Routes: RouteTable{"/v1/catalog": {BaseURL: service.Origin(), Public: true}},
+	})
+	if err != nil {
+		t.Fatalf("New refused a gateway with both a browser surface and a route table: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/catalog/items", nil)
+	req.Header.Add("Origin", "https://gateway.test")
+	req.Header.Add("Origin", "https://elsewhere.test")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// The reduction ran. Read on the request itself, because that is the value every
+	// gate in the chain reads.
+	if got := len(req.Header["Origin"]); got != 1 {
+		t.Fatalf("Origin still carries %d value(s) when the request reached the gateway's own gates. `collapseRepeatedHeaders` runs outermost precisely so a gate never decides about a value the gateway then throws away, and on a routed path it reaches those gates only through the chain `everyRequest` builds.", got)
+	}
+	if got := req.Header.Get("Origin"); got != "https://gateway.test" {
+		t.Errorf("Origin is %q after the reduction, want the FIRST value %q. The reference takes the first value of a doubled header — refusing one would look stricter and be a divergence.", got, "https://gateway.test")
+	}
+
+	// And the request was forwarded, so the assertion above was read on a path the
+	// pass-through answered rather than on one that stopped at a refusal.
+	if rec.Code != http.StatusOK {
+		t.Errorf("a doubled Origin on a public routed path answered %d, want the upstream's 200. The reduction takes the first value, so this request is same-origin and must be forwarded.", rec.Code)
+	}
+	if service.Count() != 1 {
+		t.Errorf("the upstream saw %d request(s), want 1. Without this the assertions above could be read on a gateway that never forwarded at all.", service.Count())
+	}
+}
+
+// bffOf is the browser surface a `build` harness assembled, for a test that needs
+// one on a gateway it configures itself rather than through `build`.
+func bffOf(h *harness) *BffOptions {
+	return &BffOptions{
+		IdentityURL: "http://identity.test",
+		Sessions:    h.sessions,
+		Now:         func() time.Time { return h.now },
+		Doer: doerFunc(func(r *http.Request) (*http.Response, error) {
+			return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+		}),
+	}
+}
+
+// newCountingStore is a limiter store that records how many times it was asked.
+//
+// `internal/ratelimit`'s own store is deliberately unobservable — counting and
+// answering in one step is what makes it a limiter — and this is the seam that
+// makes the count assertable from outside it. A `hit` and a `count` in one place
+// is what a `peek` on the real store would be, and the reason there is not one.
+func newCountingStore(t *testing.T) *countingStore {
+	t.Helper()
+	inner, err := ratelimit.NewMemoryStore(0)
+	if err != nil {
+		t.Fatalf("building an inner store: %v", err)
+	}
+	return &countingStore{inner: inner}
+}
+
+type countingStore struct {
+	inner ratelimit.Store
+	hits  int
+}
+
+func (s *countingStore) Hit(key string, request ratelimit.Request) (ratelimit.Verdict, error) {
+	s.hits++
+	return s.inner.Hit(key, request)
+}
+
+func (s *countingStore) count() int { return s.hits }
+
+// countingLimiter is a limiter over that store, at an allowance no request here
+// reaches, so the tests observe WHERE the count happened rather than a refusal.
+func countingLimiter(t *testing.T, store ratelimit.Store) RateLimiter {
+	t.Helper()
+	limiter, err := ratelimit.NewLimiter(ratelimit.Options{
+		Store:  store,
+		Exempt: isProbePath,
+	}, RateLimitRefuser)
+	if err != nil {
+		t.Fatalf("building a limiter over the counting store: %v", err)
+	}
+	return limiter
 }
 
 // The other half of the same property, and the one that makes it a *gate* rather

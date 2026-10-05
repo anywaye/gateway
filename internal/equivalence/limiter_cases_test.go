@@ -159,19 +159,37 @@ func TestTheGoSideCountsRoutedTraffic(t *testing.T) {
 	goServer := httptest.NewServer(mustHandler(t, options))
 	defer goServer.Close()
 
-	// The routed request is asked against an ALREADY-SPENT allowance: both sides
-	// are exhausted on a path neither route table claims first, which is what makes
-	// the answer the limiter's decision rather than the router's.
+	// The routed request is asked against an ALREADY-SPENT allowance, and the
+	// spending is compared request by request rather than counted. Both sides spend
+	// it on a path neither route table claims, which is what makes the routed answer
+	// below the limiter's decision rather than the router's.
+	//
+	// # THE SPENDING IS COMPARED, NOT JUST PERFORMED
+	//
+	// Each of these three requests is checked against the reference's own
+	// `RateLimit-Remaining`, which is what makes this catch a limiter mounted in
+	// BOTH places — on the router and around the pass-through. Such a limiter still
+	// refuses the routed request below, and still refuses it with `Remaining: 0`,
+	// so every assertion after this loop passes on a gateway that spends twice what
+	// it says it spends. Only the arithmetic on the way here shows it. That was
+	// measured: planting the double mount left this test green while the main
+	// comparison went to 4 differences, which is why the spending is compared here
+	// and not merely performed.
 	spend := caseSpec{name: "spending the allowance", method: http.MethodGet, path: "/v1/unknown",
 		headers: map[string]string{"Accept": "application/json"}}
 	for i := 0; i < equivalenceLimit; i++ {
-		ask(t, referenceURL, spend)
+		want := ask(t, referenceURL, spend)
+		service.take(t)
+		got := ask(t, goServer.URL, spend)
+		service.take(t)
+
+		if want.status != got.status {
+			t.Fatalf("spending the allowance, request %d: the reference answered %d and the Go gateway answered %d on the SAME unrouted path. The limiter is not counting one request once on this side.", i+1, want.status, got.status)
+		}
+		if want, got := want.headers.Get("RateLimit-Remaining"), got.headers.Get("RateLimit-Remaining"); want != got {
+			t.Fatalf("spending the allowance, request %d: the reference announced %q remaining and the Go gateway announced %q. Both sides serve this path from the same bucket at the same allowance, so they cannot differ unless a request is counted a different number of times — the signature of a limiter mounted in both places.", i+1, want, got)
+		}
 	}
-	service.take(t)
-	for i := 0; i < equivalenceLimit; i++ {
-		ask(t, goServer.URL, spend)
-	}
-	service.take(t)
 
 	routed := caseSpec{name: "a routed request", method: http.MethodGet, path: "/v1/pantry/items",
 		headers: map[string]string{"Accept": "application/json"}}
