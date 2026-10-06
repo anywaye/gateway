@@ -304,11 +304,35 @@ services:
     # against this file ALONE fails to start gateway rather than starting it without
     # traces. That is the same trade billing and courier make, and it is why the
     # command at the top of this file carries two `-f` flags.
-    logging:
-      driver: syslog
-      options:
-        syslog-address: "tcp://otel-collector:15514"
-        tag: "gateway"
+    # NO LOG-DRIVER OVERRIDE. See the identical note in identity/docker-compose.yml
+    # for the full argument; the short form is that `syslog` makes the DOCKER
+    # DAEMON resolve `otel-collector`, in the host namespace, where container
+    # names do not exist:
+    #
+    #   failed to initialize logging driver: dial tcp: lookup otel-collector:
+    #   0.250.250.200:53: no such host
+    #
+    # The comment above this block already named the cost — "this file cannot be
+    # run on its own any more… fails to start gateway rather than starting it
+    # without traces." That is understated. On Docker Desktop and OrbStack it
+    # cannot be run at all, with or without a second `-f`, because the daemon's
+    # resolver never sees container names. The whole point of that trade was a
+    # forwarded crash layer, and it was paying for it with the ability to boot.
+    #
+    # The panic still reaches an operator: a fatal error goes to stderr,
+    # `json-file` captures it, `docker logs` shows it — on every host, no DNS.
+    #
+    # And the collector runs an `otlp` LOGS receiver on 4317/4318, so gateway's
+    # existing OTel SDK can ship logs there over OTLP, resolved INSIDE the
+    # container network where the embedded DNS answers. Same receiver, same
+    # bytes, no dependency on the daemon's resolver.
+    #
+    # `tag: "gateway"` had one job: the collector's `transform/cafaye_logs`
+    # promotes it to `service.name` when a record carries none. OTLP log records
+    # carry `service.name` from the SDK's resource attributes instead.
+    #
+    # This also removes the reason the command at the top of this file needed two
+    # `-f` flags to start at all.
 
     healthcheck:
       # Liveness, not readiness: the point is "is this process answering", which
