@@ -1,0 +1,22 @@
+# tenancy.yml — what gateway declares about its own account boundary.
+#
+# Checked by cafaye/core's contract harness:
+#
+#     /Users/kaka/Code/any/moon/cafaye/core/harness/bin/tenancy-check .
+version: 1
+service: gateway
+
+accountScoped: false
+
+scope:
+  key: account_id
+  sources:
+    - internal
+
+entryPoints: []
+
+rls:
+  databaseEnforced: false
+  sources:
+    - internal
+  tables: []
