@@ -10,6 +10,39 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **A push to master now publishes the image and the chart.**
+  `.github/workflows/publish.yml` — kit's caller template, copied with one
+  change (`chart-dir: charts/gateway/`, because gateway's chart is not at the
+  template's default `chart/`) — calls kit's composed `publish.reusable.yml`
+  on every push to master: the image workflow builds and pushes
+  `ghcr.io/cafaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest`
+  on the default branch), and the chart workflow packages `charts/gateway/`
+  and pushes it to `oci://ghcr.io/cafaye/charts/gateway:<chart version>`.
+  Before this, both artifacts were published by nothing: the substrate's
+  `gateway` `Application` points at a registry no workflow wrote to, and the
+  front door could not be deployed at all.
+
+  **The chart's `version` is the OCI tag, and it is the tag the substrate's
+  `Application` must match.** `chart.reusable.yml` reads name and version from
+  `Chart.yaml` and never takes them as inputs, so the tag is whatever
+  `charts/gateway/Chart.yaml` says — and the substrate's `Application` pulls
+  `targetRevision: 0.1.0`. The two are the same fact written twice: a service
+  that bumps one and not the other is a service that never deploys, and Argo
+  reports no error — it just never finds the artifact.
+
+  **The loop is proved in gateway's own gate, red-first.** `bin/prime-go` has
+  a step — *the publish caller publishes the image and the chart* — that
+  asserts the facts that make the loop work: the caller calls kit's composed
+  workflow (a caller that inlines the steps has forked it), grants
+  `packages: write` (a reusable workflow can request a permission but cannot
+  grant itself one), passes `push: true` (the reusable workflows default to
+  `push: false`, so a caller that omits it publishes nothing and says
+  nothing), and passes `chart-dir: charts/gateway/` — whose `Chart.yaml`
+  version must equal the substrate's `targetRevision: 0.1.0`, with both
+  sides named in the failure message. The step fails on the tree as it was
+  before the caller was copied, and `gate.yml` carries a presence proof for
+  its banner.
+
 - **gateway has a deploy artifact: a hand-written Helm chart, and the Argo
   `Application` that pulls it.** `charts/gateway/` is what turns the image
   into a running service on the launch substrate — k3s + Traefik +

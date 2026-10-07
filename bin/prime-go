@@ -118,6 +118,124 @@ for pair in "Dockerfile:$image_go" "docker-compose.yml:$compose_go"; do
 done
 echo "image tag: Dockerfile and docker-compose.yml build on go $expected_prefix, the major.minor mise.toml pins as $pinned_go"
 
+step "the publish caller publishes the image and the chart"
+# THE PUBLISH LOOP'S SERVICE HALF, and the check exists because the loop was
+# open at this end. kit's `m84` landed the reusable half —
+# `publish.reusable.yml` composes `image.reusable.yml` and
+# `chart.reusable.yml` behind one `push` input — and published a CALLER
+# TEMPLATE at `kit/templates/publish/publish.yml` whose header says "copy this
+# file to `.github/workflows/publish.yml` in the service repository, verbatim".
+# gateway did not copy it: `.github/workflows/` held only `ci.yml`, so the
+# chart the substrate's `Application` pulls and the image `config/deploy.yml`
+# deploys were published by nothing — the front door could not be deployed at
+# all. This step asserts the copy happened and is correct.
+#
+# WHAT IS ASSERTED, and each fact is one that makes the loop work rather than
+# one that makes a file exist. A file that merely exists is the failure this
+# repository has been bitten by before in other guises: a green about nothing.
+#
+# THE PATTERNS ARE ANCHORED, and that is a correction rather than a style. A
+# fixed-string grep for `packages: write` matches this caller's own HEADER,
+# which mentions the grant in backticks while arguing for it — so a caller
+# that dropped the permission from the `permissions:` block would still pass,
+# and the check would be asserting a comment rather than a grant. `^` and `$`
+# with leading whitespace allowed matches the YAML line and nothing else.
+caller=".github/workflows/publish.yml"
+if [ ! -f "$caller" ]; then
+  echo "bin/prime-go: $caller does not exist, so a push to master publishes" >&2
+  echo "  nothing. Copy kit's caller template (kit/templates/publish/publish.yml)" >&2
+  echo "  into this tree, adding 'chart-dir: charts/gateway/' under 'with:' —" >&2
+  echo "  gateway's chart is not at the template's default 'chart/'. Read the" >&2
+  echo "  template's header first; it is the whole argument for the shape." >&2
+  exit 1
+fi
+
+# 1. THE COMPOSITION IS CALLED, NOT INLINED. The image and chart steps live in
+# kit's reusable workflows, and this caller is one `uses:` of the composed
+# `publish.reusable.yml`. A caller that inlines the steps has forked the
+# composition: a second copy of the publish path that drifts, which is the
+# drift kit exists to prevent. The ref is `@master` because that is how every
+# cafaye service calls kit's workflows — see the `ci` job in this repository's
+# own ci.yml.
+if ! grep -qE '^[[:space:]]*uses: cafaye/kit/\.github/workflows/publish\.reusable\.yml@master$' "$caller"; then
+  echo "bin/prime-go: $caller does not call kit's composed publish workflow." >&2
+  echo "  Wanted: uses: cafaye/kit/.github/workflows/publish.reusable.yml@master" >&2
+  echo "  The composition lives in kit; a caller that inlines the steps has" >&2
+  echo "  forked it, and a fork is a second copy that drifts." >&2
+  exit 1
+fi
+
+# 2. THE PERMISSION GRANT, AND WHY IT IS THE CALLER'S TO MAKE. A reusable
+# workflow can request a permission but cannot grant itself one, so
+# `packages: write` must be on the caller: omit it and the push fails with a
+# 401 that reads like a wrong password rather than like a missing grant.
+if ! grep -qE '^[[:space:]]*packages: write$' "$caller"; then
+  echo "bin/prime-go: $caller does not grant packages: write. A reusable" >&2
+  echo "  workflow can request a permission but cannot grant itself one, so" >&2
+  echo "  the caller must grant it — omit it and the push dies with a 401 that" >&2
+  echo "  reads like a wrong password rather than a missing grant." >&2
+  exit 1
+fi
+
+# 3. THE OPT-IN. The reusable workflows default `push` to FALSE, so a caller
+# that omits the input publishes nothing and says nothing: the run is green,
+# the registry is untouched, and the substrate's Application keeps pulling
+# the old chart forever.
+if ! grep -qE '^[[:space:]]*push: true$' "$caller"; then
+  echo "bin/prime-go: $caller does not pass push: true. The reusable" >&2
+  echo "  workflows default push to false, so a caller that omits it publishes" >&2
+  echo "  nothing and says nothing — a green run and an untouched registry." >&2
+  exit 1
+fi
+
+# 4. THE CHART-DIR INPUT, AND THE DIRECTORY IT NAMES. The input is asserted
+# as the fixed string because that is the path this repository's own checks
+# (`ci.yml`, `bin/chart-test`) already know — and the directory it names is
+# then required to hold a Chart.yaml, so a caller pointing at an empty
+# directory is a red rather than a chart that publishes nothing.
+if ! grep -qE '^[[:space:]]*chart-dir: charts/gateway/$' "$caller"; then
+  echo "bin/prime-go: $caller does not pass chart-dir: charts/gateway/." >&2
+  echo "  gateway's chart lives at charts/gateway/ — not at the template's" >&2
+  echo "  default 'chart/' — and that is the path ci.yml and bin/chart-test" >&2
+  echo "  already know. Do not move the chart to chart/ to avoid the input." >&2
+  exit 1
+fi
+chart="charts/gateway/Chart.yaml"
+if [ ! -f "$chart" ]; then
+  echo "bin/prime-go: the caller passes chart-dir: charts/gateway/ but $chart" >&2
+  echo "  does not exist — the workflow would package an empty directory and" >&2
+  echo "  push nothing." >&2
+  exit 1
+fi
+
+# 5. THE CHART VERSION IS THE OCI TAG, AND THE EQUALITY IS THE ASSERTION.
+# `chart.reusable.yml` reads name and version from Chart.yaml and never takes
+# them as inputs, so the tag the substrate pulls is whatever this file says —
+# and the substrate's Application (kit,
+# templates/substrate/manifests/applications/gateway.yaml) says
+# `targetRevision: 0.1.0`. A service that bumps one and not the other is a
+# service that never deploys, and Argo reports no error: it just never finds
+# the artifact. The failure message names both sides for that reason.
+substrate_target="0.1.0"
+chart_version="$(sed -n 's/^version: *\(.*\)/\1/p' "$chart")"
+if [ -z "$chart_version" ]; then
+  echo "bin/prime-go: $chart declares no version, and the version is the OCI" >&2
+  echo "  tag the substrate's Application pulls (targetRevision:" >&2
+  echo "  $substrate_target). A chart with no version is a chart that cannot be" >&2
+  echo "  pushed." >&2
+  exit 1
+fi
+if [ "$chart_version" != "$substrate_target" ]; then
+  echo "bin/prime-go: $chart says version $chart_version and the substrate's" >&2
+  echo "  Application pulls targetRevision $substrate_target. The chart version" >&2
+  echo "  IS the OCI tag — chart.reusable.yml reads it from Chart.yaml and" >&2
+  echo "  never takes it as an input — so a chart pushed as $chart_version" >&2
+  echo "  while the Application says $substrate_target is a service that never" >&2
+  echo "  deploys, and Argo reports no error." >&2
+  exit 1
+fi
+echo "publish: $caller calls kit's composed publish workflow with push: true, grants packages: write, and points at charts/gateway/ — whose Chart.yaml version $chart_version is the substrate's targetRevision $substrate_target"
+
 step "gofmt -l"
 # `-l` prints the files that NEED formatting and exits 0 either way, so the count
 # is the assertion. An empty list is the pass and a non-empty one is a red that
