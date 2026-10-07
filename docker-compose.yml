@@ -277,17 +277,26 @@ services:
       # the rate limiter believes. Unset is 0: no forwarding chain, so the socket
       # peer, and every caller behind one NAT shares a bucket. Whatever proxies
       # actually sit in front of this service belongs here.
-      # TRUSTED_PROXIES: "1"
-      # Unset keeps the counters in this process. Set it and the same Redis serves
-      # every replica and the counters survive a restart; the URL is validated at
-      # startup and the connection opens on first use.
+      #
+      # "0" HERE, and it is a thought-out zero rather than a default nobody chose:
+      # this local stack runs no ingress in front of gateway (kit's compose file
+      # has no Traefik — checked), so nothing appends to the header and the
+      # socket peer is the right key. On the k3s box the chart sets "1", because
+      # Traefik appends exactly one hop there. The cost of a wrong one is in the
+      # chart's values.yaml at the same name: at 0 behind a proxy every caller
+      # shares one bucket, and the launch rate-limits all users as one.
+      TRUSTED_PROXIES: "0"
+      # Set, and load-bearing twice over: the four /auth/* routes decline without
+      # it (no sign-in — a per-process session store is the shape that would sign
+      # a browser out on the next restart), and the limiter's counters stay in
+      # this process, which is one replica's memory and not a platform limit.
       #
       # That `redis` is kit's, out of the fetched stack — one of the services this
       # repository no longer keeps a copy of — and it is why `networks:` above is
       # load-bearing rather than decorative. Set it and the counters are shared
       # with every gateway replica; unset and they are this process's memory, which
       # is correct for one replica and is not a platform limit.
-      # REDIS_URL: "redis://redis:6379"
+      REDIS_URL: "redis://redis:6379"
 
       # WHERE A PATH GOES, as one JSON object of prefix -> upstream. Unset is the
       # honest default for this file: there is no service in it for gateway to route
