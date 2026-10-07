@@ -871,6 +871,23 @@ in this repository is wrong. Without mise, install Bun 1.3.x, Node 22 and Go
 against `go.mod`'s own `go` directive before it runs anything — three files state
 that number and nothing makes the go command enforce any of them.
 
+## Deploying it
+
+gateway's deploy artifact is a **Helm chart**, `charts/gateway/`, pulled by an
+Argo `Application` — `deploy/argocd/gateway-application.yaml`. On the launch
+substrate (k3s + Traefik + cert-manager + ArgoCD, per `DEPLOYMENT.md`) that is
+the only deploy path: the chart is pulled by Argo, or it does not run. It is
+not a second deploy path and not a Kamal config — a split brain beside Argo
+is the one thing `DEPLOYMENT.md` forbids.
+
+The chart is hand-written as the reference `caf gen chart` (packet L10) must
+reproduce: every value that belongs in a manifest is in `values.yaml`, and
+nothing in the templates is a hand-typed constant a generator could not emit.
+The readiness probe is `/readyz` — the real, dependency-aware probe — and
+`REDIS_URL` is a required `secretKeyRef`, so a deployment cannot forget Redis:
+no secret, no pod. The full argument, and the table of manifest fields the
+generator must read, is in [CHANGELOG.md](CHANGELOG.md).
+
 ## CI
 
 `.github/workflows/ci.yml` calls kit's reusable workflow and adds four jobs of

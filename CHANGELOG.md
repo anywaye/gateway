@@ -10,6 +10,69 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **gateway has a deploy artifact: a hand-written Helm chart, and the Argo
+  `Application` that pulls it.** `charts/gateway/` is what turns the image
+  into a running service on the launch substrate — k3s + Traefik +
+  cert-manager + ArgoCD + CloudNativePG + Redis (`DEPLOYMENT.md`) — with a
+  hostname, a readiness gate and a rollback. Before this, gateway had a
+  `Dockerfile` and nothing that deployed it: no `config/deploy.yml`, no
+  chart, no `Application`. The chart renders a `Deployment`, a `Service`, a
+  Traefik-class `Ingress`, a `ConfigMap` for the clear env, and a `Secret`
+  **reference** for the secret env; `deploy/argocd/gateway-application.yaml`
+  completes the pull-only loop — a commit changes the chart, Argo makes the
+  box agree, hand edits self-heal, rollback is `git revert`.
+
+  **What the chart is for:** the launch deploy artifact for the front
+  door. **What it is not:** not a second deploy path. `DEPLOYMENT.md` is
+  explicit that there is no helm-from-CI template in kit and one may never
+  be added, because a second deploy path beside Argo is a split brain —
+  the chart is pulled by Argo, or it does not run. It is also not Kamal,
+  not compose, and not a hosted platform.
+
+  **It is the reference `caf gen chart` (packet L10) must reproduce**, and
+  is written generated-shaped: every value that belongs in a manifest is in
+  `values.yaml`, and nothing in the templates is a hand-typed constant a
+  generator could not emit. The manifest fields it reads, so L10 has a
+  specification rather than a guess:
+
+  | values.yaml | manifest field |
+  |---|---|
+  | `image.repository`, `image.tag`, `image.pullPolicy` | Deployment container image |
+  | `replicaCount` | Deployment replicas |
+  | `service.type`, `service.port` | Service type and port |
+  | `ingress.enabled`, `.className`, `.host`, `.annotations`, `.tls.enabled`, `.tls.secretName` | Ingress (class `traefik`, TLS via cert-manager secret) |
+  | `env` (every key) | ConfigMap `data`, read via `envFrom` |
+  | `secrets.redisUrlSecretName`, `.redisUrlSecretKey` | Deployment `env` `secretKeyRef` for `REDIS_URL` |
+  | `resources` | Deployment requests/limits |
+  | `probes.liveness.*`, `probes.readiness.*` | Deployment probes |
+
+  **The readiness probe is `/readyz`**, gateway's real, bounded,
+  dependency-aware probe (`internal/httpapi/runtime.go`); liveness is
+  `/healthz`. An Argo or rollout gate that reads `/healthz` accepts a
+  container that cannot reach identity, which is the whole reason `/readyz`
+  exists.
+
+  **`REDIS_URL` is a required `secretKeyRef`, never a literal in
+  `values.yaml`** — the secret lives on the box and the chart names it,
+  because closed-source charts and their secrets ride a pull-based system.
+  No secret, no pod: a deployment cannot forget Redis. The comment at that
+  line states both consequences — no `REDIS_URL` means **no browser
+  surface** (the four `/auth/*` routes decline, so no sign-in) *and* an N×
+  rate limit whose counters reset on every deploy.
+
+  **`TRUSTED_PROXIES` is a value with the reason**: behind the ingress the
+  limiter must believe one hop of `X-Forwarded-For`; at `0` every caller
+  shares the ingress's peer address and the launch rate-limits all users as
+  one. Too high is the same defect pointing the other way — a caller who
+  can write the trusted hop mints a bucket per request.
+
+  **Also in this change:** `docker-compose.yml` sets `REDIS_URL` and
+  `TRUSTED_PROXIES` explicitly (both were commented out), so the local
+  stack brings gateway up with its browser surface. Locally
+  `TRUSTED_PROXIES` is `"0"` — the kit stack runs no ingress in front of
+  gateway, so the socket peer is the right key; the chart sets `"1"` for
+  the box, where Traefik appends exactly one hop.
+
 - **gateway emits real telemetry: one server span per request, and the fleet's
   collector can now see them.** `internal/telemetry/` is `caf gen telemetry`
   output — the per-signal attribute allowlists, the span-name grammar, the endpoint

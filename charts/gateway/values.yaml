@@ -1,0 +1,174 @@
+# values.yaml — gateway's launch deploy artifact.
+#
+# This file is the specification `caf gen chart` (packet L10) must reproduce:
+# every value that belongs in a manifest is here, and nothing in the templates
+# is a hand-typed constant a generator could not emit.
+#
+# WHAT THIS CHART IS: the deploy artifact for the cafaye front door, deployed
+# by Argo from Git — see `deploy/argocd/gateway-application.yaml`. It is NOT a
+# second deploy path: DEPLOYMENT.md is explicit that there is no helm-from-CI
+# template in kit and one may never be added, because a second deploy path
+# beside Argo is a split brain. The chart is pulled by Argo, or it does not run.
+#
+# WHAT IT IS NOT: not a Kamal config, not a compose stack, not a hosted
+# platform. The customer brings the box; this is what runs on it.
+
+image:
+  repository: cafaye/gateway
+  # A value, never `latest`: a floating tag is a deploy that changes when
+  # somebody else pushes. The first real release must push this tag; until it
+  # exists, `docker-compose.yml`'s `cafaye/gateway:dev` is the local image.
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# One replica is the honest default. More than one is safe HERE in a way it is
+# not in most services, because `REDIS_URL` below is a required secret
+# reference: the counters are shared and survive a restart, so N replicas is
+# one limit and not N×. A chart that made Redis optional would have to default
+# this to 1 with a warning; this one does not.
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  # Must agree with `env.PORT` below — the container listens on PORT and the
+  # Service forwards to the same number. Both are values so a generator emits
+  # them; the agreement is the operator's, and the comment is where it lives.
+  port: 8080
+
+ingress:
+  enabled: true
+  # Traefik is k3s's default ingress controller (DEPLOYMENT.md), so the
+  # Ingress is a plain `networking.k8s.io/v1` resource with this class.
+  className: traefik
+  # The platform's front-door name. `cafaye.com` is the platform; this is the
+  # gateway's host on it. Per-tenant deployments override it.
+  host: gateway.cafaye.com
+  annotations: {}
+  tls:
+    # The browser surface's cookie is `Secure` (DEPLOYMENT.md, launch item B7:
+    # no TLS anywhere in the stack is a launch blocker), so TLS is not
+    # optional for the front door. The secret is filled by cert-manager from a
+    # ClusterIssuer the substrate provides; the chart names it and does not
+    # create it, the same way it names the Redis secret and does not create it.
+    enabled: true
+    secretName: gateway-tls
+
+# The clear environment, rendered into a ConfigMap the Deployment reads with
+# `envFrom`. Every key is one the shipped binary reads — each is in
+# `internal/httpapi/runtime.go`'s list of fifteen. The chart carries the eight
+# a launch deployment sets; the assertion variables and `IDENTITY_JWKS_URL` are
+# left at their defaults, the same way `docker-compose.yml` leaves them.
+# `GATEWAY_OTEL_ENDPOINT` is read by `internal/telemetry`, not the runtime
+# reader, and is deliberately unset: the in-cluster collector address belongs
+# to the observability stack (L12), and a guessed default is worse than the
+# documented fallback.
+env:
+  PORT: "8080"
+  # Where tokens are VERIFIED: the issuer-only base URL; gateway appends
+  # `/.well-known/jwks.json` itself. Must match the `iss` identity mints and be
+  # fetchable by this pod for the key set. An https origin in every
+  # environment, including this one.
+  IDENTITY_ISSUER: "https://identity.cafaye.com"
+  # Where a session is REQUESTED: identity's in-cluster Service. The two
+  # variables for one service on purpose — the issuer is an https origin, the
+  # address this dials is a service name, and inside a cluster `localhost` is
+  # gateway itself. Must match identity's own chart (release `identity` in
+  # this namespace).
+  IDENTITY_URL: "http://identity:8080"
+  # The `aud` every token must be addressed to — gateway's own client id.
+  GATEWAY_CLIENT_ID: "gateway"
+  # How long a fetched key set is reused, in milliseconds. Also the
+  # revocation window: a key identity withdraws keeps verifying until this
+  # expires.
+  IDENTITY_JWKS_TTL_MS: "300000"
+  # The general allowance: requests per window on `/v1/*` and anything
+  # unclaimed. The per-route table (login 10/min, register 5/min, …) is code,
+  # not configuration — see README, "Per-route allowances".
+  RATE_LIMIT_REQUESTS: "600"
+  RATE_LIMIT_WINDOW_MS: "60000"
+  # How many proxies append to X-Forwarded-For, and therefore how much of it
+  # the rate limiter believes. Behind Traefik that is one hop, so this is 1.
+  #
+  # WHAT A WRONG ONE COSTS, stated at the line because it is not a crash: at
+  # 0 the limiter believes none of the header and keys every caller on the
+  # ingress's peer address, so the launch rate-limits all users as one — one
+  # attacker's burst spends everybody's allowance. Too high is the same defect
+  # pointing the other way: a caller who can write the trusted hop mints a
+  # bucket per request. Neither fails loudly; the limiter just quietly merges
+  # or splits buckets, which is why the number is a value with its reason and
+  # not a default somebody never looks at.
+  TRUSTED_PROXIES: "1"
+  # Where each configured prefix goes, as one JSON object of prefix →
+  # {baseUrl, token?, public?, principal?}. Unset is the honest default for a
+  # deployment that has not decided where anything goes: gateway forwards
+  # nothing and answers 404 for unclaimed paths. Every prefix must be under
+  # `/v1/`, and every value is validated at startup — a malformed table is a
+  # refusal to boot, not a degraded mode.
+  #
+  # It carries upstream `token`s, so it is configuration with credentials in
+  # it — the same shape `docker-compose.yml` has always carried it. Moving it
+  # to the secret below is a one-line change when a packet wants it.
+  # ROUTE_TABLE: '{"\/v1\/pantry":{"baseUrl":"http://pantry:8080"}}'
+
+# The secret environment. `REDIS_URL` is a REFERENCE, never a value here: the
+# secret lives on the box and the chart names it, because DEPLOYMENT.md and the
+# fleet's rule agree that closed-source charts and their secrets ride a
+# pull-based system — the chart is pulled, the value is not.
+#
+# WHAT MISSING IT COSTS, both halves, because a deployment that forgets Redis
+# must not be able to boot:
+#
+#   * no browser surface — the four `/auth/*` routes decline, so there is no
+#     sign-in. A per-process session store is the shape that would sign a
+#     browser out on the next restart and on whichever replica it did not
+#     sign in to, so the Go runtime refuses to build the surface without a
+#     shared store;
+#   * an N× rate limit — counters are per process, so N replicas is N times the
+#     allowance, every bucket is lost on restart, and nothing in the platform
+#     would notice.
+#
+# The reference is a REQUIRED `secretKeyRef`: no secret, no pod. That is the
+# property this packet exists to create — a deployment cannot forget Redis.
+secrets:
+  # The secret's name on the box. Created out of band (the substrate's secret
+  # management), never by this chart: a chart that rendered the value would be
+  # a literal in Git, which is the one thing DEPLOYMENT.md forbids.
+  # Deliberately NOT `gateway-env`, which is the ConfigMap's name: two
+  # resources of different kinds sharing a name is legal in Kubernetes and
+  # confusing in every `kubectl get` that shows both.
+  redisUrlSecretName: gateway-secrets
+  # The key inside it. `REDIS_URL` is `redis://` or `rediss://`, host and port,
+  # no path; a malformed URL is a refusal to boot, and a Redis that is DOWN is
+  # a `/readyz` answer, not a refusal to start.
+  redisUrlSecretKey: REDIS_URL
+
+resources:
+  # Set, because a chart with no limits is a chart that lets one service take
+  # the box — and DEPLOYMENT.md sizes the box at 8GB comfortable, 4GB no longer
+  # qualifying. gateway is a small Go process: it holds a JWKS cache, a
+  # per-bucket counter set and one connection pool, and nothing that grows
+  # with traffic.
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  # Liveness is `/healthz`: unconditional, touches nothing, the one question a
+  # restart can usefully act on. A dependency outage must NOT restart the
+  # gateway — that is `/readyz`'s to report.
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 15
+  # Readiness is `/readyz`: gateway's real, dependency-aware probe — it names
+  # each registered dependency (identity always, redis when `REDIS_URL` is
+  # set) and answers 503 when one is down. An Argo or rollout gate that reads
+  # `/healthz` accepts a container that cannot reach identity, which is the
+  # whole reason `/readyz` exists.
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 10
