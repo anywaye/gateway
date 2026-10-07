@@ -88,16 +88,24 @@
 # extra error codes — are not repeated; this document describes what gateway *does*,
 # and `cafaye.yml` says where each departure from core still needs a ruling.
 #
-#  1. `exposes` is still absent from `cafaye.yml`.
+#  1. `exposes` was absent from `cafaye.yml` — CLOSED in packet gateway-w87.
 #
 #     core's manifest schema says a service that serves traffic must declare
-#     `exposes.api` or `exposes.events`, and this repository serves traffic and
-#     declares neither. The document the omission was waiting for now exists, and
-#     `cafaye.yml` carries a `DECISION NEEDED` saying why: specs are manager-owned,
-#     and pointing the whole platform's `caf gen` at a contract nobody has agreed
-#     to is the manager's call, not a worker's. Every other service in the fleet
-#     that publishes a document points `exposes.api` at it. Requested: the manager
-#     adds `exposes: { api: openapi/v1.yaml }`, or says why not.
+#     `exposes.api` or `exposes.events`, and this repository served traffic and
+#     declared neither. The document the omission was waiting for existed the
+#     whole time, and `cafaye.yml` carried a `DECISION NEEDED` saying why: specs
+#     are manager-owned, and pointing the whole platform's `caf gen` at a
+#     contract nobody has agreed to is the manager's call, not a worker's.
+#     Every other service in the fleet that publishes a document points
+#     `exposes.api` at it. `cafaye.yml` now names this file, and the gap is
+#     closed.
+#
+#     The consequence, recorded rather than hidden: with the document declared,
+#     core's harness reads it for the first time and reports the open decisions
+#     below as findings (17, in three rule classes). They were always there —
+#     the harness checks what the manifest names and nothing it can guess at.
+#     Each is a requested core/manager ruling, not a gateway defect, and none
+#     is resolved by pointing at it.
 #
 #  2. Four operations are not under `/v1`.
 #

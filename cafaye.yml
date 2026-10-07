@@ -6,15 +6,29 @@
 # a worker records the shape it is being built against and marks what it cannot
 # decide. See AGENTS.md.
 #
-# > DECISION NEEDED (gateway): `exposes` is absent, and conventions rule 3 says a
-# > service that serves traffic must declare it. gateway does serve traffic, so
-# > the omission is a known gap, not a judgement that the rule does not apply.
-# > Filling it in needs an OpenAPI 3.1 document for gateway's HTTP surface, and
-# > specs are manager-owned — a worker drafting one would be publishing a
-# > contract the manager has not agreed to. Requested: the two probe endpoints
-# > for v0 (/healthz, /readyz), with the routed surface added as the JWKS and
-# > proxy packets land. Until that exists, `caf dev` and `pantry` have nothing
-# > to read for gateway, which is the cost of leaving it out.
+# > DECISION NEEDED (gateway) — CLOSED in packet gateway-w87. `exposes` was
+# > absent and this block said why: filling it in needs an OpenAPI 3.1
+# > document for gateway's HTTP surface, and specs are manager-owned. That
+# > document exists — `openapi/v1.yaml`, complete, with the routed surface
+# > (`/v1/me`, the four `/auth/*` routes) and the two probes — and
+# > `exposes.api` now names it. The gap this block described is closed.
+# >
+# > What is NOT closed, and is not gateway's to close: with the document
+# > declared, the harness's `openapi.*` rules read it for the first time (until
+# > now every one of them skipped it — the harness checks what the manifest
+# > names and nothing it can guess at) and report 17 findings in three rule
+# > classes: `openapi.paths-are-versioned` for the six unversioned paths (the
+# > two probes and the four `/auth/*` browser routes), `openapi.errors-are-
+# > problems` for the `500`/`503` responses, and `openapi.idempotency-key` for
+# > the three mutating POSTs. Every class is recorded in the document's own
+# > "Open decisions" header as a requested core/manager ruling, and none is
+# > resolved here.
+# >
+# > The two probes are core's numbered open decision (raised by core-07;
+# > `core/DECISIONS.md`, which measured the identical failure in identity,
+# > darkroom and pantry and recommends the *rule* be relaxed because a probe
+# > is infrastructure, not contract). `/healthz` and `/readyz` stay exactly as
+# > they are — recorded here, not resolved here.
 name: gateway
 description: The cafaye public gateway — the only door in, terminating auth and rate limits in front of every service.
 # `go`, and it said `typescript` until the otel packet. `src/` was deleted at
@@ -29,6 +43,13 @@ description: The cafaye public gateway — the only door in, terminating auth an
 # implementation the manifest describes and is still open.
 language: go
 core: ^0.2.0
+
+exposes:
+  # The OpenAPI 3.1 document for gateway's HTTP surface: /v1/me, the four
+  # /auth/* routes, and the two probes. Named here as of packet gateway-w87;
+  # the closed DECISION NEEDED at the top of this file records what the
+  # harness reports about the probe paths, and that it is core's call.
+  api: openapi/v1.yaml
 
 # gateway subscribes to no events. It answers requests; it does not react to a
 # bus. Delivery being at-least-once is someone else's idempotency problem.

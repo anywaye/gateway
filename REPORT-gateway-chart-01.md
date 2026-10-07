@@ -28,7 +28,7 @@ address and the launch rate-limits all users as one.
 | `charts/gateway/templates/service.yaml` | ClusterIP Service |
 | `charts/gateway/templates/ingress.yaml` | Traefik-class Ingress, TLS via cert-manager secret |
 | `charts/gateway/templates/configmap.yaml` | the clear env, rendered not inlined |
-| `deploy/argocd/gateway-application.yaml` | the pull-only loop: a commit changes the chart, Argo makes the box agree |
+| `deploy/argocd/gateway-application.yaml` | the pull-only loop: a commit changes the chart, Argo makes the box agree. **Deleted in packet `gateway-w87`** — it collided with kit's substrate `Application` by name and namespace, used a git source the OCI design rejects, and targeted the `cafaye` namespace; `DEPLOYMENT.md` "Who owns the `Application`" names kit's `templates/substrate/manifests/applications/gateway.yaml` as the one |
 | `docker-compose.yml` | `REDIS_URL` and `TRUSTED_PROXIES` uncommented |
 | `CHANGELOG.md`, `README.md` | what the chart is for and what it is not |
 

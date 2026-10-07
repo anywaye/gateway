@@ -4,11 +4,18 @@
 # every value that belongs in a manifest is here, and nothing in the templates
 # is a hand-typed constant a generator could not emit.
 #
-# WHAT THIS CHART IS: the deploy artifact for the cafaye front door, deployed
-# by Argo from Git — see `deploy/argocd/gateway-application.yaml`. It is NOT a
-# second deploy path: DEPLOYMENT.md is explicit that there is no helm-from-CI
-# template in kit and one may never be added, because a second deploy path
-# beside Argo is a split brain. The chart is pulled by Argo, or it does not run.
+# WHAT THIS CHART IS: the deploy artifact for the cafaye front door, pulled by
+# Argo from the OCI chart repository. The one Application is kit's —
+# `templates/substrate/manifests/applications/gateway.yaml` (source
+# `oci://ghcr.io/cafaye/charts`, chart `gateway`, targetRevision 0.1.0,
+# destination namespace `gateway`, CreateNamespace=true). This repository's own
+# copy (`deploy/argocd/gateway-application.yaml`) was deleted in packet
+# gateway-w87: it collided with kit's by name and namespace, used a git source
+# the OCI design rejects, and targeted a `cafaye` namespace no service uses.
+# It is NOT a second deploy path: DEPLOYMENT.md is explicit that there is no
+# helm-from-CI template in kit and one may never be added, because a second
+# deploy path beside Argo is a split brain. The chart is pulled by Argo, or it
+# does not run.
 #
 # WHAT IT IS NOT: not a Kamal config, not a compose stack, not a hosted
 # platform. The customer brings the box; this is what runs on it.
