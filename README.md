@@ -850,9 +850,10 @@ curl localhost:8080/healthz
 relative path against the project directory, so without it the Postgres init
 script resolves to a directory in this repository that does not exist, Docker
 creates it empty, and the cluster comes up healthy having provisioned nothing.
-`docker-compose.yml` carries the whole argument. There is no `bin/dev` in this
-repository yet; `kit.ref` is what this repository declares about kit, and copying
-kit's `templates/bin/dev.sh` to `bin/dev` is the next step, not a precondition.
+`docker-compose.yml` carries the whole argument. `bin/dev` is the one-word form
+of it — kit's `templates/bin/dev.sh` at the ref `kit.ref` names, which fetches
+the stack, writes `.env` from the fetched template, and then runs the command
+above — and `kit.ref` is what this repository declares about kit.
 
 `mise.toml` pins the toolchain. If you use mise, run this once per clone
 **before** the gates:
