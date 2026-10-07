@@ -1,0 +1,16 @@
+# The clear environment. Every key is one the shipped binary reads
+# (internal/httpapi/runtime.go's list of fifteen, minus the secret one, which
+# the Deployment references directly). Rendered, not inlined in the
+# Deployment, so an operator can read the whole configuration of a running
+# deployment in one `kubectl get` — and so the secret half of the environment
+# is visibly not here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gateway.fullname" . }}-env
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

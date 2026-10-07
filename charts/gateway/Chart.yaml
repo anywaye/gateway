@@ -1,0 +1,15 @@
+apiVersion: v2
+name: gateway
+description: >-
+  The cafaye public gateway — the only door into a cafaye deployment.
+  Authenticates callers, limits what they can ask for, and forwards
+  requests to the service that owns the work.
+type: application
+
+# The chart version and the image tag move together: `values.yaml`'s
+# `image.tag` defaults to this appVersion, and the pair is what a release
+# commits. Neither is ever `latest` — a floating tag is a deploy that changes
+# when somebody else pushes, and DEPLOYMENT.md's rule is that everything that
+# can drift from Git must not.
+version: 0.1.0
+appVersion: "0.1.0"
