@@ -55,8 +55,8 @@ ingress:
 
 # The clear environment, rendered into a ConfigMap the Deployment reads with
 # `envFrom`. Every key is one the shipped binary reads — each is in
-# `internal/httpapi/runtime.go`'s list of fifteen. The chart carries the nine a
-# launch deployment sets; the assertion variables and `IDENTITY_JWKS_URL` are
+# `internal/httpapi/runtime.go`'s list of fifteen. The chart carries the eight
+# a launch deployment sets; the assertion variables and `IDENTITY_JWKS_URL` are
 # left at their defaults, the same way `docker-compose.yml` leaves them.
 # `GATEWAY_OTEL_ENDPOINT` is read by `internal/telemetry`, not the runtime
 # reader, and is deliberately unset: the in-cluster collector address belongs
