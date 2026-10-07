@@ -874,11 +874,25 @@ that number and nothing makes the go command enforce any of them.
 ## Deploying it
 
 gateway's deploy artifact is a **Helm chart**, `charts/gateway/`, pulled by an
-Argo `Application` — `deploy/argocd/gateway-application.yaml`. On the launch
+Argo `Application` — and there is exactly one: kit's,
+`templates/substrate/manifests/applications/gateway.yaml` (source
+`oci://ghcr.io/cafaye/charts`, chart `gateway`, targetRevision `0.1.0`,
+destination namespace `gateway`, `CreateNamespace=true`). On the launch
 substrate (k3s + Traefik + cert-manager + ArgoCD, per `DEPLOYMENT.md`) that is
 the only deploy path: the chart is pulled by Argo, or it does not run. It is
 not a second deploy path and not a Kamal config — a split brain beside Argo
 is the one thing `DEPLOYMENT.md` forbids.
+
+This repository committed a second `Application` at
+`deploy/argocd/gateway-application.yaml` until packet `gateway-w87` deleted it.
+It had the same `metadata.name` and `namespace` as kit's, a **git** source
+(`https://github.com/cafaye/gateway.git`, `path: charts/gateway`,
+`targetRevision: master`) where the OCI design requires a chart repository
+with a read-only pull secret, and a destination namespace (`cafaye`) no
+service uses. Two `Application`s of one name in one namespace fight, and the
+later `kubectl apply` wins — a deploy whose target depends on apply order is
+not a deploy. `DEPLOYMENT.md`, "Who owns the `Application`": the substrate
+owns it, one per service, and **a service repository commits none**.
 
 The chart is hand-written as the reference `caf gen chart` (packet L10) must
 reproduce: every value that belongs in a manifest is in `values.yaml`, and

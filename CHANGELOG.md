@@ -103,6 +103,29 @@ dependency versions follow npm's own rules.
   does not resolve DECISION NEEDED item 7, which is about which implementation the
   manifest describes.
 
+### Removed
+
+- **gateway's own Argo `Application` is deleted; kit's substrate manifest is
+  the one.** `deploy/argocd/gateway-application.yaml` is gone, with the empty
+  `deploy/` tree around it. Measured across the fleet, gateway was the only
+  service repository committing an `Application`, and its copy collided with
+  kit's `templates/substrate/manifests/applications/gateway.yaml`: same
+  `metadata.name: gateway`, same `namespace: argocd`, a **git** source
+  (`https://github.com/cafaye/gateway.git`, `path: charts/gateway`,
+  `targetRevision: master`) where the OCI design requires a chart repository
+  with one read-only pull secret, and destination namespace `cafaye` — the
+  compose project's development name, not a cluster one. Two `Application`s
+  of one name in one namespace fight, and the later `kubectl apply` wins: a
+  deploy whose target depends on apply order is not a deploy.
+
+  `DEPLOYMENT.md`, "Who owns the `Application`": the substrate owns it, one
+  per service, OCI-sourced, destination namespace = the service name, and a
+  service repository commits none. The chart (`charts/gateway/`) is unchanged
+  and still the deploy artifact — what changed is that the repository no
+  longer competes with its own substrate for the right to apply it. Every
+  reference to the deleted file (`README.md`, `charts/gateway/values.yaml`,
+  `REPORT-gateway-chart-01.md`) now names kit's manifest instead.
+
 ### Changed
 
 - **`/v1/api-keys`' 60/min allowance is a deliberate tightening, checked, and left
