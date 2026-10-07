@@ -74,6 +74,18 @@ It is what a generated client is built from, so it is held to the router by
 document and Hono's own `app.routes` and fails if either describes an operation
 the other does not.
 
+Since packet `gateway-w87`, `cafaye.yml` declares it (`exposes.api:
+openapi/v1.yaml`), so core's contract harness reads it too — and reports the
+departures its header already records: 17 findings in three rule classes
+(`openapi.paths-are-versioned` on the six unversioned paths, `openapi.errors-
+are-problems` on the `500`/`503` responses, `openapi.idempotency-key` on the
+three mutating POSTs). Every class is a requested core/manager ruling, not a
+gateway defect, and none is resolved here. The two probes are core's numbered
+open decision (raised by core-07; `core/DECISIONS.md`), which measured the
+identical failure in `identity`, `darkroom` and `pantry` and recommends the
+rule be relaxed because a probe is infrastructure, not contract — the paths
+stay exactly as they are.
+
 Three things about that check are worth knowing before trusting it:
 
 - It compares **method+path pairs**, never counts. A count comparison passes on a
@@ -97,9 +109,14 @@ proof.
 
 The document's header records **seven departures from
 [`core/docs/openapi-conventions.md`](../core/docs/openapi-conventions.md)** as
-open decisions rather than resolving them locally. The most consequential is that
-`cafaye.yml` still has no `exposes` block: the document the omission was waiting
-for now exists, and pointing the platform's `caf gen` at it is the manager's call.
+open decisions rather than resolving them locally. The most consequential was that
+`cafaye.yml` had no `exposes` block: the document the omission was waiting for
+existed the whole time, and pointing the platform's `caf gen` at it is the
+manager's call. Packet `gateway-w87` closed that — `exposes.api` now names this
+document — and the consequence is that core's harness reads it for the first time
+and reports those departures as findings. They were always there; the harness
+checks what the manifest names and nothing it can guess at. See
+[The HTTP contract](#the-http-contract).
 
 ## Routing
 
@@ -1673,8 +1690,10 @@ the source with the packet that replaces them.
 - **SSE / streaming pass-through**, **contract tests against this document**
   (`caf contract lint` validating real responses against `openapi/v1.yaml`), and
   **structured logging**. The OpenAPI document itself has shipped — see
-  [The HTTP contract](#the-http-contract) — so the `DECISION NEEDED` in
-  [cafaye.yml](cafaye.yml) is down to the `exposes` block alone.
+  [The HTTP contract](#the-http-contract) — and `cafaye.yml` now declares it, so
+  the `DECISION NEEDED` in [cafaye.yml](cafaye.yml) is down to the contract
+  questions (algorithms, the scope claim, the error envelopes, Redis) and none of
+  them are this packet's.
 
 ## Layout
 

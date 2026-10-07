@@ -128,6 +128,46 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
+- **`cafaye.yml` declares gateway's HTTP surface: `exposes.api: openapi/v1.yaml`.**
+  The manifest's `DECISION NEEDED` said `exposes` was absent and that filling it
+  in "needs an OpenAPI 3.1 document for gateway's HTTP surface". That document
+  existed the whole time — `openapi/v1.yaml`, complete, with the routed surface
+  (`/v1/me`, the four `/auth/*` routes) and the two probes — and the block was
+  never reconciled after it was written. It is replaced with what is now true,
+  and the gap it described is closed. `consumes: []` is unchanged: gateway
+  subscribes to nothing.
+
+  **The consequence, recorded rather than hidden:** with the document declared,
+  core's contract harness reads it for the first time — until now every
+  `openapi.*` rule skipped it, because the harness checks what the manifest
+  names and nothing it can guess at — and reports **17 findings in three rule
+  classes**:
+
+  - `openapi.paths-are-versioned` on the six unversioned paths: the two probes
+    and the four `/auth/*` browser routes. The probes are **core's numbered
+    open decision** (raised by core-07; `core/DECISIONS.md`, which measured
+    the identical failure in `identity`, `darkroom` and `pantry` and recommends
+    the *rule* be relaxed because a probe is infrastructure, not contract).
+    `/healthz` and `/readyz` stay exactly as they are — recorded in the manifest
+    comment, not resolved here. The four browser routes are the document's own
+    open decision 2, which requests a core carve-out for a BFF surface.
+  - `openapi.errors-are-problems` on the `500` (eight operations) and `503`
+    (`/readyz`) responses — the document's open decisions 5 and 6: the v0
+    envelope survives on `404`/`500` pending trace-id propagation, and a
+    failing probe has to name the dependency that failed.
+  - `openapi.idempotency-key` on the three mutating POSTs — the document's
+    open decision 7: `register` owes the header and does not have it,
+    `login` is a deliberate exception (as in `identity`), and `logout` is
+    not covered by any recorded decision, which this packet names rather
+    than answers.
+
+  Every class was already there and already recorded in the document's own
+  "Open decisions" header; declaring the document makes them visible to the
+  harness for the first time. No finding is fixed in this packet — the probes
+  decision is core's, and the rest are requested core/manager rulings.
+
+### Changed
+
 - **`/v1/api-keys`' 60/min allowance is a deliberate tightening, checked, and left
   alone — and the reference's own suite would not have noticed it changing.**
   `REPORT-gateway-api-keys-01.md` §1 settles the question the allowance-table packet
