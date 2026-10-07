@@ -8,9 +8,18 @@ metadata:
   name: {{ include "gateway.fullname" . }}
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- if or .Values.ingress.annotations .Values.ingress.clusterIssuer }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    # The issuer annotation, only when a value is set (empty means no
+    # cert-manager — a secret nothing writes) and the operator has not set
+    # the same key in `ingress.annotations` above: a duplicate annotation
+    # key is invalid YAML, so an explicit operator value wins.
+    {{- if and .Values.ingress.clusterIssuer (not (hasKey (.Values.ingress.annotations | default dict) "cert-manager.io/cluster-issuer")) }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer }}
+    {{- end }}
   {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
