@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+#
+# bin/chart-test — gateway's chart test.
+#
+#   ./bin/chart-test   render charts/gateway with helm and assert the Ingress
+#                      carries the cert-manager issuer annotation
+#
+# WHAT IT IS: the bounded chart check W67 recorded by hand in
+# REPORT-gateway-chart-01.md ("The render, recorded exactly") and this packet
+# makes continuous. It is deliberately NOT wired into bin/prime: the gate is
+# static Go with a port-probe test, and a chart test needs `helm` on the
+# machine — the manager owns the gate and W67's report ruled the render "a
+# separate, bounded command" rather than part of it.
+#
+# WHAT IT ASSERTS:
+#   1. `helm template` with the committed values renders the Ingress with
+#      `cert-manager.io/cluster-issuer: letsencrypt-prod` and the existing
+#      `tls.secretName: gateway-tls`. Before packet gateway-w94-issuer the
+#      annotation was nowhere in the chart, so `gateway-tls` was a secret
+#      nothing filled and TLS failed on the box — launch item B7.
+#   2. THE CONTROL THAT MUST GO RED: with `ingress.clusterIssuer: ""` the
+#      annotation is ABSENT — the chart does not invent an issuer — and the
+#      Ingress still renders. Empty means no cert-manager: a secret nothing
+#      writes (the generator's own rule, caf/internal/gen/chart.go).
+#   3. The operator's `ingress.annotations` map still works and does not
+#      collide with the issuer: operator annotations render beside it, and an
+#      explicit operator `cert-manager.io/cluster-issuer` wins over the value
+#      (a duplicate key is invalid YAML, so one of them must).
+#   4. `helm lint` passes.
+#
+# set -euo pipefail is the whole mechanism — no error handling to forget.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+CHART=charts/gateway
+failures=0
+
+note() { printf '\n== %s\n' "$*"; }
+ok()   { printf 'ok   - %s\n' "$*"; }
+bad()  { printf 'FAIL - %s\n' "$*"; failures=$((failures + 1)); }
+
+# assert <description> <fixed string wanted> <haystack>
+assert() {
+  if printf '%s' "$3" | grep -qF -- "$2"; then
+    ok "$1"
+  else
+    bad "$1 — wanted: $2"
+  fi
+}
+
+# assert_absent <description> <fixed string unwanted> <haystack>
+assert_absent() {
+  if printf '%s' "$3" | grep -qF -- "$2"; then
+    bad "$1 — unwanted: $2"
+  else
+    ok "$1"
+  fi
+}
+
+# ingress_doc [helm args...] — the rendered Ingress document, extracted from
+# a full render: from the ingress source comment to the next document
+# separator. Empty means the Ingress did not render at all.
+ingress_doc() {
+  helm template gateway "$CHART" "$@" 2>&1 | awk '
+    /^# Source: gateway\/templates\/ingress\.yaml$/ { f=1 }
+    f && /^---$/ { exit }
+    f { print }
+  '
+}
+
+note "1. committed values — the Ingress carries the issuer annotation (B7)"
+doc=$(ingress_doc)
+if [ -z "$doc" ]; then
+  bad "helm template renders the Ingress with the committed values — it did not"
+else
+  ok "helm template renders the Ingress with the committed values"
+fi
+assert "cert-manager.io/cluster-issuer: letsencrypt-prod is set" \
+  "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
+assert "tls.secretName: gateway-tls is unchanged" \
+  "secretName: gateway-tls" "$doc"
+
+note "2. the control that must go red — empty issuer: annotation absent, Ingress still renders"
+doc=$(ingress_doc --set ingress.clusterIssuer="")
+if [ -z "$doc" ]; then
+  bad "the Ingress still renders with an empty issuer — it did not"
+else
+  ok "the Ingress still renders with an empty issuer"
+fi
+assert_absent "cert-manager.io/cluster-issuer is absent" \
+  "cert-manager.io/cluster-issuer" "$doc"
+assert "tls.secretName: gateway-tls is still set" \
+  "secretName: gateway-tls" "$doc"
+
+note "3. the operator annotations map still works, and does not collide"
+doc=$(ingress_doc --set 'ingress.annotations.foo=bar')
+assert "operator annotation foo: bar renders" \
+  "foo: bar" "$doc"
+assert "the issuer annotation renders beside it" \
+  "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
+
+# An operator who sets the issuer key explicitly in the map wins: a duplicate
+# annotation key is invalid YAML, so the value-derived one must stand down.
+# A values file rather than --set, because --set reads the dots in
+# `cert-manager.io/cluster-issuer` as nesting separators.
+override=$(mktemp)
+trap 'rm -f "$override"' EXIT
+cat > "$override" <<'EOF'
+ingress:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+EOF
+doc=$(ingress_doc -f "$override")
+assert "an explicit operator issuer wins" \
+  "cert-manager.io/cluster-issuer: letsencrypt-staging" "$doc"
+assert_absent "the value-derived issuer does not duplicate it" \
+  "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
+
+note "4. helm lint"
+if helm lint "$CHART" >/dev/null 2>&1; then
+  ok "helm lint passes"
+else
+  bad "helm lint failed"
+fi
+
+printf '\n'
+if [ "$failures" -gt 0 ]; then
+  printf '== chart test: %d failure(s)\n' "$failures"
+  exit 1
+fi
+printf '== chart test ok\n'

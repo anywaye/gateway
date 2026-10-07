@@ -1577,5 +1577,35 @@ dependency versions follow npm's own rules.
   that cannot mint a session is a gateway that should not be taking traffic, and
   liveness — which is what a restart acts on — is untouched.
 
+### Fixed
+
+- **The Ingress gets its certificate: `cert-manager.io/cluster-issuer:
+  letsencrypt-prod`, through a value — launch item B7.** gateway's chart turned
+  its Ingress on with `ingress.tls.secretName: gateway-tls` and emitted **no
+  issuer annotation**, so `gateway-tls` was a secret nothing filled and TLS
+  failed on the box. The front door's session cookie is `Secure`, so without it
+  the browser surface cannot work at all. `values.yaml` gains
+  `ingress.clusterIssuer: letsencrypt-prod` — the issuer the substrate's
+  install creates (`DEPLOYMENT.md`, "The ACME solver") — rendered as the
+  `cert-manager.io/cluster-issuer` annotation **only when non-empty**: empty
+  means no cert-manager, a secret nothing writes (the generator's own rule,
+  `caf gen chart`). The operator's `ingress.annotations` map still renders
+  beside it, and an explicit operator `cert-manager.io/cluster-issuer` wins
+  over the value — a duplicate annotation key is invalid YAML. `bin/chart-test`
+  (new) asserts the committed render, the empty-issuer control, the collision
+  rule and `helm lint`; it was red before the fix, green after.
+
+  **Divergences from `caf gen chart` are reported, not chased** — full list in
+  `REPORT-gateway-w94-issuer-01.md`. The ones that matter: the values shape
+  (`secrets:`/`secretName` vs the generated `secretName`, `replicaCount` vs
+  `replicas`, `probes.*` vs `readinessProbe.*`, `ingress.tls.*` vs
+  `ingress.tls: true`), the missing chart `README.md`, the missing
+  `fail`-when-enabled-without-host guard, no `imagePullSecrets` with a
+  Docker Hub-shaped `image.repository` where the generated chart names
+  `ghcr.io/cafaye/gateway`, and the tls block gated on `tls.enabled` alone
+  where the generator requires the issuer too. Recommendation: keep the
+  hand-written chart as L10's reference and feed the list to the generator;
+  cherry-pick the `fail` guard; decide the image repository and the README.
+
 [Unreleased]: https://github.com/cafaye/gateway/compare/v0.0.0...HEAD
 [v0.0.0]: https://github.com/cafaye/gateway/releases/tag/v0.0.0
