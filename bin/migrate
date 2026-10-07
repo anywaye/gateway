@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#
+# gateway's migration entrypoint. kit's `bin/dev` probes for `bin/migrate` first
+# and runs it with no arguments; without one, `bin/dev` dies at the migrate step
+# with "no migration command found", and the one-word dev loop is unusable here.
+# identity and billing each carry a real one; this is gateway's, and it is a
+# no-op because there is nothing to migrate.
+#
+# WHY A NO-OP IS THE HONEST ANSWER AND NOT A PLACEHOLDER. gateway runs no
+# database: no driver, no pool, no `DATABASE_URL`, no migrations. The full
+# argument is made at the top of `docker-compose.yml` — what gateway keeps fits
+# in this process (rate-limit counters, until `REDIS_URL` names a Redis) or in
+# the caller's own cookie. None of it is a schema, so there is no migration to
+# apply, and there will not be one unless gateway grows a database. If it does,
+# this is the file the migrations go into, and the no-op becomes a loop over
+# them — the shape identity's copy already has.
+#
+# It says so out loud rather than exiting 0 in silence, because `bin/dev`'s
+# promise is that its output names the step that ran: "migrated" is a claim,
+# and the claim here is that there was nothing to do.
+set -euo pipefail
+
+echo "bin/migrate: gateway keeps no database state — nothing to migrate"
