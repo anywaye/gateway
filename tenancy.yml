@@ -3,6 +3,77 @@
 # Checked by cafaye/core's contract harness:
 #
 #     /Users/kaka/Code/any/moon/cafaye/core/harness/bin/tenancy-check .
+#
+# GATEWAY HOLDS NO CUSTOMER ROWS. It has no database, no driver import and no
+# SQL anywhere in the tree: it verifies the bearer token, puts the principal on
+# the request context, keys the rate limiter by the account in it, and forwards.
+# So `accountScoped: false` with an empty enumeration is the truth rather than
+# an omission — and it is CHECKED: an account-scoped statement appearing in the
+# sources below is `tenancy.honest-zero`, a FAILURE.
+#
+# THE `me` ROUTE, AND WHY IT IS NOT AN ENTRY POINT.
+#
+# The legacy `account_scope.yml` (still at the root, untouched — see below)
+# declares `GET /v1/me` its one `accountScoped: true` route, because that route
+# "resolves an account and returns it". That is the LEGACY format's question —
+# does the route resolve an account at all. This format's question is narrower
+# and different: can the route reach another account's ROWS. Measured against
+# the source, `me` cannot, because it reads no row at all:
+#
+#   internal/httpapi/httpapi.go:302   the bearer gate is mounted above the route
+#   internal/auth/verifier.go:540-541   the account is read off the VERIFIED token
+#                                      (claims.String("account_id"))
+#   internal/httpapi/principal.go:66    the handler reads the principal back
+#                                      (auth.PrincipalOf(r)) and renders it
+#   internal/httpapi/principal.go:1-7   the file's own header: "No forwarding,
+#                                      no transformation, no decision … what it
+#                                      answers is exactly what gateway proved
+#                                      about the caller and nothing more."
+#   internal/httpapi/table.go:154       `/v1/me` is gateway's own route, served
+#                                      before the pass-through — it is not a
+#                                      proxied row read.
+#
+# The account `me` returns is the caller's OWN, from a verified claim on the
+# caller's OWN token. There is no second account in the request, no row store
+# to read, and no identity call to forward to. (The packet's resume note
+# expected this route to forward to identity; it does not — the Go handler
+# renders the verified principal locally, and the equivalence scenarios in
+# internal/equivalence/scenarios.go:551-556 show it answering 500/401 from
+# gateway's own logic, never from identity.) A route that reads no row cannot
+# reach another account's row, so `me` is not an entry point here and
+# `accountScoped: false` stands. Declaring it anyway would point three denial
+# arms at tests that do not exist — the defect the format exists to prevent.
+#
+# WHAT THE KEY IS DOING IN THIS TREE, SITE BY SITE.
+#
+# `account_id` appears 16 times in the declared sources, and every appearance
+# is one of four non-row shapes: a verified token claim, a rate-limit bucket
+# key, a telemetry policy list, or a test fixture asserting one of those. Each
+# is vouched for in `scope.nonRowSites` below with the reason, and the check
+# still fails for any site not named. The two warnings this declaration earns
+# are claims about the scanner, not about gateway: `tenancy.scope-key-unused`
+# says no SQL statement carries the key (gateway has no SQL — that is the
+# claim, not a gap), and `tenancy.enumeration-partial` names the 16 sites the
+# scanner could not attribute to a statement, which is the expected verdict
+# for a Go service written in a language a SQL scanner cannot read.
+#
+# THE SOURCES, AND WHY THESE TWO. `internal` is the Go tree — the whole
+# implementation, tests included, which is where 14 of the 16 sites live.
+# `test` is what remains of the TypeScript tree: `f87c891` deleted `src/`, and
+# naming a path that is not there earns `tenancy.scan-narrowed`, so `src` is
+# deliberately absent. The two `test` sites are test-case description strings
+# in the tenant-isolation table. `cmd` carries the key nowhere and is not
+# named; no other tree in the repository carries it in code.
+#
+# THE LEGACY FILE, AND WHAT EACH COVERS. `account_scope.yml` is untouched and
+# still checked by `core/harness/bin/account-scope-check .`. The two files
+# answer different questions and both are honest: the legacy file enumerates
+# every mounted route and asks whether each RESOLVES an account (`me` does —
+# it is that file's one `true` row, and its permanent red is a measured core
+# checker defect around chi's `Use(`, documented in that file's own header);
+# this file declares whether the service can reach another account's ROWS
+# (it cannot — it holds no rows). The retirement of the old checker is a
+# separate decision, not this packet's.
 version: 1
 service: gateway
 
@@ -12,11 +83,76 @@ scope:
   key: account_id
   sources:
     - internal
+    - test
+  nonRowSites:
+    # --- the verified token claim -------------------------------------------
+    - file: internal/auth/verifier.go
+      line: 540
+      reason: a verified token claim — the account is read off the caller's own bearer token, never a row predicate
+    # --- the rate-limit bucket key ------------------------------------------
+    - file: internal/ratelimit/key.go
+      line: 101
+      reason: the rate-limit bucket key, read from the verified principal — a counter key, never a row predicate
+    # --- core's telemetry policy lists ---------------------------------------
+    - file: internal/telemetry/telemetry.go
+      line: 574
+      reason: core's prohibited-measurement list — account_id is refused as a measurement attribute; a policy list, not a query
+    - file: internal/telemetry/telemetry.go
+      line: 607
+      reason: core's resource-attribute allowlist — account_id's correct home is the resource; a policy list, not a query
+    # --- the test token minter ----------------------------------------------
+    - file: internal/testkeys/testkeys.go
+      line: 358
+      reason: the test token minter writing the account_id claim into a minted test token — a fixture, not a query
+    # --- configuration-validation message text -------------------------------
+    - file: internal/httpapi/table.go
+      line: 910
+      reason: route-table validation error text naming account_id as an example of a caller's own claim a route may declare — a message, not a query
+    # --- Go test fixtures and names -----------------------------------------
+    - file: internal/httpapi/assertion_test.go
+      line: 168
+      reason: a test fixture — one of the caller's claims in a token the assertion test mints, asserted as not copied into the gateway-signed assertion
+    - file: internal/httpapi/assertion_test.go
+      line: 428
+      reason: a test fixture — the seven-claim caller in the assertion test, where account_id is asserted absent from the minted assertion
+    - file: internal/ratelimit/key_test.go
+      line: 129
+      reason: a test name — the account_id claim is the first source of the limiter bucket, ahead of the claim field and the subject
+    - file: internal/ratelimit/key_test.go
+      line: 136
+      reason: a test name — a non-string account_id claim is ignored rather than fatal when deriving the limiter bucket
+    - file: internal/ratelimit/key_test.go
+      line: 141
+      reason: a test fixture claim — a numeric account_id — asserting a malformed claim is ignored, not honoured
+    - file: internal/ratelimit/key_test.go
+      line: 143
+      reason: an error message in the bucket-derivation test, naming the numeric account_id fixture it refuses
+    - file: internal/ratelimit/key_test.go
+      line: 328
+      reason: a test fixture claim asserting that no header the caller wrote becomes the limiter bucket
+    - file: internal/telemetry/telemetry_test.go
+      line: 134
+      reason: a test asserting the prohibited-measurement list and the resource allowlist stay disjoint
+    # --- the TypeScript test tree --------------------------------------------
+    - file: test/tenantEntryPoints.test.ts
+      line: 103
+      reason: a test-case description in the tenant-isolation table — an edited account_id does not verify
+    - file: test/tenantEntryPoints.test.ts
+      line: 106
+      reason: a test-case description — a token whose account_id was edited after signing is refused, not honoured
 
 entryPoints: []
 
+# The database half, and the same argument. Gateway has no tables, no
+# migrations, no DDL and no policies, so `databaseEnforced: false` with an
+# empty list is the truth rather than an omission — and it is CHECKED the same
+# way: a policy or a `row level security` statement anywhere in the sources
+# below is `tenancy.rls-undeclared`, a FAILURE. The sources are the same two
+# trees as `scope.sources`: if this service ever writes DDL, it writes it
+# there, and the day it does this file goes red rather than silent.
 rls:
   databaseEnforced: false
   sources:
     - internal
+    - test
   tables: []
