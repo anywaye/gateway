@@ -40,6 +40,11 @@
 #     what replaced them.
 #   * on a clean checkout it prints:
 #         ==> toolchain: go 1.26.1 (mise.toml pins 1.26.1)
+#         ==> the publish caller publishes the image and the chart
+#         publish: .github/workflows/publish.yml calls kit's composed publish
+#           workflow with push: true, grants packages: write, and points at
+#           charts/gateway/ — whose Chart.yaml version 0.1.0 is the
+#           substrate's targetRevision 0.1.0
 #         ==> gofmt -l
 #         every file under ./cmd and ./internal is gofmt-clean
 #         ==> go build ./...
@@ -50,8 +55,8 @@
 #         internal/api/api.gen.go regenerates byte-identically from
 #           openapi/v1.yaml, carries the v2.8.0 header, and its registrations
 #           are readable
-#         suite: 232 passed, 0 failed
-#         packages: 7 with tests
+#         suite: 252 passed, 0 failed
+#         packages: 8 with tests
 #         ==> ok
 #         == prime ok
 #     and exits 0.
@@ -78,11 +83,13 @@
 #     suite       —          227      NEW, replacing `pass`. Reads prime-go's
 #                                    own `suite: N passed` line against a
 #                                    measured 232.
-#     gofmt, go-build, go-test
+#     gofmt, go-build, go-vet, go-test
 #                 —          —        NEW presence proofs. These steps ran
 #                                    inside `bin/prime-go` before and were
-#                                    unproved; they are the gate now.
-#     go-vet      —          —        kept unchanged.
+#                                    unproved; they are the gate now. Folded
+#                                    into ONE alternation (`go-mechanical`) when
+#                                    the ninth proof below arrived — the fold
+#                                    this file's own comment prescribed.
 #     go-generated unchanged unchanged.
 #     go-equivalence
 #                 —          gone     `internal/equivalence` no longer prints a
@@ -91,6 +98,13 @@
 #     ratelimit   —          —        NEW, and it replaces `go-equivalence`: the
 #                                    one tier in this repository that can still
 #                                    skip, counted at the gate.
+#     publish     —          —        NEW. The publish caller and the chart it
+#                                    points at, held in step: the caller must
+#                                    call kit's composed publish workflow,
+#                                    grant `packages: write`, pass `push: true`
+#                                    and `chart-dir: charts/gateway/`, and that
+#                                    Chart.yaml's version must be the
+#                                    substrate's `targetRevision: 0.1.0`.
 #     ok          —          —        kept in spirit; the line changed from
 #                                    `== prime ok (bun …)` to `== prime ok`.
 #
@@ -186,7 +200,7 @@ gate:
     # negative.
     - id: suite
       match: '^suite: ([0-9]+) passed'
-      # 227, against a measured 232. The margin is deliberate and small, and it
+      # 227, against a measured 252. The margin is deliberate and small, and it
       # is the same rule the deleted `pass` floor used (560 against 565): a
       # floor at exactly today's number has to be moved by hand before a
       # single test can be added, and a ratchet nobody can move is a ratchet
@@ -213,17 +227,27 @@ gate:
     # The step markers. They are presence proofs with no `minimum`, so all they
     # assert is that the banner was printed — which is what catches a gate that
     # exits 0 having done less than it appears to.
-    - id: gofmt
-      match: '^==> gofmt -l$'
-    - id: go-build
-      match: '^==> go build \./\.\.\.$'
-    # `go vet` is what this repository treats as its Go linter, and it is worth
-    # its place for the reason the deleted `typecheck` proof gave: nothing
-    # probes for `vet`, so this is the assertion that it did not stop running.
-    - id: go-vet
-      match: '^==> go vet \./\.\.\.$'
-    - id: go-test
-      match: '^==> go test \./\.\.\.$'
+    #
+    # THE FOUR MECHANICAL STEPS ARE ONE ALTERNATION, and the fold is this file's
+    # own comment made good: it said "the one to fold, if a ninth is ever
+    # needed, is `go-build`... folding `gofmt`/`go-build`/`go-vet`/`go-test`
+    # into ONE alternation". The ninth arrived — the `publish` proof below —
+    # the schema caps `proof` at 8, and this is the fold it prescribed. What is
+    # lost is only the attribution of WHICH step stopped, which the exit code
+    # and the step that never printed its banner both already report.
+    - id: go-mechanical
+      match: '^==> (gofmt -l|go build \./\.\.\.|go vet \./\.\.\.|go test \./\.\.\.)$'
+    - id: publish
+      # THE PUBLISH LOOP'S SERVICE HALF, proved at the gate. `.github/workflows/
+      # publish.yml` must call kit's composed publish workflow, grant
+      # `packages: write`, pass `push: true`, and pass `chart-dir:
+      # charts/gateway/` — and that directory's Chart.yaml must carry the
+      # version the substrate's Application pulls (`targetRevision: 0.1.0`),
+      # because the chart version IS the OCI tag. Each fact is one that makes
+      # the loop work; a caller that inlines the steps, omits the grant, omits
+      # the opt-in, or points at the wrong directory publishes nothing or
+      # publishes a chart the substrate never finds.
+      match: '^==> the publish caller publishes the image and the chart$'
     - id: go-generated
       # The contract is current. This is the step that regenerates
       # `internal/api/api.gen.go` from `openapi/v1.yaml` and fails when the
@@ -271,17 +295,16 @@ gate:
       # finishing.
       match: '^== prime ok$'
     #
-    # AT THE SCHEMA'S MAXIMUM AGAIN, and the counting changed to get here. The
-    # schema caps `proof` at 8 and this file has exactly 8; the cap is not
-    # enforced by anything in core — a ninth is a validation failure and that is
-    # all. Six of these eight are `bin/prime-go` step banners, which is the
-    # shape the tier grew into: a Go tier has more mechanical steps than a `bun
-    # test` invocation has lines. The one to fold, if a ninth is ever needed, is
-    # `go-build`, and it should be folded by folding `gofmt`/`go-build`/
-    # `go-vet`/`go-test` into ONE alternation — with no `minimum` on it, a
-    # folded presence proof loses only the attribution of WHICH step stopped,
-    # which the exit code and the step that never printed its banner both
-    # already report.
+    # SIX OF EIGHT, and the counting changed to get here. The schema caps
+    # `proof` at 8; this file has 6. It was at the cap — eight — until the
+    # `publish` proof above arrived as the ninth, and the fold this comment
+    # prescribed was made: `gofmt`/`go-build`/`go-vet`/`go-test` are now ONE
+    # alternation (`go-mechanical`), which is what "the one to fold, if a ninth
+    # is ever needed" said to do. What the fold loses is only the attribution
+    # of WHICH step stopped, which the exit code and the step that never
+    # printed its banner both already report. Two slots are free again; the
+    # next ninth should earn its place the same way this one did — a fact that
+    # makes a loop work, not a file that exists.
     #
     # WHAT IS NOT HERE, AND WHY:
     #   * a proof on `==> toolchain: go`. `bin/prime-go` compares mise.toml's

@@ -900,6 +900,21 @@ the only deploy path: the chart is pulled by Argo, or it does not run. It is
 not a second deploy path and not a Kamal config — a split brain beside Argo
 is the one thing `DEPLOYMENT.md` forbids.
 
+**A push to master publishes both artifacts.** `.github/workflows/publish.yml`
+— kit's caller template, copied with one change (`chart-dir: charts/gateway/`;
+gateway's chart is not at the template's default `chart/`) — calls kit's
+composed `publish.reusable.yml`: the image lands at
+`ghcr.io/cafaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest` on
+the default branch) and the chart at
+`oci://ghcr.io/cafaye/charts/gateway:<chart version>`. The chart's `version`
+**is** that tag — `chart.reusable.yml` reads it from `Chart.yaml` and never
+takes it as an input — so it is the tag the substrate's `Application` must
+match: a service that bumps the version without the substrate bumping its
+`targetRevision` (or the reverse) is a service that never deploys, and Argo
+reports no error. The loop is proved in `bin/prime`, which fails without the
+caller and fails again if the caller stops calling the composition, drops
+`packages: write`, drops `push: true`, or points at the wrong directory.
+
 This repository committed a second `Application` at
 `deploy/argocd/gateway-application.yaml` until packet `gateway-w87` deleted it.
 It had the same `metadata.name` and `namespace` as kit's, a **git** source
