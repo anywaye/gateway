@@ -26,13 +26,19 @@
 # is at `logging:` below: the crash layer resolves `otel-collector` at start.
 # billing, courier and identity have the same property and the same note.
 #
-# THERE IS NO `bin/dev` IN THIS REPOSITORY YET, and that is why the manual form is
-# written out in full rather than summarised as one line. billing, courier and
-# identity each carry a copy of kit's `templates/bin/dev.sh`, whose own first line
-# is "kit template — the local developer loop. Copy to bin/dev in the service
-# repo." So this is not a second way of doing the same thing: for gateway today it is
-# the only way, and copying that script is this repository's next step on this path
-# and nothing else.
+# `bin/dev` IS HERE, and it is kit's `templates/bin/dev.sh` copied byte-for-byte
+# from the ref `kit.ref` names — the same file billing, courier and identity
+# carry, so the fleet has one dev loop and not nine. It is a wrapper and nothing
+# more: it resolves the pin, fetches kit, writes `.env` from the fetched
+# `.env.example` when this repository has none, and then runs the two-`-f`
+# command below. `bin/dev` with no arguments is `compose up --wait`, migrate,
+# seed an admin, print the URLs; `bin/dev stack` resolves the pin and prints
+# where it landed with no docker; `bin/dev down` stops the stack and keeps the
+# volumes. Exit 0 means up, healthy, migrated, seeded; anything else is nonzero
+# and names the failing step.
+#
+# The manual form below stays, and not only for readers: it is the contract the
+# wrapper wraps, and the `KIT_COMPOSE_DIR` warning under it is load-bearing.
 #
 # `KIT_COMPOSE_DIR` IS NOT OPTIONAL AND OMITTING IT IS SILENT. kit's compose file
 # resolves its own build context and its initdb bind mount through
@@ -94,6 +100,32 @@
 # provisioning somebody else's database, which is the correct behaviour, and it
 # is recorded here instead of being worked around by inventing a `gateway` database.
 # If it wants fixing, it is fixed in kit, for every service that needs none.
+#
+# WHAT GATEWAY'S `.env` SAYS ABOUT `KIT_POSTGRES_DATABASES`: NOTHING, AND THAT
+# IS THE DECISION. `bin/dev` creates `.env` from the fetched kit template on
+# first run, and that template ships the variable empty — deliberately, after a
+# hardcoded `courier` in it overrode every adopting service's own committed
+# declaration on every machine that had run `bin/dev` (kit's `.env.example`
+# carries the whole account). gateway adds no override, and this file sets the
+# variable nowhere, so on a fresh machine the answer to the cluster's question
+# is the honest zero and `up --wait` fails. The two ways of answering are both
+# refused:
+#
+#   Naming `gateway` invents a role and a database for a service that opens
+#   neither — a name in a shared list describing no fact about the world, which
+#   is the defect the paragraph above already argues against.
+#
+#   Naming the databases of the services gateway fronts — identity, and whatever
+#   `ROUTE_TABLE` names — is the same defect one layer down. Those services are
+#   not in this stack; they declare their own databases in their own compose
+#   files, where the declaration is reviewable; and a value in gateway's
+#   git-ignored `.env` would DEFEAT those committed declarations — the exact
+#   mechanism kit emptied its template to fix — on a list gateway cannot keep
+#   current as the fleet grows.
+#
+# So the question is not gateway's to answer. A database name is a fact about
+# the service that uses it; gateway uses none. The fresh-machine refusal is
+# kit's correct behaviour, recorded above, not a gap in this file.
 #
 # WHAT THIS FILE MAY NOT DO, and the collector is the reason
 #
