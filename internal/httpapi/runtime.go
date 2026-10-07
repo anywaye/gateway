@@ -263,7 +263,14 @@ const defaultPort = "8080"
 // copies of a port number is the shape this repository's pin checks exist for — and
 // the failure here is not a failing test but a container healthcheck aimed at a
 // port nothing is listening on, reporting a healthy service as dead.
-const DefaultPort = defaultPort
+//
+// A `var` and not a `const` so the test can aim the probe at a port it controls.
+// The unset-PORT case asserts the probe reaches the DEFAULT port, and the only way
+// to assert that positively is to decide what the default is for the length of the
+// test — a const makes the case assert "nothing is listening on 8080", which is an
+// environmental assumption any development tool holding that port violates.
+// Production code never writes it; the test restores it.
+var DefaultPort = defaultPort
 
 // defaultClientID is the audience gateway accepts when nothing says otherwise:
 // gateway itself. `DEFAULT_CLIENT_ID` in `src/index.ts` (removed at cutover).

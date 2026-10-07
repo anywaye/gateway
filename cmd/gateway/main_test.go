@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"github.com/cafaye/gateway/internal/httpapi"
 )
 
 // The container health probe, tested rather than asserted.
@@ -120,11 +122,44 @@ func TestTheHealthProbeAimsAtPort(t *testing.T) {
 func TestAnUnsetPortProbesTheDefaultTheServerListensOn(t *testing.T) {
 	t.Setenv("PORT", "")
 
-	// Nothing is listening on 8080 in this test, so the answer is 1 — and what is
-	// being asserted is that the probe got as far as dialling rather than refusing
-	// to build a URL. A probe that reported 1 because it could not aim itself would
-	// pass this case and be wrong about every container.
+	// The default is injected rather than assumed. This case used to assert
+	// "nothing is listening on 8080", which is an environmental assumption: any
+	// machine where a development tool holds the default port — OrbStack does, on
+	// the operator's — fails it for a reason that has nothing to do with the probe,
+	// and CI has no such tool, so CI never sees the failure. Aiming the probe at a
+	// port the test controls keeps the assertion and makes it stronger: unset PORT
+	// resolves to the default, and the default answers.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("could not hold a port for the probe to find: %v", err)
+	}
+	defer listener.Close()
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	restore := httpapi.DefaultPort
+	httpapi.DefaultPort = port
+	t.Cleanup(func() { httpapi.DefaultPort = restore })
+
+	// Both answers, against the injected default — a probe that only ever refuses
+	// is indistinguishable from one that is broken, and the pair is what proves the
+	// probe's aim tracks the default rather than a hardcoded 8080.
+	if got := healthcheck(); got != 0 {
+		t.Fatalf("healthcheck() with an unset PORT = %d, want 0 — the probe found the default port %s listening", got, port)
+	}
+
+	// And the same probe against the same port once it is silent, which is the
+	// failure a hardcoded 8080 would otherwise hide on a machine where something
+	// else answers there.
+	_ = server.Close()
+	_ = listener.Close()
+
 	if got := healthcheck(); got != 1 {
-		t.Fatalf("healthcheck() with an unset PORT = %d, want 1 (nothing is listening on the default)", got)
+		t.Fatalf("healthcheck() with the default port %s silent = %d, want 1 — the probe aimed at the injected default, not at a hardcoded 8080", port, got)
 	}
 }
