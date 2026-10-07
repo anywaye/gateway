@@ -164,14 +164,20 @@ func TestAnAbsentSessionIsNilAndNotAnError(t *testing.T) {
 // instant is ALREADY expired. `<` here would keep a session alive for one more
 // read, which is a session outliving the token that authorises it.
 func TestTheExpiryBoundaryIsInclusive(t *testing.T) {
+	// Each row carries an OFFSET from the subtest's fixed clock rather than an
+	// absolute instant. The table literal is built before the loop, so a
+	// `time.Now()` written here is a different instant from the `now` each subtest
+	// fixes inside itself — and on a loaded machine the gap between the two is more
+	// than the millisecond the third row is made of, which flips the boundary and
+	// fails the case for a reason that tracks the machine and not the code.
 	for _, tc := range []struct {
 		name     string
-		expires  time.Time
+		offset   time.Duration
 		wantLive bool
 	}{
-		{"a millisecond before now", time.Now().Add(-time.Millisecond), false},
-		{"exactly now", time.Now(), false},
-		{"a millisecond after now", time.Now().Add(time.Millisecond), true},
+		{"a millisecond before now", -time.Millisecond, false},
+		{"exactly now", 0, false},
+		{"a millisecond after now", time.Millisecond, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newFakeRedis()
@@ -179,11 +185,14 @@ func TestTheExpiryBoundaryIsInclusive(t *testing.T) {
 			// race against the wall clock — which is the difference between testing
 			// this boundary and testing it once per run.
 			now := time.Now()
+			// Anchored to THAT clock, so every row is measured against the same
+			// instant the store uses and no row spends the next row's margin.
+			expires := now.Add(tc.offset)
 			store, err := New(fake, func() time.Time { return now })
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			if err := store.Put(context.Background(), minted, aSession("t", tc.expires)); err != nil {
+			if err := store.Put(context.Background(), minted, aSession("t", expires)); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
 			fake.mu.Lock()
