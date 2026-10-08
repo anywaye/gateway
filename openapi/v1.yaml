@@ -274,8 +274,7 @@ info:
     # the contract, which is the one artifact whose every byte is outward-facing.
     url: https://github.com/cafaye/gateway
   license:
-    name: MIT
-    url: https://opensource.org/license/mit
+    name: Proprietary - All rights reserved. See LICENSE in the cafaye/gateway repository.
 
 servers:
   - url: https://api.cafaye.com

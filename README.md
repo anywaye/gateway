@@ -1781,8 +1781,6 @@ Conventions live in [AGENTS.md](AGENTS.md); changes are recorded in
 
 ## License
 
-MIT. See [LICENSE](LICENSE). `package.json` declares the same thing.
+Proprietary. See [LICENSE](LICENSE).
 
-gateway is the public edge every request enters through, so a consumer's first
-contact with the fleet's licensing is gateway's. MIT is what keeps adding it a
-decision about dependencies rather than about obligations.
+Third-party components remain under their own licenses and notices.
