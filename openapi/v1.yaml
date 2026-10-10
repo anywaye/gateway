@@ -274,11 +274,10 @@ info:
     # the contract, which is the one artifact whose every byte is outward-facing.
     url: https://github.com/cafaye/gateway
   license:
-    # The services' grant, per OPS-D2: a Business Source Licence rather than the
-    # proprietary notice that stood here until 2026-10-10. `name` carries it and
-    # `identifier` stays off, because a BSL is not an SPDX identifier in the
-    # OpenAPI 3.1 sense a generated client can rely on — the grant of record is
-    # the repository's own LICENSE file, which is what this names.
+    # The services' grant, per OPS-D2: a Business Source Licence. `name` carries
+    # it and `identifier` stays off, because a BSL is not an SPDX identifier in
+    # the OpenAPI 3.1 sense a generated client can rely on — the grant of record
+    # is the repository's own LICENSE file, which is what this names.
     name: Business Source License 1.1. See LICENSE in the cafaye/gateway repository.
 
 servers:
