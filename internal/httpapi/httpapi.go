@@ -131,6 +131,26 @@ type Options struct {
 	// which is the honest v0 default for an app built without one rather than a
 	// limit that exists only in the config.
 	Limiter RateLimiter
+
+	// The API-key surface: the store the three `/v1/api-keys` management routes
+	// and the authentication gate read, or nil for none of it.
+	//
+	// Nil means a gateway that does not authenticate keys and declines the three
+	// management routes with the reference's `404` — which is the same answer
+	// `createApp({})` gives for the browser surface, and the same honest shape.
+	// Configuring it mounts the key gate in front of the bearer gate on the API
+	// surface and serves the three routes.
+	//
+	// The store is a seam, not a concrete type, so a deployment can back it with
+	// whatever survives a restart. The v0 implementation is one process; see
+	// `TODO(guard-07)` and the README for why a shared store is a later packet.
+	APIKeys *ApiKeyOptions
+}
+
+// ApiKeyOptions is the API-key surface's configuration: the store both the gate
+// and the management routes read.
+type ApiKeyOptions struct {
+	Store auth.ApiKeyStore
 }
 
 // TokenVerifier is the bearer-token gate, as the router needs it.
@@ -302,9 +322,12 @@ func New(options Options) (http.Handler, error) {
 		insideLimiter = nil
 		insideTelemetry = nil
 	}
-	router.Use(everyRequest(insideTelemetry, insideLimiter, bearerGate(options))...)
+	// The API-key gate runs before the bearer gate so a caller presenting a key is
+	// judged on the key, and both are principal-aware so a request the outer chain
+	// already authenticated is not verified a second time.
+	router.Use(everyRequest(insideTelemetry, insideLimiter, apiKeyGate(options.APIKeys), bearerGate(options))...)
 
-	svc := &server{probes: options.Probes, bff: bff, verifier: options.Verifier}
+	svc := &server{probes: options.Probes, bff: bff, verifier: options.Verifier, apiKeys: options.APIKeys}
 	api.HandlerWithOptions(
 		svc,
 		api.ChiServerOptions{BaseRouter: router, ErrorHandlerFunc: paramRefusal()},
@@ -371,12 +394,22 @@ func New(options Options) (http.Handler, error) {
 		Assertion: options.Assert,
 	}).handle(router)
 
-	gates := everyRequest(telemetryMiddleware, limiter, credentialGate(authentication(options), table))
+	// The chain in front of the pass-through, in the order the reference registers
+	// them: the API-key gate, then the credential gate, then the scope gate, then
+	// the limiter. The scope gate is the route's own declaration of what a caller
+	// must hold to be forwarded — mounted after authentication and before the
+	// limiter, so a caller refused for capability is counted against nothing, the
+	// same rule an unverified token gets.
+	gates := everyRequest(telemetryMiddleware, limiter,
+		apiKeyGate(options.APIKeys),
+		credentialGate(authentication(options), table),
+		scopeGate(options.Verifier, table),
+	)
 	return &mount{Router: router, handler: compose(proxied, gates...)}, nil
 }
 
 // everyRequest is the middleware every request passes through, in order: the span,
-// then the repeated-header reduction, then `gate` when there is one, then the
+// then the repeated-header reduction, then each gate in the order given, then the
 // limiter.
 //
 // ## WHY IT IS ONE LIST AND NOT THREE MOUNTS
@@ -388,6 +421,11 @@ func New(options Options) (http.Handler, error) {
 // when there is no pass-through and wraps the pass-through with it when there is;
 // both are the same chain, so a fourth middleware added to gateway's request path is
 // added in one place.
+//
+// The gates are variadic and run between the reduction and the limiter in the order
+// given: the API-key gate, then the credential gate, then the scope gate. That order
+// is the property — a credential is established before a capability is checked, and
+// both are established before the limiter counts anything.
 //
 // ## THE SPAN IS IN EXACTLY ONE OF THE TWO PLACEMENTS, AND THAT IS MEASURED
 //
@@ -419,14 +457,19 @@ func New(options Options) (http.Handler, error) {
 //
 // `credentialGate` returns nil when there is no `Authenticate`, and `New` passes a
 // gate only when there are routes to gate, so `gate == nil` here means a gateway
-// with no verifier rather than one that refuses everything.
-func everyRequest(telemetry, limiter, gate func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
+// with no verifier rather than one that refuses everything. The same is true of the
+// API-key and scope gates below.
+func everyRequest(telemetry, limiter func(http.Handler) http.Handler, gates ...func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
 	chain := []func(http.Handler) http.Handler{collapseRepeatedHeaders}
 	if telemetry != nil {
 		chain = append([]func(http.Handler) http.Handler{telemetry}, chain...)
 	}
-	if gate != nil {
-		chain = append(chain, gate)
+	for _, gate := range gates {
+		// A nil gate is not a gate that refuses — it is the absence of one, and
+		// chi's `Use` panics on a nil middleware rather than skipping it.
+		if gate != nil {
+			chain = append(chain, gate)
+		}
 	}
 	if limiter != nil {
 		chain = append(chain, limiter)
@@ -449,11 +492,102 @@ func compose(next http.Handler, middlewares ...func(http.Handler) http.Handler) 
 // Nil rather than a middleware that permits everything, because a gate that cannot
 // refuse is not a gate and the honest spelling of "there is none" is the absence —
 // the same reason `credentialGate` returns nil rather than `next`.
+//
+// It passes a request that already carries a verified principal. When a route table
+// is configured the outer chain runs first and its credential gate (or API-key gate)
+// has already authenticated the request; re-verifying here would either refuse an
+// API key — its header is not a bearer token — or pay for a second verification of a
+// token the first already checked.
 func bearerGate(options Options) func(http.Handler) http.Handler {
 	if options.Verifier == nil {
 		return nil
 	}
-	return onPrefix("/v1/", options.Verifier.Require(writeAuthRefusal))
+	require := options.Verifier.Require(writeAuthRefusal)
+	return onPrefix("/v1/", func(next http.Handler) http.Handler {
+		guarded := require(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := PrincipalFrom(r); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	})
+}
+
+// apiKeyGate is the API-key credential gate, or nil when no store is configured.
+//
+// Mounted before the bearer gate so a caller presenting a key is judged on the key,
+// and scoped to the API surface so a key never authenticates a browser request. It
+// passes any request whose `Authorization` is not an API key — a bearer token, a
+// cookie and no credential at all are each a different gate's question.
+func apiKeyGate(options *ApiKeyOptions) func(http.Handler) http.Handler {
+	if options == nil || options.Store == nil {
+		return nil
+	}
+	inner := auth.ApiKeyGate(options.Store, writeAuthRefusal)
+	return func(next http.Handler) http.Handler {
+		guarded := inner(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !underRouteMount(NormaliseRequestPath(r.URL.EscapedPath())) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
+}
+
+// scopeGate is a route's own declaration of what a caller must hold to be forwarded,
+// or nil when there is no verifier.
+//
+// This is the capabilities half of what the verifier proves about a caller, and the
+// half that was implemented but mounted by nothing until this packet: without it, a
+// route that declared scopes still forwarded any verified caller, so on a shared
+// platform the forwarded traffic was by design able to act as any tenant.
+//
+// It is mounted after the credential gate and before the limiter, so the order the
+// house rule names holds — a credential is established before a capability is
+// checked, and a caller refused for capability is counted against nothing, exactly
+// as a caller whose token does not verify is.
+//
+// Only a route that DECLARED scopes is checked, and only gateway's own routes are
+// exempt: `/v1/me` and the `/v1/api-keys` management surface are answered by
+// gateway, not forwarded, so a broad `/v1` table entry cannot scope-gate them.
+func scopeGate(verifier TokenVerifier, table RouteTable) func(http.Handler) http.Handler {
+	if verifier == nil {
+		return nil
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := NormaliseRequestPath(r.URL.EscapedPath())
+			if isGatewayOwned(path) || !underRouteMount(path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			route, ok := ResolveRoute(table, path)
+			if !ok || len(route.Scopes) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// The credential gate in front of this one has already put a verified
+			// principal on the context (or refused 401), so `RequireScope`'s 401
+			// branch is the wiring-mistake path, not a live one.
+			handler := next
+			for i := len(route.Scopes) - 1; i >= 0; i-- {
+				middleware, err := verifier.RequireScope(writeAuthRefusal, route.Scopes[i])
+				if err != nil {
+					// Unreachable: the table validated every scope at boot, and an
+					// empty one is a refusal to construct rather than a gate.
+					next.ServeHTTP(w, r)
+					return
+				}
+				handler = middleware(handler)
+			}
+			handler.ServeHTTP(w, r)
+		})
+	}
 }
 
 // middlewareOf is an optional limiter as an optional middleware.
@@ -747,6 +881,10 @@ type server struct {
 	// Nil means no bearer gate was mounted, which is what makes `/v1/me` decline
 	// rather than answer. See `Options.Verifier`.
 	verifier TokenVerifier
+
+	// Nil means no API-key surface: the key gate is not mounted and the three
+	// `/v1/api-keys` routes decline with the reference's `404`.
+	apiKeys *ApiKeyOptions
 }
 
 var _ api.ServerInterface = (*server)(nil)

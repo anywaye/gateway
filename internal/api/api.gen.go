@@ -246,6 +246,27 @@ func (e RegisterUserParamsSecFetchSite) Valid() bool {
 	}
 }
 
+// APIKeySummary One key as the listing shows it. **No `hash`** — a digest is not the secret,
+// but the listing is the one place every credential an account holds appears at
+// once, and a digest has no business being in it.
+type APIKeySummary struct {
+	ID     string `json:"id"`
+	Prefix string `json:"prefix"`
+
+	// RevokedAt `null` while the key is live; the instant it was revoked once it is not.
+	RevokedAt time.Time `json:"revokedAt"`
+	Scopes    []string  `json:"scopes"`
+}
+
+// CreateAPIKeyRequest The scopes the new key will hold. The account is the verified principal's and
+// is not a field — see `POST /v1/api-keys` for why a caller naming the account
+// would be the cross-tenant bug as a feature.
+type CreateAPIKeyRequest struct {
+	// Scopes The capabilities the key holds, in the same vocabulary as a token's
+	// `scope`. Each is one non-empty token with no whitespace.
+	Scopes []string `json:"scopes"`
+}
+
 // FieldError defines model for FieldError.
 type FieldError struct {
 	// Code A stable slug, safe to switch on.
@@ -262,6 +283,20 @@ type Health struct {
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
+
+// IssuedAPIKey The mint notice. `key` is the plaintext credential and is returned **exactly
+// once** — gateway stores only its SHA-256 and has no way to show it again, so
+// a caller that loses it must mint a new one.
+type IssuedAPIKey struct {
+	// ID The key's id, used to revoke it.
+	ID string `json:"id"`
+
+	// Key The plaintext key. Store it somewhere safe; it is never shown again.
+	Key string `json:"key"`
+
+	// Prefix The key's first twelve characters, for telling two keys apart in a listing.
+	Prefix string `json:"prefix"`
+}
 
 // LoginRequest Forwarded to `identity` verbatim, as `RegisterRequest` is.
 type LoginRequest struct {
@@ -413,6 +448,9 @@ type V0Error struct {
 
 // V0ErrorError defines model for V0Error.Error.
 type V0ErrorError string
+
+// APIKeyID defines model for ApiKeyId.
+type APIKeyID = string
 
 // Origin defines model for Origin.
 type Origin = string
@@ -594,6 +632,9 @@ type CreateSessionJSONRequestBody = LoginRequest
 // RegisterUserJSONRequestBody defines body for RegisterUser for application/json ContentType.
 type RegisterUserJSONRequestBody = RegisterRequest
 
+// CreateAPIKeyJSONRequestBody defines body for CreateAPIKey for application/json ContentType.
+type CreateAPIKeyJSONRequestBody = CreateAPIKeyRequest
+
 // Getter for additional properties for LoginRequest. Returns the specified
 // element and whether it was found
 func (a LoginRequest) Get(fieldName string) (value interface{}, found bool) {
@@ -772,6 +813,15 @@ type ServerInterface interface {
 	// Readiness Readiness
 	// (GET /readyz)
 	Readiness(w http.ResponseWriter, r *http.Request)
+	// ListAPIKeys List this account's API keys
+	// (GET /v1/api-keys)
+	ListAPIKeys(w http.ResponseWriter, r *http.Request)
+	// CreateAPIKey Mint an API key
+	// (POST /v1/api-keys)
+	CreateAPIKey(w http.ResponseWriter, r *http.Request)
+	// RevokeAPIKey Revoke an API key
+	// (DELETE /v1/api-keys/{id})
+	RevokeAPIKey(w http.ResponseWriter, r *http.Request, id APIKeyID)
 	// GetCurrentPrincipal The verified principal
 	// (GET /v1/me)
 	GetCurrentPrincipal(w http.ResponseWriter, r *http.Request)
@@ -814,6 +864,24 @@ func (_ Unimplemented) Liveness(w http.ResponseWriter, r *http.Request) {
 // Readiness Readiness
 // (GET /readyz)
 func (_ Unimplemented) Readiness(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListAPIKeys List this account's API keys
+// (GET /v1/api-keys)
+func (_ Unimplemented) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateAPIKey Mint an API key
+// (POST /v1/api-keys)
+func (_ Unimplemented) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RevokeAPIKey Revoke an API key
+// (DELETE /v1/api-keys/{id})
+func (_ Unimplemented) RevokeAPIKey(w http.ResponseWriter, r *http.Request, id APIKeyID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1054,6 +1122,60 @@ func (siw *ServerInterfaceWrapper) Readiness(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListAPIKeys operation middleware
+func (siw *ServerInterfaceWrapper) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAPIKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAPIKey operation middleware
+func (siw *ServerInterfaceWrapper) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAPIKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeAPIKey operation middleware
+func (siw *ServerInterfaceWrapper) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id APIKeyID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeAPIKey(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetCurrentPrincipal operation middleware
 func (siw *ServerInterfaceWrapper) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 
@@ -1189,6 +1311,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get("/v1/me", wrapper.GetCurrentPrincipal)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get("/v1/api-keys", wrapper.ListAPIKeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post("/v1/api-keys", wrapper.CreateAPIKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete("/v1/api-keys/{id}", wrapper.RevokeAPIKey)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post("/auth/register", wrapper.RegisterUser)

@@ -10,6 +10,40 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **API keys, end to end, in Go.** `openapi/v1.yaml` declares three `api-keys`
+  operations — `POST /v1/api-keys` (mint), `GET /v1/api-keys` (list) and
+  `DELETE /v1/api-keys/{id}` (revoke) — and the generated router mounts them.
+  `internal/auth/apikey.go` is the port: 32 CSPRNG bytes behind `caf_`, only
+  the SHA-256 stored, the first twelve characters shown once at issue, the
+  `ApiKeyStore` seam, and the key gate mounted in front of the bearer gate on
+  the API surface. A key sets the account's principal — a key *is* the account
+  — so everything downstream treats the two credentials as the same caller.
+  The store is one process (`TODO(guard-07)`'s shared store is the packet that
+  closes that).
+
+  Three decisions, each recorded where it is enforced rather than left for a
+  reader to infer: the listing never returns the `hash` (a digest is not the
+  secret, but the listing is the one place every credential an account holds
+  appears at once); a revoke of a key that is not the caller's is a `204`
+  no-op, not a `404` or a `403`, because cross-tenant is absence and a
+  distinguishable status would confirm that a guessed id once existed; and the
+  three routes require authentication but no specific scope, because no scope
+  vocabulary is wired to routes and inventing one is a product decision. The
+  account is never a field — it is the verified principal's, so a document
+  that let a caller name the account would describe the cross-tenant bug as a
+  feature.
+
+- **A route can declare the scopes a caller must hold.** `ROUTE_TABLE` entries
+  gain an optional `scopes` array, and `scopeGate` mounts `RequireScope` on a
+  route that declares them — the capabilities half of what the verifier proves
+  about a caller, which was implemented and tested but mounted by nothing. The
+  gate runs after the credential gate and before the limiter, so a caller
+  refused for capability is counted against nothing, the same rule an
+  unverified token gets. A `public` entry cannot declare scopes and refuses to
+  boot, because a public route has no verified caller to check against. A
+  route with no `scopes` field forwards every verified caller, which is what
+  every deployed route already means.
+
 - **A push to master now publishes the image and the chart.**
   `.github/workflows/publish.yml` — kit's caller template, copied with one
   change (`chart-dir: charts/gateway/`, because gateway's chart is not at the

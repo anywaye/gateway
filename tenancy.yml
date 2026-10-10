@@ -106,7 +106,7 @@ scope:
       reason: the test token minter writing the account_id claim into a minted test token — a fixture, not a query
     # --- configuration-validation message text -------------------------------
     - file: internal/httpapi/table.go
-      line: 910
+      line: 979
       reason: route-table validation error text naming account_id as an example of a caller's own claim a route may declare — a message, not a query
     # --- Go test fixtures and names -----------------------------------------
     - file: internal/httpapi/assertion_test.go

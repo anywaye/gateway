@@ -177,7 +177,7 @@ func TestTheRouterServesExactlyWhatTheGeneratedDocumentDeclares(t *testing.T) {
 	}
 
 	if len(declared) < 7 {
-		t.Errorf("the generated file registers %d route(s); openapi/v1.yaml declares seven operations and the generator emits one registration each. Fewer means this file is not reading the document.", len(declared))
+		t.Errorf("the generated file registers %d route(s); openapi/v1.yaml declares the contract's operations and the generator emits one registration each. Fewer means this file is not reading the document.", len(declared))
 	}
 }
 
@@ -217,7 +217,7 @@ func TestTheServerImplementsEveryOperationTheDocumentDeclares(t *testing.T) {
 	// generator rather than against a number typed into a test. Anything a new
 	// operation adds appears in neither list and is named as undecided there.
 	declared := declaredRoutes(t)
-	if len(declared) != 7 {
-		t.Errorf("the generated file registers %d operation(s); the two lists in TestEveryOperationIsEitherServedOrDeclined describe seven, so one of them is stale", len(declared))
+	if len(declared) != 10 {
+		t.Errorf("the generated file registers %d operation(s); the two lists in TestEveryOperationIsEitherServedOrDeclined describe ten, so one of them is stale", len(declared))
 	}
 }

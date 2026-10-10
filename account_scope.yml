@@ -127,7 +127,7 @@ surface:
   # exists and the reason `bin/prime-go` fails on a committed file that has
   # regressed to it. That property still holds of the committed file today, which
   # is what makes 7 a floor rather than a zero.
-  minimum: 7
+  minimum: 10
   accountKey: account_id
 
 entryPoints:
@@ -243,7 +243,49 @@ entryPoints:
     accountFrom: { via: Authenticate, file: internal/auth/verifier.go, line: 541 }
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1191
+      line: 1313
+
+  # --- the three API-key management routes, registered by the GO implementation --
+  # Three rows for three generated registrations, and they exist for the same
+  # counting reason as the rows below: `undeclared` is decided by the REGISTRATIONS
+  # in `surface.sources`, so every registration needs a row behind it.
+  #
+  # All three are `accountScoped: false`, and that is the honest answer rather than
+  # a dodge. Each acts on the caller's OWN account — the account is read off the
+  # verified principal the auth gate established, and is never a field — so none can
+  # reach another account's rows: a listing returns the caller's own keys, a mint
+  # names the caller's own account, and a revoke of another account's key is a `204`
+  # no-op. They hold no rows at all, which is the same reason `tenancy.yml`'s
+  # enumeration is an honest zero.
+  - id: go-api-keys-create
+    kind: http
+    method: POST
+    path: /v1/api-keys
+    accountScoped: false
+    reason: none
+    registeredAt:
+      file: internal/api/api.gen.go
+      line: 1319
+
+  - id: go-api-keys-list
+    kind: http
+    method: GET
+    path: /v1/api-keys
+    accountScoped: false
+    reason: none
+    registeredAt:
+      file: internal/api/api.gen.go
+      line: 1316
+
+  - id: go-api-keys-revoke
+    kind: http
+    method: DELETE
+    path: /v1/api-keys/{id}
+    accountScoped: false
+    reason: none
+    registeredAt:
+      file: internal/api/api.gen.go
+      line: 1322
 
   # --- the other six, registered by the GO implementation ----------------------
   # Six rows here for six generated registrations, and they exist for one reason:
@@ -277,7 +319,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1185
+      line: 1307
 
   - id: go-readyz
     kind: http
@@ -287,7 +329,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1188
+      line: 1310
 
   # HISTORY, AND TWO OF ITS CLAIMS ARE NOW FALSE. Read the `me` row above first;
   # this block is what the state was BEFORE that row was re-pointed at the Go
@@ -352,7 +394,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1194
+      line: 1325
 
   - id: go-bff-login
     kind: http
@@ -362,7 +404,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1197
+      line: 1328
 
   - id: go-bff-logout
     kind: http
@@ -372,7 +414,7 @@ entryPoints:
     reason: public
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1200
+      line: 1331
 
   - id: go-bff-me
     kind: http
@@ -382,4 +424,4 @@ entryPoints:
     reason: none
     registeredAt:
       file: internal/api/api.gen.go
-      line: 1203
+      line: 1334

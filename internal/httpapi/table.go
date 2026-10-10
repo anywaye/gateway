@@ -116,6 +116,25 @@ type RouteTarget struct {
 	// without gateway being taught its name. A name the token does not carry is
 	// omitted, never invented and never refused.
 	Principal []string
+
+	// The scopes a caller must hold for this prefix, and therefore the only
+	// callers gateway forwards to it.
+	//
+	// Nil means **no scope check** — the route forwards any verified caller,
+	// which is what every entry already means and the reason the field is additive:
+	// a deployed route changes behaviour only when its operator says so.
+	//
+	// This is the capabilities half of what the verifier proves about a caller,
+	// and on a shared platform it is the difference between "any tenant may reach
+	// this service" and "only a tenant holding this scope may". The check is
+	// mounted by `scopeGate`, after the credential gate and before the limiter, so
+	// a caller refused for capability is counted against nothing — the same rule
+	// an unverified token gets.
+	//
+	// A `public` entry cannot declare scopes, and the combination refuses to boot:
+	// a public route has no verified caller, so there is nothing to check a scope
+	// against. The same rule `principal` has, for the same reason.
+	Scopes []string
 }
 
 // RouteTable is path prefix -> upstream. The whole of routing's configuration.
@@ -137,6 +156,8 @@ type ResolvedRoute struct {
 	Public  bool
 	// Claims to assert about the caller, or nil when the entry declared none.
 	Principal []string
+	// Scopes the caller must hold, or nil when the entry declared none.
+	Scopes []string
 }
 
 // RouteMount is the prefix every routed path lives under.
@@ -152,6 +173,27 @@ const RouteMount = "/v1/*"
 
 // gatewayOwned is the one path under the mount that gateway itself serves.
 const gatewayOwned = "/v1/me"
+
+// isGatewayOwned reports whether a path under the mount is gateway's own route
+// rather than forwarded traffic.
+//
+// The pass-through and the scope gate both exclude these paths, the way the
+// reference's registration order does for /v1/me: chi's trie prefers the more
+// specific path, so a pass-through mounted as middleware would see them — and a
+// table carrying the `/v1` prefix, which is allowed and claims everything under the
+// surface, would relay gateway's own route to a service.
+//
+// `/v1/api-keys` and its subtree are gateway's own for the same reason `/v1/me`
+// is: they are answered by gateway's own handlers, so a broad table entry must not
+// shadow them. Without this, `ROUTE_TABLE={"/v1":{…}}` would relay the key
+// management surface to the upstream and the three routes would 404 from a service
+// that has never heard of them.
+func isGatewayOwned(path string) bool {
+	if path == gatewayOwned {
+		return true
+	}
+	return path == "/v1/api-keys" || strings.HasPrefix(path, "/v1/api-keys/")
+}
 
 // ValidateRouteTable checks a table and returns a fresh one.
 //
@@ -219,13 +261,27 @@ func ValidateRouteTable(table RouteTable) (RouteTable, error) {
 			return nil, fmt.Errorf("%w: routeTable: %s is declared public AND declares principal claims, and a public route carries no assertion about a caller. \"public\" means the prefix is mounted with no caller credential required, so there is no verified caller to assert anything about: an assertion here would be a signed statement about a request that nobody was required to make. Drop \"principal\" if the route really is anonymous, or drop \"public\" if the upstream really does need to know who the caller is — a private prefix is what carries the assertion", ErrNotConfigured, prefix)
 		}
 
+		// A public route has no verified caller, so there is no credential whose
+		// scope could be checked either. Same rule as `principal` above, same
+		// reason, and refused at boot for the same reason: an entry that says this
+		// and does not get it is a table that lies about what is on the wire.
+		if target.Public && target.Scopes != nil {
+			return nil, fmt.Errorf("%w: routeTable: %s is declared public AND declares scopes, and a public route has no verified caller to check a scope against. \"public\" means the prefix is mounted with no caller credential required, so a scope here would be a check that never runs — or worse, a route that silently forwards everyone. Drop \"scopes\" if the route really is anonymous, or drop \"public\" if the upstream really does need a capable caller", ErrNotConfigured, prefix)
+		}
+
 		var claims []string
 		if target.Principal != nil {
 			claims = make([]string, len(target.Principal))
 			copy(claims, target.Principal)
 		}
 
-		checked[prefix] = RouteTarget{BaseURL: base, Token: target.Token, Public: target.Public, Principal: claims}
+		var scopes []string
+		if target.Scopes != nil {
+			scopes = make([]string, len(target.Scopes))
+			copy(scopes, target.Scopes)
+		}
+
+		checked[prefix] = RouteTarget{BaseURL: base, Token: target.Token, Public: target.Public, Principal: claims, Scopes: scopes}
 	}
 
 	return checked, nil
@@ -283,6 +339,10 @@ func ResolveRoute(table RouteTable, path string) (ResolvedRoute, bool) {
 		if upstream.Principal != nil {
 			best.Principal = make([]string, len(upstream.Principal))
 			copy(best.Principal, upstream.Principal)
+		}
+		if upstream.Scopes != nil {
+			best.Scopes = make([]string, len(upstream.Scopes))
+			copy(best.Scopes, upstream.Scopes)
 		}
 		bestLength = len(prefix)
 	}
@@ -761,6 +821,7 @@ type rawTarget struct {
 	Token     *string         `json:"token"`
 	Public    json.RawMessage `json:"public"`
 	Principal json.RawMessage `json:"principal"`
+	Scopes    json.RawMessage `json:"scopes"`
 }
 
 // ParseRouteTable reads the table an operator wrote and validates it.
@@ -829,6 +890,14 @@ func rawTargetOf(prefix string, raw json.RawMessage) (RouteTarget, error) {
 			return RouteTarget{}, err
 		}
 		target.Principal = claims
+	}
+
+	if len(decoded.Scopes) > 0 {
+		scopes, err := checkScopesField(prefix, decoded.Scopes)
+		if err != nil {
+			return RouteTarget{}, err
+		}
+		target.Scopes = scopes
 	}
 
 	return target, nil
@@ -910,4 +979,50 @@ func checkClaimName(prefix, name string) error {
 		return fmt.Errorf("%w: routeTable: %s principal may not name %q, which is gateway's own and not the caller's. The issuer, the audience that binds the assertion to this upstream, the lifetime and the correlation id are set by gateway from the route it is calling; an entry that chose them would be minting an assertion that verifies for a route it was never minted for. Declare the caller's own claims instead — \"sub\", \"account_id\", \"github_id\" — and gateway will bind and date it", ErrNotConfigured, prefix, name)
 	}
 	return nil
+}
+
+// checkScopesField accepts a non-empty list of scope names, and refuses the same
+// four shapes `checkPrincipalField` does, because a scope name is the same kind
+// of value — one token a caller either holds or does not — and the same operator
+// can type the same mistakes:
+//
+//   - **Not an array.** `{"scopes": "pantry:read"}` is a string where a list was
+//     wanted. Coerced it would be one scope named `p`,`a`,…
+//   - **An empty array.** Which is not the same as omitting the field: omitted
+//     means "no scope check", and an empty list can only mean "a gate that
+//     refuses everything with a message naming nothing" — the one outcome the
+//     field exists to prevent.
+//   - **A blank name, or one with whitespace.** A scope is one token from a
+//     space-separated claim, so a name with a space in it is a name no token
+//     can match.
+//
+// A repeat is deduplicated rather than refused, for the reason `principal` gives:
+// two spellings of the same scope is an editor, not an undecided question.
+func checkScopesField(prefix string, raw json.RawMessage) ([]string, error) {
+	var names []string
+	if err := json.Unmarshal(raw, &names); err != nil {
+		return nil, fmt.Errorf("%w: routeTable: %s scopes must be an array of scope names, got %s. It is a list in JSON, not a string: {\"scopes\":\"pantry:read\"} is a configuration that does not mean what it says. Write [\"pantry:read\"], or omit the field to declare that this route forwards any verified caller", ErrNotConfigured, prefix, string(raw))
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%w: routeTable: %s scopes is an empty array, which is not the same as leaving the field out. An empty list can only mean a gate that refuses every caller with a message naming nothing. Omit \"scopes\" if this route needs no scope check; write the scope names if it does", ErrNotConfigured, prefix)
+	}
+
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" {
+			return nil, fmt.Errorf("%w: routeTable: %s scopes must hold scope names as non-empty strings, got \"\"", ErrNotConfigured, prefix)
+		}
+		if hasHeaderUnsafe(name) {
+			return nil, fmt.Errorf("%w: routeTable: %s scope names may not contain whitespace or control characters, got %q. A scope is one token from a space-separated claim, so a name with a space in it is a name no token can match", ErrNotConfigured, prefix, name)
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+
+	return out, nil
 }

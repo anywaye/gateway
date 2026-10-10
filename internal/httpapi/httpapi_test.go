@@ -325,6 +325,12 @@ func TestEveryOperationIsEitherServedOrDeclined(t *testing.T) {
 		// `GET /v1/me` — the bearer-token gate is Wave 3, and
 		// `src/index.ts` (removed at cutover) does not register the route without a verifier.
 		"GET /v1/me": `{"error":"not_found","message":"no such route"}`,
+		// The three `/v1/api-keys` routes — the API-key surface needs a store, and a
+		// gateway built with nothing configured has none, so they decline with the
+		// same v0 `404` the other unconfigured operations do.
+		"POST /v1/api-keys":        `{"error":"not_found","message":"no such route"}`,
+		"GET /v1/api-keys":         `{"error":"not_found","message":"no such route"}`,
+		"DELETE /v1/api-keys/{id}": `{"error":"not_found","message":"no such route"}`,
 		// The four `/auth` routes — the BFF and the session store are Wave 3, and
 		// `src/index.ts` (removed at cutover) does not register them without an identity to ask.
 		"POST /auth/register": `{"error":"not_found","message":"no such route"}`,

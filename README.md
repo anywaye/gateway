@@ -1085,8 +1085,8 @@ this table would mis-size the work.
 | `GET /v1/me` | ✅ | ✅ **ported and served** — with a verifier it renders the principal in the reference's key order (`principal.go:60-81`); only `New(Options{})`, which has no verifier, declines with the reference's `404` |
 | the four `/auth` routes | ✅ | ✅ **ported** — behind `Options.BFF`, which is nil by default, and built from the environment when `IDENTITY_URL` **and** `REDIS_URL` are both set |
 | bearer-token verification, JWKS cache | ✅ | ✅ **ported** — `internal/auth` (`verifier.go`, `jwks.go`, `claims.go`, `middleware.go`); the algorithm is pinned before any key fetch, the cache is bounded by its TTL and by one forced refresh per window, and a key set that cannot be fetched is a `503` |
-| scopes (`requireScope` / `RequireScope`) | ✅ | 🟡 **implemented, not mounted** — `auth.RequireScope` exists and is tested, and `httpapi.go:139-142` says a later packet mounts it. No Go route carries a scope check today |
-| API keys | ✅ | ❌ **not ported, and not yet portable** — see below |
+| scopes (`requireScope` / `RequireScope`) | ✅ | ✅ **ported and mounted** — `auth.RequireScope` is implemented and tested, and `scopeGate` mounts it on any route table entry that declares `scopes`. A caller without the declared scope is a `403`, counted against nothing |
+| API keys | ✅ | ✅ **ported** — `internal/auth/apikey.go`: SHA-256 hashing, `caf_` prefix, the store seam, the key gate in front of the bearer gate, and the three `/v1/api-keys` routes. The store is one process (`TODO(guard-07)`) |
 | rate limiting, `RateLimit-*` headers, the `429` | ✅ | ✅ **ported** — GCRA, `internal/ratelimit`; the refusal and the fail-open path are compared against the reference |
 | the per-route allowance table | ✅ | ✅ **ported and live in the shipped binary** — `internal/ratelimit/limits.go`, wired at `runtime.go:196-213`. `/auth/login` draws 10/min under policy `gateway-auth-login`, not the 600/min default |
 | the BFF's session store | ✅ | **ported, and in Redis** — see below |
@@ -1149,18 +1149,23 @@ constructor. A `501` would have been more truthful about the code and less true
 about the contract, and where the two disagree the TypeScript answer is the
 correct one.
 
-### The limiter does not count forwarded traffic, and that is still true
+### The limiter counts forwarded traffic
 
-The limiter is ported, and its refusal is compared against the reference on a path
-the route table claims as well as on two it does not. With the allowance exhausted,
-`GET /v1/pantry/items` is a `429` with the whole `RateLimit-*` family on **both**
-sides. That was not true, and the reason is worth stating because chi's middleware
-model invites it: **`Mux.Use` wraps the routes registered on the router it is called
+The limiter is ported, and with the allowance exhausted `GET /v1/pantry/items` is a
+`429` with the whole `RateLimit-*` family — including on the Go side. That was not
+always true, and the reason is worth stating because chi's middleware model invites
+the opposite: **`Mux.Use` wraps the routes registered on the router it is called
 on.** The pass-through is mounted *on top of* that router and, for a path a table
 claims, never calls it — so a limiter mounted with `Use` counted gateway's own
 routes and forwarded nothing at all. An edge whose limiter does not run on forwarded
 traffic is not limiting the traffic that costs it money, because that traffic is the
 kind that reaches an upstream and does work.
+
+The fix was to build the request chain once, in `everyRequest`, and mount it in
+exactly one of two places: with `Use` on the router when there is no pass-through,
+and wrapped around the pass-through when there is — never both, because the
+pass-through calls the router for a path no table claims and a limiter in both
+places counts those requests twice.
 
 `httpapi.New` therefore builds the chain once, in `everyRequest`: the repeated-header
 reduction, then the credential gate, then the limiter. It is registered with `Use`
@@ -1554,22 +1559,19 @@ the source with the packet that replaces them.
   wrong in the *other* direction: `src/` is **not** legacy here, it is the reference
   the Go service is measured against, and the packet that deletes it is a later one.
   What is still missing is listed below, not in the size of the table.
-- **A Go gateway has no API keys.** `src/middleware/apiKey.ts` has no Go counterpart
-  at all — no store, no hashing, no prefix check, no gate — so a Go gateway is
-  *less strict* than the TypeScript one for a caller holding a key, which is a
-  different kind of gap from the session store and worth stating separately: that one
-  made `/auth/*` unreachable, this one makes a class of caller un-refused. This is a
-  **document** gap before it is a code gap: `openapi/v1.yaml` declares zero
-  `api-keys` operations, so there is nothing for the generated router to mount.
-- **No Go route carries a scope check.** `auth.RequireScope` is implemented and
-  tested, and `httpapi.go:139-142` says a later packet mounts it; until one does,
-  `requireScope` is a method nothing calls, so the capabilities half of what the
-  verifier proves about a caller is unused in Go.
-- **The limiter does not count forwarded traffic.** Gateway-owned routes are counted
-  and refused correctly; traffic a route table claims is relayed by the pass-through,
-  which wraps the router from the outside, and never reaches the limiter mounted
-  inside it. Held open by `TestTheGoSideDoesNotCountRoutedTraffic` — see
-  [The Go rewrite](#the-go-rewrite) for why it is not fixed yet.
+- **The API-key store is one process.** Keys are issued, hashed, scoped and
+  revoked, and the three `/v1/api-keys` routes and the key gate are ported — but
+  the store is a `Map` in one process, so a key issued on one replica does not exist
+  on the next and every key is lost on restart. `ApiKeyStore` is the seam;
+  `TODO(guard-07)`. Deliberately absent rather than written wrongly.
+- **No route declares a scope, so the scope gate usually does not run.** The gate is
+  mounted and a route table entry may declare `scopes`, but no deployment has asked
+  for one yet, so in practice every verified caller is still forwarded. Turning it on
+  is a per-entry configuration decision, and the capability is there.
+- **The per-key rate-limit bucket is not shared.** The limiter counts routed traffic
+  against the caller, but the counter is in-memory unless `REDIS_URL` names a shared
+  store — see [Where the counters live](#where-the-counters-live). A key
+  issued on one replica is therefore limited by that replica's counters.
 
 - **The service registry.** Routing exists and is a **static configured table**:
   `ROUTE_TABLE` says which prefix goes where, it is validated at startup, and it

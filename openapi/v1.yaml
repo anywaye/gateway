@@ -438,6 +438,183 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
+  /v1/api-keys:
+    post:
+      tags: [api]
+      operationId: createApiKey
+      summary: Mint an API key
+      description: |
+        Mints a machine credential for the caller's **own** account. The account is
+        taken from the verified principal and is deliberately **not** a field: a
+        document that let a caller name the account would describe the cross-tenant
+        bug as a feature.
+
+        The plaintext `key` is returned exactly once — here, at issue — and is never
+        stored and never shown again: only its SHA-256 is kept, so a leaked database
+        yields digests and not credentials. Store it somewhere safe; the only way to
+        get a new one is to mint a new key.
+
+        The `scopes` are the capabilities the key holds, in the same vocabulary as a
+        token's `scope`, and they set the same principal: everything downstream
+        treats the two credentials as the same caller.
+
+        A key is **durable** — it works until somebody revokes it, and does not
+        expire on its own — which is why this surface draws its own rate-limit
+        allowance (`gateway-api-keys`, 60/min) rather than sharing the general one.
+      security:
+        - bearerToken: []
+        - apiKeyCredential: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+            example:
+              scopes: [invoices:read]
+      responses:
+        '201':
+          description: The key was minted. The plaintext `key` appears exactly once.
+          headers:
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimitPolicy'
+            RateLimit:
+              $ref: '#/components/headers/RateLimit'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/XRateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/XRateLimitRemaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/XRateLimitReset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedApiKey'
+              example:
+                key: caf_9f8e7d6c5b4a39281706f5e4d3c2b1a0987654321abcd
+                prefix: caf_9f8e7d6c
+                id: key_0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9
+        '400':
+          $ref: '#/components/responses/MalformedBody'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/Throttled'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    get:
+      tags: [api]
+      operationId: listApiKeys
+      summary: List this account's API keys
+      description: |
+        Lists the caller's own keys — never another account's. The account is the
+        verified principal's, so a caller cannot ask for a listing that is not theirs
+        by naming an account.
+
+        The `hash` is **never** in the answer. A digest is not the secret, but it is
+        not something an endpoint should hand over either, and the listing is the one
+        place every credential an account holds appears at once. `revokedAt` is
+        `null` for a live key and the instant it was revoked for a dead one.
+      security:
+        - bearerToken: []
+        - apiKeyCredential: []
+      responses:
+        '200':
+          description: The account's keys, live and revoked.
+          headers:
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimitPolicy'
+            RateLimit:
+              $ref: '#/components/headers/RateLimit'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/XRateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/XRateLimitRemaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/XRateLimitReset'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiKeySummary'
+              example:
+                - id: key_0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9
+                  prefix: caf_9f8e7d6c
+                  scopes: [invoices:read]
+                  revokedAt: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '429':
+          $ref: '#/components/responses/Throttled'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/api-keys/{id}:
+    delete:
+      tags: [api]
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      description: |
+        Revokes one of the caller's own keys. A revoked key is dead on the next
+        request — there is no `exp` to wait for, and no second call to confirm.
+
+        **A key that is not yours is a `204`, not a `404` and not a `403`.**
+        Cross-tenant is absence, not a distinguishable status: a `403` would confirm
+        that a guessed id once existed, which is a smaller leak than the key and a
+        perfectly good way to walk the account. So the revocation is a no-op with no
+        error and no return value when the id names another account's key, exactly
+        as it is for an id nobody ever issued.
+      security:
+        - bearerToken: []
+        - apiKeyCredential: []
+      parameters:
+        - $ref: '#/components/parameters/ApiKeyId'
+      responses:
+        '204':
+          description: The key is revoked (or was never the caller's). No body.
+          headers:
+            RateLimit-Policy:
+              $ref: '#/components/headers/RateLimitPolicy'
+            RateLimit:
+              $ref: '#/components/headers/RateLimit'
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimitLimit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimitRemaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimitReset'
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/XRateLimitLimit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/XRateLimitRemaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/XRateLimitReset'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '429':
+          $ref: '#/components/responses/Throttled'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /auth/register:
     post:
       tags: [browser]
@@ -809,6 +986,16 @@ components:
         identity token server-side.
 
   parameters:
+    ApiKeyId:
+      name: id
+      in: path
+      required: true
+      description: |
+        The key's id, as returned by the mint or the listing. Revoking an id that is
+        not the caller's is a `204` no-op, not a `404` — see `DELETE
+        /v1/api-keys/{id}` for why cross-tenant is absence.
+      schema:
+        type: string
     SecFetchSite:
       name: Sec-Fetch-Site
       in: header
@@ -1176,6 +1363,74 @@ components:
             RFC 3339 UTC, taken from the expiry `identity` minted rather than from
             a gateway-side TTL. `identity` decides how long a session is good for,
             and a second clock here would be a second answer.
+
+    CreateApiKeyRequest:
+      type: object
+      description: |
+        The scopes the new key will hold. The account is the verified principal's and
+        is not a field — see `POST /v1/api-keys` for why a caller naming the account
+        would be the cross-tenant bug as a feature.
+      additionalProperties: false
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          description: |
+            The capabilities the key holds, in the same vocabulary as a token's
+            `scope`. Each is one non-empty token with no whitespace.
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+          example: [invoices:read]
+
+    IssuedApiKey:
+      type: object
+      description: |
+        The mint notice. `key` is the plaintext credential and is returned **exactly
+        once** — gateway stores only its SHA-256 and has no way to show it again, so
+        a caller that loses it must mint a new one.
+      additionalProperties: false
+      required: [key, prefix, id]
+      properties:
+        key:
+          type: string
+          description: The plaintext key. Store it somewhere safe; it is never shown again.
+          example: caf_9f8e7d6c5b4a39281706f5e4d3c2b1a0987654321abcd
+        prefix:
+          type: string
+          description: The key's first twelve characters, for telling two keys apart in a listing.
+          example: caf_9f8e7d6c
+        id:
+          type: string
+          description: The key's id, used to revoke it.
+          example: key_0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9
+
+    ApiKeySummary:
+      type: object
+      description: |
+        One key as the listing shows it. **No `hash`** — a digest is not the secret,
+        but the listing is the one place every credential an account holds appears at
+        once, and a digest has no business being in it.
+      additionalProperties: false
+      required: [id, prefix, scopes, revokedAt]
+      properties:
+        id:
+          type: string
+          example: key_0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9
+        prefix:
+          type: string
+          example: caf_9f8e7d6c
+        scopes:
+          type: array
+          items:
+            type: string
+          example: [invoices:read]
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "`null` while the key is live; the instant it was revoked once it is not."
 
   responses:
     Unauthenticated:

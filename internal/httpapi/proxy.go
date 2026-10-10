@@ -189,7 +189,7 @@ func (p *routeProxy) handle(next http.Handler) http.Handler {
 		// decoded and three ordinary characters after, and decoding first would be
 		// the traversal arriving already resolved.
 		path := NormaliseRequestPath(r.URL.EscapedPath())
-		if path == gatewayOwned {
+		if isGatewayOwned(path) {
 			next.ServeHTTP(w, r)
 			return
 		}
