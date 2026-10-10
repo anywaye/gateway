@@ -1783,6 +1783,22 @@ Conventions live in [AGENTS.md](AGENTS.md); changes are recorded in
 
 ## License
 
-Proprietary. See [LICENSE](LICENSE).
+**Business Source License 1.1.** [LICENSE](LICENSE) is the grant of record, and
+its parameters are:
+
+| Parameter | Value |
+|---|---|
+| Licensor | Cafaye |
+| Licensed Work | gateway |
+| Additional Use Grant | None |
+| Change Date | 2030-10-10 |
+| Change Licence | Apache-2.0 |
+
+Until then — or until the fourth anniversary of a version's first publicly
+available distribution, whichever comes first — the rights the BSL grants are
+copying, modification, derivative works, redistribution and non-production use,
+and use beyond that is a commercial licence from Cafaye. On the Change Date
+`gateway` becomes Apache-2.0. The BSL is not an Open Source licence and its own
+Notice says so; what it does grant is what OPS-D2's services' split describes.
 
 Third-party components remain under their own licenses and notices.
