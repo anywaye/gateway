@@ -8,6 +8,42 @@ dependency versions follow npm's own rules.
 
 ## [Unreleased]
 
+### Changed
+
+- **`LICENSE` is a Business Source License 1.1, not a proprietary notice.** The
+  services split of OPS-D2 — free to run, free to self-host, never to offer a
+  competing service — puts `gateway` under a BSL, and the licence file is now
+  that grant: MariaDB's published 1.1 text with the parameters substituted and
+  nothing else altered, so the four repositories' licence files differ in the
+  Licensed Work name and in nothing else. The parameters are the fleet's
+  rather than gateway's invention: Licensor `Cafaye`, Licensed Work
+  `gateway`, Additional Use Grant `None`, Change Date `2030-10-10` — four
+  years from the day it landed — and Change Licence `Apache-2.0`.
+  `openapi/v1.yaml`'s `info.license` and the README's `## License` section
+  both named the old "Proprietary — All rights reserved" notice, and both now
+  name the grant of record.
+
+  **The honest limit of this grant, stated because the licence states it.** The
+  base grant in a BSL's Terms is copying, modification, derivative works,
+  redistribution and **non-production** use. With `Additional Use Grant: None`
+  there is no production grant, so a self-hoster who needs `gateway` in
+  production under this licence buys a commercial licence from Cafaye. That is
+  narrower than OPS-D2's row says the services are, and the two disagree; the
+  parameter was implemented as written and the disagreement, with the one-line
+  fix that would reconcile them, is recorded in
+  `REPORT-gateway-lic-bsl.md` for the manager to take across the fleet in one
+  pass. Widening the grant inside one repository would leave four licences
+  that no longer differ only in the Licensed Work name, which is the one
+  property this packet was asked to hold.
+
+  **Gateway has no manifest licence field to update, and cannot grow one.**
+  `cafaye.yml` conforms to `core`'s frozen schema, which is
+  `additionalProperties: false` — a licence key would be a validation failure
+  rather than a comment — and `charts/gateway/Chart.yaml` and `go.mod` carry
+  no licence declaration either. So the three surfaces named above are the
+  whole of the change, and no manifest can be left disagreeing with the
+  `LICENSE` file because no manifest states a grant at all.
+
 ### Added
 
 - **API keys, end to end, in Go.** `openapi/v1.yaml` declares three `api-keys`
