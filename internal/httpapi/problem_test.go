@@ -51,7 +51,7 @@ func TestAProblemIsTheDocumentedEnvelope(t *testing.T) {
 	decode(t, rec, &body)
 
 	want := map[string]any{
-		"type":     "https://errors.cafaye.com/unauthorized",
+		"type":     "https://docs.cafaye.com/errors/unauthorized",
 		"title":    "Unauthorized",
 		"status":   float64(401),
 		"detail":   "bearer token is not acceptable",

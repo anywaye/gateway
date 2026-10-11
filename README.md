@@ -111,7 +111,7 @@ The document's header records **seven departures from
 [`core/docs/openapi-conventions.md`](../core/docs/openapi-conventions.md)** as
 open decisions rather than resolving them locally. The most consequential was that
 `cafaye.yml` had no `exposes` block: the document the omission was waiting for
-existed the whole time, and pointing the platform's `caf gen` at it is the
+existed the whole time, and pointing the platform's `cafe gen` at it is the
 manager's call. Packet `gateway-w87` closed that — `exposes.api` now names this
 document — and the consequence is that core's harness reads it for the first time
 and reports those departures as findings. They were always there; the harness
@@ -642,7 +642,7 @@ are present, which is the order they are meant to be read in.
 A 429 is core's error envelope like every other rejection:
 
 ```json
-{ "type": "https://errors.cafaye.com/rate_limited", "title": "Too many requests",
+{ "type": "https://docs.cafaye.com/errors/rate_limited", "title": "Too many requests",
   "status": 429, "detail": "too many requests for this window",
   "instance": "/v1/me", "code": "rate_limited", "trace_id": "…" }
 ```
@@ -926,7 +926,7 @@ later `kubectl apply` wins — a deploy whose target depends on apply order is
 not a deploy. `DEPLOYMENT.md`, "Who owns the `Application`": the substrate
 owns it, one per service, and **a service repository commits none**.
 
-The chart is hand-written as the reference `caf gen chart` (packet L10) must
+The chart is hand-written as the reference `cafe gen chart` (packet L10) must
 reproduce: every value that belongs in a manifest is in `values.yaml`, and
 nothing in the templates is a hand-typed constant a generator could not emit.
 The readiness probe is `/readyz` — the real, dependency-aware probe — and
@@ -1122,7 +1122,7 @@ $ curl -s localhost:8099/readyz
 $ curl -s -o /dev/null -w '%{http_code}\n' localhost:8099/v1/me
 401                                             # not 404: the gate runs
 $ curl -s -H 'Authorization: Bearer not.a.token' localhost:8099/v1/me
-{"type":"https://errors.cafaye.com/unauthorized",…,"detail":"token is malformed",…}
+{"type":"https://docs.cafaye.com/errors/unauthorized",…,"detail":"token is malformed",…}
 ```
 
 and the allowance table, which is the row a grep cannot settle because the wiring
@@ -1131,7 +1131,7 @@ is two files and a resolver:
 ```
 $ for i in $(seq 1 11); do curl -s -D- -o /dev/null -X POST -d '{}' localhost:8099/auth/login; done
 1..10  404  RateLimit-Limit: 10  RateLimit-Policy: "gateway-auth-login";q=10;w=60
-11     429  {"type":"https://errors.cafaye.com/rate_limited",…,"detail":"too many requests for this window",…}
+11     429  {"type":"https://docs.cafaye.com/errors/rate_limited",…,"detail":"too many requests for this window",…}
 ```
 
 The `404`s are correct and are not the row above: `IDENTITY_URL` is unset, so
@@ -1705,7 +1705,7 @@ the source with the packet that replaces them.
   where `TRUSTED_PROXIES` being wrong matters most, and a lockout at the edge is a
   later decision.
 - **SSE / streaming pass-through**, **contract tests against this document**
-  (`caf contract lint` validating real responses against `openapi/v1.yaml`), and
+  (`cafe contract lint` validating real responses against `openapi/v1.yaml`), and
   **structured logging**. The OpenAPI document itself has shipped — see
   [The HTTP contract](#the-http-contract) — and `cafaye.yml` now declares it, so
   the `DECISION NEEDED` in [cafaye.yml](cafaye.yml) is down to the contract
