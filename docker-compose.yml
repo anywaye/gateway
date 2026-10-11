@@ -313,7 +313,31 @@ services:
       # Single-quoted rather than double-quoted, because a JSON object full of
       # double quotes inside a double-quoted YAML scalar needs every one of them
       # escaped, and an escaped route table is one somebody gets wrong at 3am.
-      # ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"http://pantry:8080","token":"..."}}'
+      #
+      # Pantry's shape when this stack fronts one: reads stay on the public
+      # prefix, writes go through a sibling prefix that declares
+      # `principal: ["sub"]` — sub only — so gateway mints its short-lived
+      # RS256 assertion (`aud` = pantry's origin) for every proxied write.
+      # The split is by path because the table matches on path prefixes and
+      # pantry's reads and writes share paths (`GET` and `POST /v1/projects`
+      # differ by method, which no prefix can see): `POST
+      # /v1/pantry-writes/projects` reaches pantry as `POST /projects` with
+      # `x-cafaye-principal` attached. Unset stays the default until then, and
+      # uncommenting the table requires the two variables below it: a
+      # principal entry with no signing key mints nothing, which is a silent
+      # 401 at pantry's second hop rather than a refusal to boot.
+      # ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"http://pantry:8080","public":true},"/v1/pantry-writes":{"baseUrl":"http://pantry:8080","principal":["sub"]}}'
+      # The key the assertion is signed with: a PATH to a PKCS#8 PEM inside
+      # the container (never the PEM itself), bind-mounted from a file this
+      # repository does not carry — `openssl genpkey -algorithm RSA
+      # -pkeyopt rsa_keygen_bits:2048` writes one. Missing or malformed is a
+      # refusal to boot; unset means no assertion is minted on any route.
+      # ASSERTION_SIGNING_KEY_FILE: "/etc/gateway/assertion/signing.pem"
+      # How long a minted assertion is good for, in milliseconds. 120000 is
+      # the default; refused above 600000, which is pantry's ten-minute
+      # ceiling. Set with no key it configures nothing and is ignored — a
+      # lifetime with nothing to sign is not read at all.
+      # ASSERTION_TTL_MS: "120000"
 
     # THE CRASH LAYER, and it is the reason a panic reaches an operator with no
     # logging SDK in this repository — gateway is four dependencies and a standard

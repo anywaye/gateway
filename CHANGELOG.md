@@ -46,6 +46,23 @@ dependency versions follow npm's own rules.
 
 ### Added
 
+- **The shipped pantry routes mint the principal assertion (seam-audit F2).**
+  The minting mechanism was complete and tested, but no shipped route table
+  declared `principal` for pantry — so gateway minted nothing and every pantry
+  write 401'd at pantry's second hop. Both shipped tables now split pantry in
+  two: reads stay on the existing public `/v1/pantry` prefix, and a non-public
+  `/v1/pantry-writes` prefix declares `principal: ["sub"]` — sub only, no
+  `github_id` — so every proxied write carries gateway's short-lived RS256
+  assertion (`aud` = pantry's origin, `x-cafaye-principal`). The split is by
+  path because the table matches on path prefixes and pantry's reads and
+  writes share paths. The chart (the launch artifact) activates the table with
+  `ASSERTION_TTL_MS: "120000"` and `ASSERTION_SIGNING_KEY_FILE` pointing at a
+  key mounted from an out-of-band secret; `docker-compose.yml` documents the
+  same shape inactive, since the dev stack ships neither pantry nor key
+  material. `internal/httpapi/pantry_shipped_table_test.go` reads both files
+  off disk and holds them to the seam: write mints sub-only and aud-bound,
+  reads mint nothing, TTL at or under ten minutes.
+
 - **API keys, end to end, in Go.** `openapi/v1.yaml` declares three `api-keys`
   operations — `POST /v1/api-keys` (mint), `GET /v1/api-keys` (list) and
   `DELETE /v1/api-keys/{id}` (revoke) — and the generated router mounts them.
