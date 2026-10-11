@@ -47,9 +47,9 @@ ingress:
   # Traefik is k3s's default ingress controller (DEPLOYMENT.md), so the
   # Ingress is a plain `networking.k8s.io/v1` resource with this class.
   className: traefik
-  # The platform's front-door name. `cafaye.com` is the platform; this is the
-  # gateway's host on it. Per-tenant deployments override it.
-  host: gateway.cafaye.com
+  # The platform's front-door name: `api.cafaye.com`, the plan's public door
+  # (PLAN-names-urls-rollout.md §1). Per-tenant deployments override it.
+  host: api.cafaye.com
   # The cert-manager ClusterIssuer that fills `ingress.tls.secretName`:
   # `letsencrypt-prod`, the issuer the substrate's install creates
   # (DEPLOYMENT.md, "The ACME solver"). The chart NAMES the issuer and never
@@ -83,9 +83,10 @@ env:
   PORT: "8080"
   # Where tokens are VERIFIED: the issuer-only base URL; gateway appends
   # `/.well-known/jwks.json` itself. Must match the `iss` identity mints and be
-  # fetchable by this pod for the key set. An https origin in every
+  # fetchable by this pod for the key set: the plan's OIDC issuer,
+  # `auth.cafaye.com` (PLAN-names-urls-rollout.md §1). An https origin in every
   # environment, including this one.
-  IDENTITY_ISSUER: "https://identity.cafaye.com"
+  IDENTITY_ISSUER: "https://auth.cafaye.com"
   # Where a session is REQUESTED: identity's in-cluster Service. The two
   # variables for one service on purpose — the issuer is an https origin, the
   # address this dials is a service name, and inside a cluster `localhost` is
