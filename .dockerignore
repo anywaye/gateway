@@ -67,5 +67,12 @@ CLAUDE.md
 CHANGELOG.md
 cafaye.yml
 bin
-docker-compose.yml
 Dockerfile
+# docker-compose.yml is NOT on the list above, and the absence is the point
+# rather than an oversight. `internal/httpapi/pantry_shipped_table_test.go`
+# reads the shipped ROUTE_TABLE out of it and holds it to the pantry seam
+# (one non-public write prefix with principal ["sub"], reads on public
+# /v1/pantry, TTL at/under ten minutes), and the test stage is `COPY . .` —
+# so a negation here is what lets `docker build --target test` run the same
+# guard the host gate runs, instead of failing loud on "no such file".
+!docker-compose.yml

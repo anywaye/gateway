@@ -72,9 +72,9 @@ ingress:
 
 # The clear environment, rendered into a ConfigMap the Deployment reads with
 # `envFrom`. Every key is one the shipped binary reads — each is in
-# `internal/httpapi/runtime.go`'s list of fifteen. The chart carries the eight
-# a launch deployment sets; the assertion variables and `IDENTITY_JWKS_URL` are
-# left at their defaults, the same way `docker-compose.yml` leaves them.
+# `internal/httpapi/runtime.go`'s list of fifteen. The chart carries the eleven
+# a launch deployment sets; `IDENTITY_JWKS_URL` is left at its default, the same
+# way `docker-compose.yml` leaves it.
 # `GATEWAY_OTEL_ENDPOINT` is read by `internal/telemetry`, not the runtime
 # reader, and is deliberately unset: the in-cluster collector address belongs
 # to the observability stack (L12), and a guessed default is worse than the
@@ -116,16 +116,46 @@ env:
   # not a default somebody never looks at.
   TRUSTED_PROXIES: "1"
   # Where each configured prefix goes, as one JSON object of prefix →
-  # {baseUrl, token?, public?, principal?}. Unset is the honest default for a
-  # deployment that has not decided where anything goes: gateway forwards
-  # nothing and answers 404 for unclaimed paths. Every prefix must be under
+  # {baseUrl, token?, public?, principal?}. Every prefix must be under
   # `/v1/`, and every value is validated at startup — a malformed table is a
   # refusal to boot, not a degraded mode.
+  #
+  # Pantry is split in two on purpose, because the table matches on path
+  # prefixes and pantry's reads and writes share paths: `GET /v1/projects`
+  # (list) and `POST /v1/projects` (register) differ by method, which no
+  # prefix can see. So the gateway paths differ instead:
+  #
+  #   * `/v1/pantry` stays public: anonymous catalog reads, no assertion.
+  #   * `/v1/pantry-writes` is the write surface: authenticated, declaring
+  #     `principal: ["sub"]` — sub only — so gateway mints its short-lived
+  #     RS256 assertion (`aud` = pantry's origin) on every proxied write.
+  #     `POST /v1/pantry-writes/projects` reaches pantry as `POST /projects`
+  #     with `x-cafaye-principal` attached. `github_id` stays out: pantry
+  #     treats it as optional metadata, and a second claim is a second
+  #     credential surface nobody asked for.
+  #
+  # A public entry may never declare `principal` (refusal to boot, and refused
+  # again at the send site), so the read prefix carries none.
   #
   # It carries upstream `token`s, so it is configuration with credentials in
   # it — the same shape `docker-compose.yml` has always carried it. Moving it
   # to the secret below is a one-line change when a packet wants it.
-  # ROUTE_TABLE: '{"\/v1\/pantry":{"baseUrl":"http://pantry:8080"}}'
+  ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"http://pantry:8080","public":true},"/v1/pantry-writes":{"baseUrl":"http://pantry:8080","principal":["sub"]}}'
+  # How long a minted principal assertion is good for, in milliseconds.
+  # 120000 is the mechanism's default, restated here so the launch value sits
+  # next to the table that requires it. Refused above 600000 — pantry's own
+  # ten-minute ceiling — so this number cannot drift into a lifetime pantry
+  # would refuse.
+  ASSERTION_TTL_MS: "120000"
+  # The key the assertion is signed with, as a FILE PATH inside the container
+  # (a path, never the PEM itself: a private key in an environment value turns
+  # up in `docker inspect` and `/proc/<pid>/environ`). The file arrives on the
+  # `assertion-key` volume in the Deployment, mounted from the secret
+  # `secrets` names below — created out of band, never by this chart, the same
+  # discipline as REDIS_URL. No secret, no pod: a principal entry with no key
+  # mints nothing, which would reopen the seam this table closes as a silent
+  # 401 at pantry's second hop.
+  ASSERTION_SIGNING_KEY_FILE: "/etc/gateway/assertion/signing.pem"
 
 # The secret environment. `REDIS_URL` is a REFERENCE, never a value here: the
 # secret lives on the box and the chart names it, because DEPLOYMENT.md and the
@@ -158,6 +188,17 @@ secrets:
   # no path; a malformed URL is a refusal to boot, and a Redis that is DOWN is
   # a `/readyz` answer, not a refusal to start.
   redisUrlSecretKey: REDIS_URL
+  # The secret holding the assertion signing key. Same discipline as Redis:
+  # created out of band, never rendered by this chart; referenced here and
+  # mounted as a file by the Deployment, because ASSERTION_SIGNING_KEY_FILE
+  # is a path and a path has to resolve to bytes.
+  assertionKeySecretName: gateway-secrets
+  # The key inside it holding the PKCS#8 PEM. `openssl genpkey -algorithm RSA
+  # -pkeyopt rsa_keygen_bits:2048` writes one; the public half goes to pantry
+  # out of band as its verifier key, and PANTRY_AUDIENCE there must equal the
+  # origin ROUTE_TABLE above names (`http://pantry:8080`) — pantry refuses any
+  # other `aud`.
+  assertionKeySecretKey: ASSERTION_SIGNING_KEY
 
 resources:
   # Set, because a chart with no limits is a chart that lets one service take

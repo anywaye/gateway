@@ -37,6 +37,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.redisUrlSecretName }}
                   key: {{ .Values.secrets.redisUrlSecretKey }}
+          # The assertion signing key, mounted as a file because
+          # ASSERTION_SIGNING_KEY_FILE is a path. readOnly: a gateway that
+          # could rewrite its own signing key is a gateway that could lose it.
+          volumeMounts:
+            - name: assertion-key
+              mountPath: /etc/gateway/assertion
+              readOnly: true
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
@@ -51,3 +58,15 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      # One volume, and it holds the one file the ConfigMap cannot: the
+      # private key ASSERTION_SIGNING_KEY_FILE names. Mounted from the secret
+      # `values.secrets` names (created out of band, like the Redis secret),
+      # with `items` pinning the file name the env var points at — a secret
+      # that renamed its key would otherwise move the file out from under it.
+      volumes:
+        - name: assertion-key
+          secret:
+            secretName: {{ .Values.secrets.assertionKeySecretName }}
+            items:
+              - key: {{ .Values.secrets.assertionKeySecretKey }}
+                path: signing.pem
