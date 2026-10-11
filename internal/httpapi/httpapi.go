@@ -79,6 +79,22 @@ type Options struct {
 	// about *JSON spellings* live — `"public": "true"`, `"principal": []`.
 	Routes RouteTable
 
+	// Which hostname goes to which backend, or nil for none.
+	//
+	// Nil is the honest default and the reason this field is additive: a gateway
+	// with no vhost table routes exactly what it routed before this field
+	// existed, by path prefix alone. A non-nil table is validated here, before
+	// anything is assembled, so a malformed one is a refusal to construct the
+	// gateway at all rather than a 404 on the first request of the week. An
+	// **empty** non-nil table is refused by the validator, because an operator
+	// who meant to configure the api/auth split and got nothing is the case that
+	// must not pass silently.
+	//
+	// `ParseVHostTable` is what a deployment calls. See `vhost.go` for why this
+	// is a second table rather than host fields on the entries, and why it
+	// carries no authz of its own.
+	VHosts VHostTable
+
 	// The principal minter, or nil for none.
 	//
 	// Nil means **no assertion is minted on any route** — which is the state every
@@ -348,7 +364,7 @@ func New(options Options) (http.Handler, error) {
 	router.Method(http.MethodHead, "/healthz", headOf(svc.Liveness))
 	router.Method(http.MethodHead, "/readyz", headOf(svc.Readiness))
 
-	if options.Routes == nil {
+	if options.Routes == nil && options.VHosts == nil {
 		// Nothing in front of the router to mount on, so `everyRequest`'s list is
 		// already on chi (above, with the bearer gate in it) and this returns the
 		// bare `*chi.Mux` — which `chi.Walk` can read, and which is why
@@ -362,7 +378,18 @@ func New(options Options) (http.Handler, error) {
 	// a caller cannot append to a table after the gateway was built. Refusing to
 	// serve on the first pass and then forwarding on the second would leave a
 	// gateway whose routing had never been checked.
-	table, err := ValidateRouteTable(options.Routes)
+	// Each validated only when configured: nil is the honest default for both —
+	// no path routing, no hostname split — and `ValidateRouteTable` refuses an
+	// empty table rather than blessing it, so an unconditional call here would
+	// make a vhost-only gateway unconstructible.
+	var table RouteTable
+	if options.Routes != nil {
+		table, err = ValidateRouteTable(options.Routes)
+		if err != nil {
+			return nil, err
+		}
+	}
+	vhosts, err := ValidateVHostTable(options.VHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -404,6 +431,7 @@ func New(options Options) (http.Handler, error) {
 		apiKeyGate(options.APIKeys),
 		credentialGate(authentication(options), table),
 		scopeGate(options.Verifier, table),
+		vhostGate(vhosts, options.UpstreamTimeout, options.Assert),
 	)
 	return &mount{Router: router, handler: compose(proxied, gates...)}, nil
 }
@@ -824,6 +852,14 @@ func (o Options) validate() error {
 	// that exists, and nothing about that failure points at configuration.
 	if o.Routes != nil {
 		if _, err := ValidateRouteTable(o.Routes); err != nil {
+			return err
+		}
+	}
+	// The vhost table, by the same rule: a name in it that routes nowhere
+	// answers 404 for a backend that exists, and nothing about that failure
+	// points at configuration.
+	if o.VHosts != nil {
+		if _, err := ValidateVHostTable(o.VHosts); err != nil {
 			return err
 		}
 	}

@@ -55,6 +55,7 @@ type Config struct {
 //
 //	PORT                    the listening address
 //	ROUTE_TABLE             the pass-through's table, as one JSON object
+//	VHOST_TABLE             the hostname split, as one JSON object
 //	ASSERTION_SIGNING_KEY_FILE   the principal minter's key, a path not a PEM
 //	ASSERTION_SIGNING_KEY_ID     the `kid` upstreams select it by
 //	ASSERTION_ISSUER             who minted the assertion
@@ -118,6 +119,11 @@ func RuntimeOptions(env Env) (Config, error) {
 	}
 
 	routes, err := routesFromEnv(env)
+	if err != nil {
+		return Config{}, err
+	}
+
+	vhosts, err := vhostsFromEnv(env)
 	if err != nil {
 		return Config{}, err
 	}
@@ -227,6 +233,7 @@ func RuntimeOptions(env Env) (Config, error) {
 			Verifier: verifier,
 			Limiter:  limiter,
 			Routes:   routes,
+			VHosts:   vhosts,
 			Assert:   assertion,
 
 			// THE BROWSER SURFACE, AND IT IS NOT A POINTER TO NOTHING.
@@ -363,6 +370,28 @@ func routesFromEnv(env Env) (RouteTable, error) {
 	}
 
 	return ParseRouteTable(raw)
+}
+
+// vhostsFromEnv is the hostname split, or nothing.
+//
+// One variable holding one JSON object, because the split is the configuration
+// and a per-host variable per host would be N variables whose names encode a
+// routing decision the table states instead:
+//
+//	VHOST_TABLE={"auth.cafaye.test":{"baseUrl":"http://identity:8080"}}
+//
+// Unset or empty means no split at all, which is the honest default for a
+// deployment that has not decided names mean different backends: routing is the
+// path table alone, exactly as before this variable existed. A value that is not
+// JSON, or JSON of the wrong shape, or JSON that `ValidateVHostTable` refuses is
+// a refusal to boot, by the same rule as every other variable here.
+func vhostsFromEnv(env Env) (VHostTable, error) {
+	raw := trimSpace(env("VHOST_TABLE"))
+	if raw == "" {
+		return nil, nil
+	}
+
+	return ParseVHostTable(raw)
 }
 
 // assertionFromEnv is the principal assertion's signing key, or nothing at all.

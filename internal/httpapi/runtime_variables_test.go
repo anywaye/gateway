@@ -54,6 +54,11 @@ var runtimeVariables = []string{
 	"ASSERTION_TTL_MS",
 	"ROUTE_TABLE",
 
+	// The hostname split: which name is which backend. Read by `vhostsFromEnv`
+	// and nothing else, additive to the path table — an unset split is a gateway
+	// whose routing is the path table alone.
+	"VHOST_TABLE",
+
 	// The browser surface. The FIFTEENTH, and the only one that is read together
 	// with another: a session store has to be shared to be worth having, so
 	// `IDENTITY_URL` with no `REDIS_URL` configures no browser surface at all.
