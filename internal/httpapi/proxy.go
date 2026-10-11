@@ -468,7 +468,7 @@ func relayUpstream(w http.ResponseWriter, response *upstreamAnswer) {
 // "the service is down" from "the service is broken", and that difference only
 // exists if it is written down.
 func unreachableUpstream() Problem {
-	return Problem{Status: api.N503, Code: api.ProblemCodeUnavailable, Detail: "the service this request needs could not be reached"}
+	return Problem{Status: 503, Code: api.ProblemCodeUnavailable, Detail: "the service this request needs could not be reached"}
 }
 
 // unusableUpstream reads what the answer looked like, for a log line and nothing
@@ -485,7 +485,7 @@ func unusableUpstream(target string, response *upstreamAnswer) Problem {
 
 	fmt.Fprintf(stderr, "gateway: upstream %s answered %d (%s), which this contract does not relay\n", target, response.status, shape)
 
-	return Problem{Status: api.N503, Code: api.ProblemCodeUnavailable, Detail: "the service this request needs did not answer"}
+	return Problem{Status: 503, Code: api.ProblemCodeUnavailable, Detail: "the service this request needs did not answer"}
 }
 
 // shapeOf is what an answer looked like, for a log line and nothing else.

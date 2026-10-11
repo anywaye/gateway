@@ -38,7 +38,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/cafaye/gateway/internal/api"
 	"github.com/cafaye/gateway/internal/auth"
 )
 
@@ -70,7 +69,7 @@ func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 		// file and this file is what a caller reads when it is wrong. A `200` with
 		// a null body would be the answer nobody wants to debug.
 		writeProblem(w, r, Problem{
-			Status: api.ProblemStatus(http.StatusInternalServerError),
+			Status: http.StatusInternalServerError,
 			Code:   "internal_error",
 			Detail: "unexpected server error",
 		})
