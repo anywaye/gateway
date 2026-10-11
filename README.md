@@ -535,7 +535,7 @@ part of `hono`.
 
 ```sh
 # The flow, by hand. Every mutating call needs to state its origin.
-curl -i -X POST localhost:8080/auth/login -H 'origin: https://console.cafaye.com' \
+curl -i -X POST localhost:8080/auth/login -H 'origin: https://api.cafaye.com' \
   -H 'content-type: application/json' -d '{"email":"ada@cafaye.com","password":"…"}'
 
 curl -i localhost:8080/auth/me --cookie '__Host-bff-session=<the uuid from Set-Cookie>'
