@@ -788,7 +788,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/unauthorized
+                type: https://docs.cafaye.com/errors/unauthorized
                 title: Unauthorized
                 status: 401
                 detail: email or password is not correct
@@ -1139,8 +1139,8 @@ components:
         type:
           type: string
           format: uri
-          description: 'A stable `https://errors.cafaye.com/<code>` URI — the machine-readable contract.'
-          example: https://errors.cafaye.com/validation_failed
+          description: 'A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.'
+          example: https://docs.cafaye.com/errors/validation_failed
         title:
           type: string
           description: A fixed human-readable summary for the code. May be reworded without a version bump.
@@ -1455,7 +1455,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/unauthorized
+            type: https://docs.cafaye.com/errors/unauthorized
             title: Unauthorized
             status: 401
             detail: a bearer token is required
@@ -1479,7 +1479,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/forbidden
+            type: https://docs.cafaye.com/errors/forbidden
             title: Forbidden
             status: 403
             detail: this request is not from the same origin
@@ -1521,7 +1521,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/rate_limited
+            type: https://docs.cafaye.com/errors/rate_limited
             title: Too many requests
             status: 429
             detail: too many requests for this window
@@ -1546,7 +1546,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/unavailable
+            type: https://docs.cafaye.com/errors/unavailable
             title: Service unavailable
             status: 503
             detail: the signing keys could not be retrieved
@@ -1570,7 +1570,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/invalid_json
+            type: https://docs.cafaye.com/errors/invalid_json
             title: Invalid request
             status: 400
             detail: the request body must be a JSON object
@@ -1592,7 +1592,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/payload_too_large
+            type: https://docs.cafaye.com/errors/payload_too_large
             title: Payload too large
             status: 413
             detail: the request body is larger than 4096 bytes
@@ -1614,7 +1614,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/validation_failed
+            type: https://docs.cafaye.com/errors/validation_failed
             title: Validation failed
             status: 422
             detail: the request has an invalid field
@@ -1637,7 +1637,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/conflict
+            type: https://docs.cafaye.com/errors/conflict
             title: Conflict
             status: 409
             detail: an account already exists for that email address
@@ -1666,7 +1666,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/account_locked
+            type: https://docs.cafaye.com/errors/account_locked
             title: Account locked
             status: 423
             detail: too many failed sign-in attempts for this account

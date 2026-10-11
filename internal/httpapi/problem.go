@@ -34,7 +34,7 @@ import (
 // problemTypeBase is where every problem's `type` lives. The document pins it:
 // the type is a stable URI and the `code` is the slug under it, so a client can
 // switch on one and print the other.
-const problemTypeBase = "https://errors.cafaye.com/"
+const problemTypeBase = "https://docs.cafaye.com/errors/"
 
 // titles is the fixed human-readable summary per code, and it is exhaustive over
 // the document's enum rather than a lookup with a fallback. `src/problem.ts` (removed at cutover)
