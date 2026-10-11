@@ -1147,7 +1147,6 @@ components:
         status:
           type: integer
           description: The HTTP status, repeated in the body.
-          enum: [400, 401, 403, 409, 413, 422, 423, 429, 503]
         detail:
           type: string
           description: Specific to this occurrence and not parsed by clients.
