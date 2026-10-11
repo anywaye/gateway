@@ -35,7 +35,7 @@ func write(t *testing.T, p Problem) *httptest.ResponseRecorder {
 // asserted rather than the fields a struct happens to decode.
 func TestAProblemIsTheDocumentedEnvelope(t *testing.T) {
 	rec := write(t, Problem{
-		Status: api.N401,
+		Status: 401,
 		Code:   api.ProblemCodeUnauthorized,
 		Detail: "bearer token is not acceptable",
 	})
@@ -89,7 +89,7 @@ func TestTheTraceIdHeaderEqualsTheBodyAndLooksLikeOne(t *testing.T) {
 	seen := map[string]bool{}
 
 	for i := 0; i < 10; i++ {
-		rec := write(t, Problem{Status: api.N401, Code: api.ProblemCodeUnauthorized, Detail: "no"})
+		rec := write(t, Problem{Status: 401, Code: api.ProblemCodeUnauthorized, Detail: "no"})
 
 		header := rec.Header().Get("X-Trace-Id")
 		var body struct {
@@ -123,7 +123,7 @@ func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 	// would still be there for the 401 case and this test would report every
 	// status as carrying field errors. It did, until it was caught by the 422
 	// case itself — which is the argument for asserting on decoded shapes at all.
-	for _, status := range []api.ProblemStatus{api.N400, api.N401, api.N403, api.N409, api.N413, api.N423, api.N429, api.N503} {
+	for _, status := range []int{400, 401, 403, 409, 413, 423, 429, 503} {
 		var body map[string]any
 		decode(t, write(t, Problem{Status: status, Code: api.ProblemCodeValidationFailed, Detail: "no", Errors: fields}), &body)
 
@@ -133,14 +133,14 @@ func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 	}
 
 	var body map[string]any
-	decode(t, write(t, Problem{Status: api.N422, Code: api.ProblemCodeValidationFailed, Detail: "no", Errors: fields}), &body)
+	decode(t, write(t, Problem{Status: 422, Code: api.ProblemCodeValidationFailed, Detail: "no", Errors: fields}), &body)
 	if _, present := body["errors"]; !present {
 		t.Errorf("a 422 with field errors has no errors[]: %v", body)
 	}
 
 	// And an empty list on a 422 is also absent, for the same reason.
 	body = nil
-	decode(t, write(t, Problem{Status: api.N422, Code: api.ProblemCodeValidationFailed, Detail: "no"}), &body)
+	decode(t, write(t, Problem{Status: 422, Code: api.ProblemCodeValidationFailed, Detail: "no"}), &body)
 	if _, present := body["errors"]; present {
 		t.Errorf("a 422 with no field errors carries errors[]: %v", body)
 	}
@@ -154,7 +154,7 @@ func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 func TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeProblem(rec, httptest.NewRequest(http.MethodGet, "/v1/me?token=caf_secret_value&x=1", nil), Problem{
-		Status: api.N401,
+		Status: 401,
 		Code:   api.ProblemCodeUnauthorized,
 		Detail: "no credential presented",
 	})
@@ -179,7 +179,7 @@ func TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody(t *testing.T) {
 // to a code this file can justify, with the status that code is for, and
 // `TestEveryProblemCodeHasATitle` below is what makes the branch unreachable.
 func TestACodeWithNoTitleIsRefusedRatherThanRendered(t *testing.T) {
-	rec := write(t, Problem{Status: api.N401, Code: api.ProblemCode("invented_here"), Detail: "no"})
+	rec := write(t, Problem{Status: 401, Code: api.ProblemCode("invented_here"), Detail: "no"})
 
 	var body map[string]any
 	decode(t, rec, &body)

@@ -779,7 +779,7 @@ func onPrefix(prefix string, middleware func(http.Handler) http.Handler) func(ht
 // caller's fault, and `TestAProblemIsTheDocumentedEnvelope` cannot see that.
 func writeAuthRefusal(w http.ResponseWriter, r *http.Request, refusal *auth.Refusal) {
 	writeProblem(w, r, Problem{
-		Status: api.ProblemStatus(refusal.Status),
+		Status: refusal.Status,
 		Code:   api.ProblemCode(refusal.Code),
 		Detail: refusal.Detail,
 	})
@@ -794,7 +794,7 @@ func writeAuthRefusal(w http.ResponseWriter, r *http.Request, refusal *auth.Refu
 // repository writes. A fixed detail: nothing here varies."
 func writeRateLimitRefusal(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
 	writeProblem(w, r, Problem{
-		Status: api.ProblemStatus(status),
+		Status: status,
 		Code:   api.ProblemCode(code),
 		Detail: detail,
 	})

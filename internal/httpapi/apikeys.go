@@ -53,7 +53,7 @@ func (s *server) authenticatedAccount(w http.ResponseWriter, r *http.Request) (s
 		// the check is here because "unreachable" is a claim about code in another
 		// file. A `200` with a null body would be the answer nobody wants to debug.
 		writeProblem(w, r, Problem{
-			Status: api.ProblemStatus(http.StatusInternalServerError),
+			Status: http.StatusInternalServerError,
 			Code:   "internal_error",
 			Detail: "unexpected server error",
 		})
@@ -83,7 +83,7 @@ func (s *server) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var body api.CreateAPIKeyRequest
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&body); err != nil {
-		writeProblem(w, r, Problem{Status: api.N400, Code: api.ProblemCodeInvalidJSON, Detail: "the request body is not valid JSON"})
+		writeProblem(w, r, Problem{Status: 400, Code: api.ProblemCodeInvalidJSON, Detail: "the request body is not valid JSON"})
 		return
 	}
 
@@ -91,19 +91,19 @@ func (s *server) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// credential with nothing it can do, which is not a machine credential — it is
 	// a mistake, and the refusal is a `422` with the field named.
 	if len(body.Scopes) == 0 {
-		writeProblem(w, r, Problem{Status: api.N422, Code: api.ProblemCodeValidationFailed, Detail: "scopes must name at least one scope"})
+		writeProblem(w, r, Problem{Status: 422, Code: api.ProblemCodeValidationFailed, Detail: "scopes must name at least one scope"})
 		return
 	}
 	for _, scope := range body.Scopes {
 		if strings.TrimSpace(scope) == "" || strings.ContainsAny(scope, " \t\n\r") {
-			writeProblem(w, r, Problem{Status: api.N422, Code: api.ProblemCodeValidationFailed, Detail: "each scope must be a single non-empty token"})
+			writeProblem(w, r, Problem{Status: 422, Code: api.ProblemCodeValidationFailed, Detail: "each scope must be a single non-empty token"})
 			return
 		}
 	}
 
 	record, key, err := store.Issue(account, body.Scopes)
 	if err != nil {
-		writeProblem(w, r, Problem{Status: api.N503, Code: api.ProblemCodeUnavailable, Detail: "the key could not be minted"})
+		writeProblem(w, r, Problem{Status: 503, Code: api.ProblemCodeUnavailable, Detail: "the key could not be minted"})
 		return
 	}
 
@@ -123,7 +123,7 @@ func (s *server) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 	records, err := store.List(account)
 	if err != nil {
-		writeProblem(w, r, Problem{Status: api.N503, Code: api.ProblemCodeUnavailable, Detail: "the keys could not be listed"})
+		writeProblem(w, r, Problem{Status: 503, Code: api.ProblemCodeUnavailable, Detail: "the keys could not be listed"})
 		return
 	}
 

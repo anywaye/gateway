@@ -312,7 +312,7 @@ func (b *Bff) Register(w http.ResponseWriter, r *http.Request) {
 		// A sign-up form renders these; dropping them leaves the browser saying
 		// "something went wrong" about a field identity named exactly.
 		writeProblem(w, r, Problem{
-			Status: api.N422,
+			Status: 422,
 			Code:   api.ProblemCodeValidationFailed,
 			Detail: "the request has an invalid field",
 			Errors: fieldErrorsOf(document),
@@ -320,7 +320,7 @@ func (b *Bff) Register(w http.ResponseWriter, r *http.Request) {
 
 	case http.StatusConflict:
 		writeProblem(w, r, Problem{
-			Status: api.N409,
+			Status: 409,
 			Code:   api.ProblemCodeConflict,
 			Detail: "an account already exists for that email address",
 		})
@@ -400,7 +400,7 @@ func (b *Bff) Logout(w http.ResponseWriter, r *http.Request) {
 		// identity answers 401 here too, for the same reason: a 204 would report
 		// that something happened when there was no session to end.
 		writeProblem(w, r, Problem{
-			Status: api.N401,
+			Status: 401,
 			Code:   api.ProblemCodeUnauthorized,
 			Detail: "no session cookie was presented",
 		})
@@ -471,7 +471,7 @@ func (b *Bff) Me(w http.ResponseWriter, r *http.Request) {
 	sessionID := sessionIDOf(r)
 	if sessionID == "" {
 		writeProblem(w, r, Problem{
-			Status: api.N401,
+			Status: 401,
 			Code:   api.ProblemCodeUnauthorized,
 			Detail: "no session cookie was presented",
 		})
@@ -490,7 +490,7 @@ func (b *Bff) Me(w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		clearSessionCookie(w)
 		writeProblem(w, r, Problem{
-			Status: api.N401,
+			Status: 401,
 			Code:   api.ProblemCodeUnauthorized,
 			Detail: "the session is no longer valid",
 		})
@@ -524,7 +524,7 @@ func (b *Bff) Me(w http.ResponseWriter, r *http.Request) {
 		}
 		clearSessionCookie(w)
 		writeProblem(w, r, Problem{
-			Status: api.N401,
+			Status: 401,
 			Code:   api.ProblemCodeUnauthorized,
 			Detail: "the session is no longer valid",
 		})
@@ -569,7 +569,7 @@ func RequireSameOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isSameOrigin(r) {
 			writeProblem(w, r, Problem{
-				Status: api.N403,
+				Status: 403,
 				Code:   api.ProblemCodeForbidden,
 				Detail: "this request is not from the same origin",
 			})
@@ -708,7 +708,7 @@ func (b *Bff) refuseLogin(w http.ResponseWriter, r *http.Request, answer *http.R
 		// same detail, because the browser cannot tell which case it hit.
 		drain(answer)
 		writeProblem(w, r, Problem{
-			Status: api.N401,
+			Status: 401,
 			Code:   api.ProblemCodeUnauthorized,
 			Detail: "email or password is not correct",
 		})
@@ -723,7 +723,7 @@ func (b *Bff) refuseLogin(w http.ResponseWriter, r *http.Request, answer *http.R
 			w.Header().Set("Retry-After", retry)
 		}
 		writeProblem(w, r, Problem{
-			Status: api.N423,
+			Status: 423,
 			Code:   api.ProblemCodeAccountLocked,
 			Detail: "too many failed sign-in attempts for this account",
 		})
@@ -1055,16 +1055,16 @@ func (b *Bff) target(path string) string { return b.identityURL + path }
 // It is a fixed string: the URL, the status and the socket error are in the log,
 // and an anonymous browser is not allowed to learn which.
 func unreachable() Problem {
-	return Problem{Status: api.N503, Code: api.ProblemCodeUnavailable, Detail: "the authentication service could not be reached"}
+	return Problem{Status: 503, Code: api.ProblemCodeUnavailable, Detail: "the authentication service could not be reached"}
 }
 
 func notAnObject() Problem {
-	return Problem{Status: api.N400, Code: api.ProblemCodeInvalidJSON, Detail: "the request body must be a JSON object"}
+	return Problem{Status: 400, Code: api.ProblemCodeInvalidJSON, Detail: "the request body must be a JSON object"}
 }
 
 func tooLarge() Problem {
 	return Problem{
-		Status: api.N413,
+		Status: 413,
 		Code:   api.ProblemCodePayloadTooLarge,
 		Detail: fmt.Sprintf("the request body is larger than %d bytes", maxBodyBytes),
 	}
@@ -1104,7 +1104,7 @@ func unusable(target string, status int, body any, isJSON bool) Problem {
 	log.Printf("gateway: identity %s answered %d (%s), which this contract does not cover", target, status, shape)
 
 	return Problem{
-		Status: api.N503,
+		Status: 503,
 		Code:   api.ProblemCodeUnavailable,
 		Detail: "the authentication service answered with something unusable",
 	}

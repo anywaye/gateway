@@ -147,7 +147,7 @@ func credentialGate(authenticate Authenticate, routes RouteTable) func(http.Hand
 			principal, err := authenticate(r)
 			if err != nil || principal == nil {
 				writeProblem(w, r, Problem{
-					Status: api.N401,
+					Status: 401,
 					Code:   api.ProblemCodeUnauthorized,
 					// `src/middleware/jwt.ts` (removed at cutover)'s own words, and the reason this is a
 					// fixed string rather than an interpolated error: the message can

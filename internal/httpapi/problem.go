@@ -70,9 +70,11 @@ const problemContentType = "application/problem+json"
 // the status: deriving one from the other would make `unauthorized` reachable at
 // a status nobody documented.
 type Problem struct {
-	// The status this answers with. `api.ProblemStatus` rather than `int`,
-	// because it is the document's enum and this file cannot be handed a 418.
-	Status api.ProblemStatus
+	// The status this answers with. A plain `int`: the document declares
+	// `Problem.status` as `type: integer` with no enum — the fleet convention
+	// (`cafe contract lint` refuses numeric enums) — so there is no generated
+	// type to reach for, and the wire shape is unchanged either way.
+	Status int
 
 	// The slug, which is also the last segment of `type`.
 	Code api.ProblemCode
@@ -126,7 +128,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 	// Set last and only for a 422, so the key is absent rather than empty: a
 	// client rendering `errors` must be able to tell "no fields failed" from
 	// "this response is not about fields".
-	if p.Status == api.N422 && len(p.Errors) > 0 {
+	if p.Status == 422 && len(p.Errors) > 0 {
 		fields := p.Errors
 		body.Errors = &fields
 	}
@@ -193,17 +195,17 @@ func writeProblemBody(w http.ResponseWriter, r *http.Request, body api.Problem) 
 	members := []string{
 		jsonStringMember("type", body.Type),
 		jsonStringMember("title", body.Title),
-		jsonNumberMember("status", int(body.Status)),
+		jsonNumberMember("status", body.Status),
 		jsonStringMember("detail", body.Detail),
 		jsonStringMember("instance", body.Instance),
 		jsonStringMember("code", string(body.Code)),
 		jsonStringMember("trace_id", body.TraceID),
 	}
-	if body.Status == api.N422 && body.Errors != nil && len(*body.Errors) > 0 {
+	if body.Status == 422 && body.Errors != nil && len(*body.Errors) > 0 {
 		members = append(members, `"errors":`+encodeFieldErrors(*body.Errors))
 	}
 
-	writeRawJSON(w, r, int(body.Status), "{"+strings.Join(members, ",")+"}")
+	writeRawJSON(w, r, body.Status, "{"+strings.Join(members, ",")+"}")
 }
 
 // jsonStringMember is one `"key":"value"` pair, both encoded.

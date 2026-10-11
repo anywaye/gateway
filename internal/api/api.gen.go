@@ -75,45 +75,6 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for ProblemStatus.
-const (
-	N400 ProblemStatus = 400
-	N401 ProblemStatus = 401
-	N403 ProblemStatus = 403
-	N409 ProblemStatus = 409
-	N413 ProblemStatus = 413
-	N422 ProblemStatus = 422
-	N423 ProblemStatus = 423
-	N429 ProblemStatus = 429
-	N503 ProblemStatus = 503
-)
-
-// Valid indicates whether the value is a known member of the ProblemStatus enum.
-func (e ProblemStatus) Valid() bool {
-	switch e {
-	case N400:
-		return true
-	case N401:
-		return true
-	case N403:
-		return true
-	case N409:
-		return true
-	case N413:
-		return true
-	case N422:
-		return true
-	case N423:
-		return true
-	case N429:
-		return true
-	case N503:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ReadinessDeps.
 const (
 	ReadinessDepsOk          ReadinessDeps = "ok"
@@ -371,7 +332,7 @@ type Problem struct {
 	Instance string `json:"instance"`
 
 	// Status The HTTP status, repeated in the body.
-	Status ProblemStatus `json:"status"`
+	Status int `json:"status"`
 
 	// Title A fixed human-readable summary for the code. May be reworded without a version bump.
 	Title string `json:"title"`
@@ -385,9 +346,6 @@ type Problem struct {
 
 // ProblemCode The last segment of `type`, in snake_case.
 type ProblemCode string
-
-// ProblemStatus The HTTP status, repeated in the body.
-type ProblemStatus int
 
 // Readiness One entry per **registered** dependency, by name. `identity` is registered
 // in every deployment gateway has an identity for; `redis` is registered when
