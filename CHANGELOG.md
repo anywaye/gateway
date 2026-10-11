@@ -10,6 +10,16 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
+- **`openapi/v1.yaml`'s `Problem.status` is a plain `type: integer`, with no
+  numeric `enum`.** `cafe contract lint` refuses numeric enums (the
+  Kubernetes API convention), and gateway was the one service in the fleet
+  carrying one — `enum: [400, 401, 403, 409, 413, 422, 423, 429, 503]`, there
+  since guard-06. Identity, pantry, courier and billing all declare the same
+  field as a bare integer, so this matches the fleet rather than inventing a
+  shape. No wire byte changes: the field was and is a JSON number, and the
+  generated `Problem.Status` is now `int` instead of the `ProblemStatus`
+  enum, which is why every `api.N4xx` call site names its literal.
+
 - **`LICENSE` is a Business Source License 1.1, not a proprietary notice.** The
   services split of OPS-D2 — free to run, free to self-host, never to offer a
   competing service — puts `gateway` under a BSL, and the licence file is now
