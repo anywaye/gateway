@@ -71,7 +71,7 @@ type Options struct {
 	// A name the table does not carry falls back to the allowance above rather
 	// than failing, so a typo in a table costs the default allowance and nothing
 	// else. This is `resolve` in `rateLimit.ts` and the fallback is its documented
-	// behaviour.
+	// behavior.
 	Resolve func(policy string) (limit int, window time.Duration, ok bool)
 
 	// Clock, injected so a test can cross a window boundary without sleeping.
@@ -120,7 +120,7 @@ type Limiter struct {
 	// The lock is because Go reads this from every goroutine and the reference's
 	// single loop did not have to. `sync.Map` was the other candidate and a plain
 	// mutex is the honest one: the map holds one entry per distinct policy name,
-	// which is a handful, and a `sync.Map` optimises for a case this does not have.
+	// which is a handful, and a `sync.Map` optimizes for a case this does not have.
 	mu     sync.Mutex
 	limits map[string]allowance
 }
@@ -199,7 +199,7 @@ func NewLimiter(options Options, refuse Refuser) (*Limiter, error) {
 // allow is the policy name's numbers, resolved once and remembered.
 //
 // The name is VALIDATED here rather than escaped and truncated, and the reference
-// says why: a name that cannot be serialised into a structured field is a
+// says why: a name that cannot be serialized into a structured field is a
 // configuration mistake to surface, and the one way it could be *not* surfaced is
 // a header carrying a second field item that a client reads as a second policy.
 //

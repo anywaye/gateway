@@ -110,7 +110,7 @@ type Options struct {
 	// The credential gate, or nil for none.
 	//
 	// Nil means the gate is **not registered**, which is the reference's own
-	// behaviour when no `jwt` option was configured: an app with a route table and
+	// behavior when no `jwt` option was configured: an app with a route table and
 	// no verifier relays an anonymous request to a private route. That is not a
 	// hole this option opens and not one it closes — it is what the TypeScript
 	// original did, and reproducing it is what let the equivalence check compare two
@@ -1002,7 +1002,7 @@ func orderedDeps(probes []NamedProbe, deps map[string]ProbeStatus) string {
 // The four browser routes, each behind the origin gate except the read.
 //
 // `GET /auth/me` is NOT gated and that is not an oversight: the gate is CSRF
-// defence, and a CSRF defence on a request that changes nothing protects a caller
+// defense, and a CSRF defense on a request that changes nothing protects a caller
 // from itself. `src/index.ts` (removed at cutover) mounts it per route for exactly this reason, and
 // `TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose` holds the set equal to
 // the document's method list rather than to a hand-written one.

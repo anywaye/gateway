@@ -436,7 +436,7 @@ func send(t *testing.T, handler http.Handler, method, path, body string, headers
 
 // startRedis is a real `redis-server` on a free port, for this process only.
 //
-// It EXECUTES the binary rather than dialling a URL an operator set, which is the
+// It EXECUTES the binary rather than dialing a URL an operator set, which is the
 // whole reason this tier needs no `GATEWAY_REDIS_URL` and cannot be skipped: the
 // alternative is a green that says nothing about the wire commands whenever the
 // developer's Redis is not running, which is the class of bug this repository has

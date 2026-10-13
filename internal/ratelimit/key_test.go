@@ -5,13 +5,13 @@
 //  5. account > api key > address — a request with a principal is limited per
 //     principal, not per address;
 //  6. `TRUSTED_PROXIES` at its default of 0 keys on the socket peer, and the old
-//     behaviour of keying on the first hop was worse because the caller chose it.
+//     behavior of keying on the first hop was worse because the caller chose it.
 //
 // The second is the one where being wrong is quiet. Behind one NAT every caller
 // shares a bucket — a known, documented limitation — and the change that would
 // "fix" it by believing the header is the change that lets a caller mint a fresh
 // allowance per request. So there is a test for the DEFAULT and a test that the
-// non-default is honoured when it is set, and neither of them is the same test.
+// non-default is honored when it is set, and neither of them is the same test.
 package ratelimit
 
 import (
@@ -156,7 +156,7 @@ func TestTheAccountIsTheClaimThenTheClaimFieldThenTheSubject(t *testing.T) {
 //
 // The mutation that breaks this: defaulting it to 1, or reading the FIRST
 // `X-Forwarded-For` hop instead of the nth from the right. Both were the old
-// behaviour and both are worse, because the caller chose them.
+// behavior and both are worse, because the caller chose them.
 func TestTrustedProxiesDefaultsToTheSocketPeerAndTheDefaultIsNotAProxyCount(t *testing.T) {
 	t.Run("at zero the header is not read at all", func(t *testing.T) {
 		// The header names an address a caller chose. A gateway directly exposed to
@@ -202,7 +202,7 @@ func TestTrustedProxiesDefaultsToTheSocketPeerAndTheDefaultIsNotAProxyCount(t *t
 			{proxies: 2, forwarded: "203.0.113.9, 198.51.100.7, 192.0.2.5", want: "198.51.100.7"},
 			{proxies: 3, forwarded: "203.0.113.9, 198.51.100.7, 192.0.2.5, 192.0.2.6", want: "198.51.100.7"},
 			// The first entry is the caller's claim and it is NEVER the answer while
-			// the count is above zero. This is the old behaviour the README says was
+			// the count is above zero. This is the old behavior the README says was
 			// worse, and it is the one this table exists to keep out.
 			{proxies: 1, forwarded: "203.0.113.9", want: "203.0.113.9"},
 		} {

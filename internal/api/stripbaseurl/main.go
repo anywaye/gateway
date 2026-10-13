@@ -33,7 +33,7 @@
 //
 // Only the token. `options.BaseURL` defaults to `/` when a caller leaves it
 // empty, so `options.BaseURL+"/v1/me"` and `"/v1/me"` are the same route — the
-// rewrite changes no behaviour, and gateway serves at `/` and nowhere else
+// rewrite changes no behavior, and gateway serves at `/` and nowhere else
 // (`internal/httpapi/routes_test.go` holds the router to the document's paths).
 //
 // # It refuses rather than reporting success it did not achieve

@@ -168,7 +168,7 @@ func RuntimeOptions(env Env) (Config, error) {
 		// lazy client that holds a socket, and returning without closing it here
 		// would leak a connection on the refusal path — which is the path where
 		// `REDIS_URL` parsed fine and something else did not, so it is reached with
-		// a Redis already dialled rather than not.
+		// a Redis already dialed rather than not.
 		if closer != nil {
 			closer()
 		}

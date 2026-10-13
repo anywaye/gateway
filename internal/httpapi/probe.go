@@ -86,7 +86,7 @@ var probeTimeout = 4 * time.Second
 // runProbe turns one probe's outcome into the one status `/readyz` publishes.
 //
 // Everything that is not a `nil` return is `unavailable`: an error from the
-// probe, a panic inside it, and a probe that neither honours its context nor
+// probe, a panic inside it, and a probe that neither honors its context nor
 // returns at all. None of those may take the process down, and reporting `503` is
 // the entire contract of `/readyz`.
 //
@@ -112,7 +112,7 @@ var probeTimeout = 4 * time.Second
 // worse in both directions. Not bounding the probe hands `/readyz` a hang. Killing
 // the goroutine is not an option either: `runtime.Goexit` unwinds the probe's own
 // deferred cleanup, and a probe holding a pooled connection would return it
-// half-closed. A probe that honours its context has none of this cost, which is
+// half-closed. A probe that honors its context has none of this cost, which is
 // why the context is the FIRST argument and `TestAProbeThatIgnoresItsContextIs
 // StillBounded` documents the other kind.
 func runProbe(ctx context.Context, probe Probe) (status ProbeStatus) {

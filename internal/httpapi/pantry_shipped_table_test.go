@@ -144,7 +144,7 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 				t.Errorf("%s /v1/pantry declares principal %q on a public entry — which refuses to boot, and would mint a signed statement about a request nobody was required to make", file, read.Principal)
 			}
 
-			// The behaviour, not just the declaration: the write prefix mints
+			// The behavior, not just the declaration: the write prefix mints
 			// an assertion carrying sub and only sub, bound to pantry's
 			// origin; the read prefix mints nothing.
 			key := testKey(t)

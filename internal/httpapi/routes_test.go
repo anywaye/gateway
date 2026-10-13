@@ -17,7 +17,7 @@ import (
 //
 // `test/openapiDocument.test.ts` does the same for the TypeScript implementation
 // by reading `app.routes` — Hono's own table. There is no equivalent to read
-// here, because the chi router this package builds is not the artefact anyone
+// here, because the chi router this package builds is not the artifact anyone
 // writes by hand: it is `internal/api/api.gen.go`, generated from
 // `openapi/v1.yaml` by `oapi-codegen`. So the two sides of the comparison are
 //

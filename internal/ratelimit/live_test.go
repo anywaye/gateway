@@ -4,8 +4,8 @@
 //
 // Every other test in this package drives the Redis path without a server:
 // `parity_test.go` transcribes `GCRALua` into Go and runs the transcript, and
-// requires the two backends to agree over one behaviour table. That proves the
-// CLIENT — key names, argument marshalling, reply decoding — and it leaves the
+// requires the two backends to agree over one behavior table. That proves the
+// CLIENT — key names, argument marshaling, reply decoding — and it leaves the
 // SCRIPT covered by review. A Lua body no test has run is a body that is correct
 // by assertion rather than by evidence, and it is the body that decides whether a
 // deployment with `REDIS_URL` set limits at all.
@@ -166,7 +166,7 @@ return #found
 // cleanup that takes this run's keys with it.
 //
 // TWO connections, because "two replicas share one bucket" is only a fact about
-// Redis if the two sides are on separate sockets. One connection serialised behind
+// Redis if the two sides are on separate sockets. One connection serialized behind
 // its own mutex would prove the mutex, not the server.
 func liveTier(t *testing.T) (a, b *Connection) {
 	t.Helper()
@@ -249,7 +249,7 @@ func TestARealServerAnswersPingWithPong(t *testing.T) {
 // TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce pins what the server
 // SENDS, before the store is trusted to read it.
 //
-// `verdictOf` refuses any shape it does not recognise rather than inferring
+// `verdictOf` refuses any shape it does not recognize rather than inferring
 // `allowed` from it, so what arrives is worth pinning: a bulk string, an integer,
 // an array, and — the one that matters most — the error reply.
 func TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce(t *testing.T) {
@@ -562,7 +562,7 @@ func TestTheScriptAndTheMemoryStoreAgreeAcrossRandomisedLimits(t *testing.T) {
 	}
 
 	if refusals == 0 {
-		t.Error("400 randomised requests refused nothing, so the agreement proved here is only about admitting.")
+		t.Error("400 randomized requests refused nothing, so the agreement proved here is only about admitting.")
 	}
 }
 

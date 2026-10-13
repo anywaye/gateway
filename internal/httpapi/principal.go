@@ -1,6 +1,6 @@
 // `GET /v1/me` — the route that proves the auth chain is wired.
 //
-// # IT HAS NO BEHAVIOUR OF ITS OWN, AND THAT IS THE POINT
+// # IT HAS NO BEHAVIOR OF ITS OWN, AND THAT IS THE POINT
 //
 // No forwarding, no transformation, no decision. It exists so a deployment can be
 // checked end to end without asking a service for anything: what it answers is
@@ -81,7 +81,7 @@ func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 
 // writePrincipal renders the four members in the reference's order.
 //
-// Hand-built rather than marshalled from a struct, and `renderPrincipal` carries
+// Hand-built rather than marshaled from a struct, and `renderPrincipal` carries
 // the reason. Every value that could carry a character a caller chose goes through
 // `json.Marshal`: the `sub`, each scope, and the `account_id`. So this is not a
 // place a caller can inject a byte into a body, and the file says so rather than

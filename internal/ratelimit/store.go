@@ -8,7 +8,7 @@
 //	redis   shared by every replica and across restarts (`redis.go`).
 //
 // Both sit behind `Store`, and the parity table in `parity_test.go` runs one
-// behaviour table through both, so the abstraction is proven rather than asserted.
+// behavior table through both, so the abstraction is proven rather than asserted.
 // `internal/httpapi` picks between them from `REDIS_URL`.
 package ratelimit
 
@@ -72,7 +72,7 @@ func (r Request) nowMs() float64 { return float64(r.Now.UnixMilli()) }
 
 // windowMs is the window as the arithmetic reads it: whole milliseconds.
 //
-// The same reason as `nowMs`, and the same marshalling — `Window.Milliseconds()`
+// The same reason as `nowMs`, and the same marshaling — `Window.Milliseconds()`
 // is what `RedisStore.Hit` puts in `ARGV[2]`. `Date.now()` in the reference is
 // whole milliseconds too, so this is also the only precision the contract ever
 // had.
@@ -128,7 +128,7 @@ type Store interface {
 //     number of digits depending on which store held it.
 //   - `remaining` is `ceil((next - now) / interval)`, and a ratio one part in 10^13
 //     either side of a whole number is the whole answer. Ten of four hundred
-//     randomised steps landed there: Lua's float debt had drifted a hair above
+//     randomized steps landed there: Lua's float debt had drifted a hair above
 //     `now`, `ceil` tipped from 1 to 2, and the client was told it had one
 //     fewer unit left than the memory store had just told it.
 //

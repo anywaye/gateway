@@ -145,7 +145,7 @@ type Shutdown func(context.Context) error
 //
 // `otel.SetTextMapPropagator` is process-wide and any package may call it. Naming
 // W3C TraceContext here means this service's propagation is a line in this file
-// rather than a fact about whichever library happened to be initialised first.
+// rather than a fact about whichever library happened to be initialized first.
 func Install(ctx context.Context, options Options) (Shutdown, error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, // W3C traceparent + tracestate (§3.2, §3.3)

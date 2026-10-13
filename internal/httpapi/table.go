@@ -98,7 +98,7 @@ type RouteTarget struct {
 	//
 	// One entry, named, in a table a human reads. There is no wildcard and no
 	// prefix-independent switch, and `false` is what every existing entry already
-	// means — the field is additive and no deployed route changes behaviour.
+	// means — the field is additive and no deployed route changes behavior.
 	Public bool
 
 	// The claims this upstream is declared to need, and therefore the only claims
@@ -122,7 +122,7 @@ type RouteTarget struct {
 	//
 	// Nil means **no scope check** — the route forwards any verified caller,
 	// which is what every entry already means and the reason the field is additive:
-	// a deployed route changes behaviour only when its operator says so.
+	// a deployed route changes behavior only when its operator says so.
 	//
 	// This is the capabilities half of what the verifier proves about a caller,
 	// and on a shared platform it is the difference between "any tenant may reach
@@ -202,7 +202,7 @@ func isGatewayOwned(path string) bool {
 // `Principal` slices are not the ones the pass-through reads.
 //
 // Prefixes are checked in sorted order, which is the one place this file's shape
-// departs from `Object.entries`. Go's map iteration is randomised per range, so
+// departs from `Object.entries`. Go's map iteration is randomized per range, so
 // iterating the map directly would mean a table with two bad entries names a
 // different one on every run — a refusal that is not reproducible is a refusal
 // nobody can act on, and a test asserting on it would flake rather than fail.
@@ -233,9 +233,9 @@ func ValidateRouteTable(table RouteTable) (RouteTable, error) {
 		}
 
 		// The contradiction, refused rather than resolved. Both resolutions are
-		// wrong in a way an operator cannot see from the running service: honouring
+		// wrong in a way an operator cannot see from the running service: honoring
 		// `public` hands an anonymous caller an upstream that may be authenticating
-		// gateway's calls, and honouring `Token` quietly answers 401 to a route the
+		// gateway's calls, and honoring `Token` quietly answers 401 to a route the
 		// table says is open. What is certain is that nobody reading this table can
 		// say which of the two was meant, so it does not boot and the message names
 		// both ways out.
@@ -249,7 +249,7 @@ func ValidateRouteTable(table RouteTable) (RouteTable, error) {
 		// who has not noticed that a public route has no caller to assert one about —
 		// and it is the exact shape of the bug this field could introduce, because
 		// the machinery to mint one would be configured, present and correct.
-		// Honouring it would mint a signed token saying who sent a request that
+		// Honoring it would mint a signed token saying who sent a request that
 		// nobody was required to send.
 		//
 		// Refused rather than ignored, and refused at BOOT rather than at the send
@@ -548,12 +548,12 @@ func redactUserinfo(value string) string {
 // relayed 200 in the reference and a 404 in a Go port that does not normalise.
 //
 // The packet rules that the TypeScript answer is the correct one, so the parser's
-// behaviour is ported rather than argued with. `TestTheNormalisedPathIsTheURL
+// behavior is ported rather than argued with. `TestTheNormalisedPathIsTheURL
 // ParsersOwn` is not a claim about this function's intent — it is a claim that it
 // agrees with the reference on a corpus of paths the equivalence check drives
 // end to end.
 //
-// ## WHAT THIS DOES *NOT* DO, AND WHERE THE DEFENCE ACTUALLY IS
+// ## WHAT THIS DOES *NOT* DO, AND WHERE THE DEFENSE ACTUALLY IS
 //
 // It removes `.` and `..`. It does not decode anything, and in particular it does
 // not decode `%2f`. So `/v1/pantry/a%2f..%2f..%2fsecret` survives this function
@@ -567,7 +567,7 @@ func redactUserinfo(value string) string {
 //
 //	new URL("http://h/v1/pantry/%2e%2e/secret").pathname  ===  "/v1/secret"
 //
-// So the sentence is wrong about the mechanism. The **defence** it describes is
+// So the sentence is wrong about the mechanism. The **defense** it describes is
 // real and this port keeps it — a traversal is not expressible in what reaches an
 // upstream — but it is `UpstreamPath`'s refusal of a decoded separator, plus the
 // parser's dot-segment removal, and not a `%2e%2e` that arrives intact. A future
@@ -667,7 +667,7 @@ func isSingleDotSegment(segment string) bool {
 // False means "not a path this gateway serves", which the caller is told by the
 // same 404 an unrouted path gets.
 //
-// ## WHY `path.Clean` IS NOT THIS FUNCTION, AND THE DIFFERENCE IS THE DEFENCE
+// ## WHY `path.Clean` IS NOT THIS FUNCTION, AND THE DIFFERENCE IS THE DEFENSE
 //
 // `path.Clean("/a/../../b")` answers `/b`. That is a *normaliser*: it takes a
 // path that was already expressible and rewrites it into the shortest spelling of
@@ -920,7 +920,7 @@ func checkPublicField(prefix string, raw json.RawMessage) (bool, error) {
 
 // checkPrincipalField accepts a non-empty list of claim names, and refuses four
 // things, each of which is a value an operator can type in JSON and believe has
-// been honoured:
+// been honored:
 //
 //   - **Not an array.** `{"principal": "sub"}` is a string where a list was
 //     wanted. Coerced it would be one claim named `s`,`u`,`b`.
@@ -929,7 +929,7 @@ func checkPublicField(prefix string, raw json.RawMessage) (bool, error) {
 //     list can only mean "an assertion carrying no claims" — a token whose entire
 //     content is which gateway minted it.
 //   - **A name gateway owns.** `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` are the
-//     envelope, and honouring one would produce a token whose audience or lifetime
+//     envelope, and honoring one would produce a token whose audience or lifetime
 //     the operator chose rather than gateway.
 //   - **A name with whitespace, a control character or a wildcard.** `"*"` in
 //     particular is the shape that would quietly turn "minimal claims" into "the

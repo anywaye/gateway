@@ -69,7 +69,7 @@ type jwksCache struct {
 	now     func() time.Time
 	client  *http.Client
 
-	// Serialises every read of the fields below AND every fetch. See above.
+	// Serializes every read of the fields below AND every fetch. See above.
 	mu sync.Mutex
 
 	// `nil` until the first successful fetch. A FAILED fetch must leave the last
@@ -190,14 +190,14 @@ func (c *jwksCache) fetch(ctx context.Context) ([]jwk, error) {
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s is not a requestable URL: %v", errKeySetUnavailable, c.url, err)
+		return nil, fmt.Errorf("%w: %s is not a requestable URL: %w", errKeySetUnavailable, c.url, err)
 	}
 
 	response, err := c.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s did not answer: %v", errKeySetUnavailable, c.url, err)
+		return nil, fmt.Errorf("%w: %s did not answer: %w", errKeySetUnavailable, c.url, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return nil, fmt.Errorf("%w: %s answered %d", errKeySetUnavailable, c.url, response.StatusCode)
@@ -210,7 +210,7 @@ func (c *jwksCache) fetch(ctx context.Context) ([]jwk, error) {
 	// published and far below anything that would matter to a memory budget.
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxJWKSBytes))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: reading the body failed: %v", errKeySetUnavailable, c.url, err)
+		return nil, fmt.Errorf("%w: %s: reading the body failed: %w", errKeySetUnavailable, c.url, err)
 	}
 
 	var document struct {

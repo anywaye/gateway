@@ -1,7 +1,7 @@
 // The limiter's cases and the tests that hold its two decisions in place.
 //
 // Split out of the equivalence harness this package used to be, because the
-// limiter's REFUSAL and its store-down behaviour are properties of the Go gateway
+// limiter's REFUSAL and its store-down behavior are properties of the Go gateway
 // and not of any comparison, and because a reader looking for what the limiter is
 // held down by should not have to read a comparison they can no longer run.
 //

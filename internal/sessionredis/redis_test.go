@@ -21,7 +21,7 @@ import (
 // strings, hands back what was written, and records the arguments. Expiry is
 // deliberately NOT the fake's job — the store judges expiry against its own clock
 // on every read, and a fake that dropped keys on a TTL would be testing Redis's
-// behaviour while naming it the store's.
+// behavior while naming it the store's.
 //
 // And the key is read off the TRANSPORT here rather than rebuilt from
 // `KeyFor`: `KeyFor` is the production expression, so a test that repeats it
@@ -162,7 +162,7 @@ func TestAnAbsentSessionIsNilAndNotAnError(t *testing.T) {
 //
 // The reference is `expiresAt <= now()`: a session whose expiry is the current
 // instant is ALREADY expired. `<` here would keep a session alive for one more
-// read, which is a session outliving the token that authorises it.
+// read, which is a session outliving the token that authorizes it.
 func TestTheExpiryBoundaryIsInclusive(t *testing.T) {
 	// Each row carries an OFFSET from the subtest's fixed clock rather than an
 	// absolute instant. The table literal is built before the loop, so a

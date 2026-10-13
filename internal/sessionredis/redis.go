@@ -131,7 +131,7 @@ func New(commands Commands, now func() time.Time) (*RedisStore, error) {
 //
 // That matters for the shape of the failure. A gateway configured with a
 // `REDIS_URL` that is down still STARTS, and `/readyz` names `redis` as
-// unavailable — the same contract the limiter already has. A store that dialled at
+// unavailable — the same contract the limiter already has. A store that dialed at
 // construction would instead make a Redis outage a gateway that will not boot,
 // which is the "a dependency outage is not a restart" rule applied to the wrong
 // thing: a browser session being unavailable should be a `503` on the four `/auth`
@@ -273,7 +273,7 @@ func (s *RedisStore) Put(ctx context.Context, sessionID string, held session.Ses
 	// already-expired session, so this is unreachable from the handler — and a
 	// store that refused an expired `put` would be a store with a second answer to
 	// "what does an expired session mean" than the reference has, where storing it
-	// and reading it back as absent is the whole behaviour. `PX 0` is an error to
+	// and reading it back as absent is the whole behavior. `PX 0` is an error to
 	// Redis, so the clamp is what makes "store it anyway" expressible.
 	key := s.KeyFor(sessionID)
 	ttl := held.ExpiresAt.Sub(s.now()).Milliseconds()

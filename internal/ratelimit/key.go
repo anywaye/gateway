@@ -122,7 +122,7 @@ func AccountIDOf(principal *auth.Principal) string {
 // caller walks around the limiter by sending a new address per request.
 //
 // The cost is real and documented rather than quietly fixed: behind one NAT every
-// caller shares a bucket. The alternative — the old behaviour, keying on the FIRST
+// caller shares a bucket. The alternative — the old behavior, keying on the FIRST
 // `X-Forwarded-For` hop — was worse, because the caller chose it. Both are honest;
 // neither is a substitute for a proxy that overwrites the header.
 //
@@ -192,7 +192,7 @@ func peerAddress(r *http.Request) string {
 // addressOf is an address, or "".
 //
 // Entries are PARSED, not pattern-matched for characters that are safe to write
-// somewhere. Both were tried and only one of them is a defence, and the reference's
+// somewhere. Both were tried and only one of them is a defense, and the reference's
 // comment on `addressOf` says why at more length than is repeated here:
 //
 //   - The charset question is real: a bucket name ends up in a Redis key, and a
@@ -213,7 +213,7 @@ func peerAddress(r *http.Request) string {
 // rather than a property of the address bytes. The `%` is still in the old charset
 // for a reason — a zone IS part of an IPv6 literal as written — so the suffix has
 // to be dealt with, and it is dealt with three lines below rather than here. The
-// fix and the reference's own behaviour are both written out there; this paragraph
+// fix and the reference's own behavior are both written out there; this paragraph
 // is only here so the summary above the function does not claim a property the
 // function does not have.
 //
@@ -301,13 +301,13 @@ func isDigits(value string) bool {
 //
 // Constrained because these strings end up in a Redis key. `internal/ratelimit`
 // hashes the identity before the store ever sees it (`CounterKey` in
-// `limiter.go`), so in practice the store's own check is a second line of defence
+// `limiter.go`), so in practice the store's own check is a second line of defense
 // rather than the only one — and it is kept, because a store is a public type and
 // the next caller will not have read the middleware.
 const maxKeyLength = 128
 
 // AssertBucket is the store-side charset check, and it is a refusal to build
-// rather than a sanitised string.
+// rather than a sanitized string.
 func AssertBucket(value string) (string, error) {
 	if value == "" || len(value) > maxKeyLength {
 		return "", fmt.Errorf("%w: bucket must match [A-Za-z0-9_.:-]{1,%d}, got %q", ErrNotConfigured, maxKeyLength, value)

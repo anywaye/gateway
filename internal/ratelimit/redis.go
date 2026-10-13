@@ -22,7 +22,7 @@
 //
 // It does NOT execute the Lua. `redis_test.go` carries a line-for-line
 // transcription of the script and the parity table runs against the Redis path
-// through it, so the client-side code (key names, argument marshalling, reply
+// through it, so the client-side code (key names, argument marshaling, reply
 // decoding) is executed and covered; the script body itself is covered by review.
 //
 // `live_test.go` runs THIS file's script against a real `redis-server`, and it
@@ -334,7 +334,7 @@ func (c *Connection) Eval(script string, keys []string, args []string) (Value, e
 // real restriction and it is stated rather than hidden: a pipelining client would
 // need a queue of pending callers keyed by arrival order, and the limiter makes one
 // call per request with no throughput argument for the extra state. The cost is
-// that two goroutines sharing a connection serialise, which at the edge is one
+// that two goroutines sharing a connection serialize, which at the edge is one
 // request per replica per round trip either way.
 func (c *Connection) Do(ctx context.Context, args ...string) (Value, error) {
 	c.mu.Lock()

@@ -80,7 +80,7 @@ const (
 	EndpointVariable = "GATEWAY_OTEL_ENDPOINT"
 
 	// DefaultEndpoint is the collector that ships with the local stack. It is a
-	// default value and not a constant of behaviour: changing it changes where a
+	// default value and not a constant of behavior: changing it changes where a
 	// developer with no configuration sends their telemetry, which is the point.
 	DefaultEndpoint = "http://otel-collector:4317"
 )
@@ -106,7 +106,7 @@ const (
 // Endpoint is where OTLP goes.
 //
 // GATEWAY_OTEL_ENDPOINT wins over the standard `OTEL_EXPORTER_OTLP_ENDPOINT`, which
-// is honoured as a fallback so the service also works with generic OTel tooling.
+// is honored as a fallback so the service also works with generic OTel tooling.
 // That precedence is written down rather than left to be discovered, because a
 // contract with an undocumented precedence order is a bug report.
 func Endpoint() string {
@@ -328,7 +328,7 @@ var allowedTraces = map[string]Attribute{
 		Kind: KindString,
 		Values: []string{
 			"_OTHER",
-			"cancelled",
+			"canceled",
 			"circuit_open",
 			"conflict",
 			"connection_failed",
@@ -415,7 +415,7 @@ var allowedMetrics = map[string]Attribute{
 		Kind: KindString,
 		Values: []string{
 			"_OTHER",
-			"cancelled",
+			"canceled",
 			"circuit_open",
 			"conflict",
 			"connection_failed",
@@ -459,7 +459,7 @@ var allowedLogs = map[string]Attribute{
 		Kind: KindString,
 		Values: []string{
 			"_OTHER",
-			"cancelled",
+			"canceled",
 			"circuit_open",
 			"conflict",
 			"connection_failed",
@@ -716,7 +716,7 @@ func SpanName(operation string, targetAndQualifier ...string) (string, error) {
 // computable without a message in a label.
 var errorTypes = []string{
 	"_OTHER",
-	"cancelled",
+	"canceled",
 	"circuit_open",
 	"conflict",
 	"connection_failed",
@@ -762,7 +762,7 @@ func IsErrorType(class string) bool {
 // This is the fleet-level form of the canary a service runs end to end, and it
 // is here because the realistic leak is not an attacker: it is a well-meaning
 // `muse.prompt` added six months from now by somebody debugging a routing
-// decision. A collector that drops unrecognised attributes is the chokepoint; a
+// decision. A collector that drops unrecognized attributes is the chokepoint; a
 // name that can never be added is the barrier behind it, and two independent
 // barriers to the same leak is the whole argument — because the realistic
 // failure is one of them being removed by a well-meaning change and nobody

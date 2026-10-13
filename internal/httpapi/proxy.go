@@ -420,7 +420,7 @@ func IsRelayableStatus(status int) bool {
 // `set-cookie` is dropped and that is not tidiness: a service answering
 // `Set-Cookie: __Host-bff-session=…` would be writing the browser's BFF session from
 // behind the edge, which is session fixation arriving through the gateway on an
-// origin where the `__Host-` prefix is honoured. `cache-control: no-store` is the
+// origin where the `__Host-` prefix is honored. `cache-control: no-store` is the
 // one header added rather than forwarded — proxied traffic is authenticated, and a
 // response held in a shared cache between here and the caller is an account's data
 // at rest.

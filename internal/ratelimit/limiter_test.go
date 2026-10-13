@@ -173,7 +173,7 @@ func TestRedisDownFailsOpenAndABrokenConfigurationFailsClosed(t *testing.T) {
 
 	t.Run("a policy name that cannot be a structured-field key is refused per request", func(t *testing.T) {
 		// The name goes into `RateLimit-Policy` as a quoted string, and a name that
-		// cannot be serialised into a structured field is a configuration mistake to
+		// cannot be serialized into a structured field is a configuration mistake to
 		// SURFACE. The one way it could be not surfaced is a header carrying a second
 		// field item that a client reads as a second policy.
 		rec := &recorder{}
@@ -191,7 +191,7 @@ func TestRedisDownFailsOpenAndABrokenConfigurationFailsClosed(t *testing.T) {
 		}
 		for _, name := range RateLimitHeaders {
 			if value := got.Header().Get(name); value != "" {
-				t.Errorf("%s is %q on a request whose policy name cannot be serialised. A header carrying a second field item that a client reads as a second policy is the failure this check exists to prevent.", name, value)
+				t.Errorf("%s is %q on a request whose policy name cannot be serialized. A header carrying a second field item that a client reads as a second policy is the failure this check exists to prevent.", name, value)
 			}
 		}
 	})

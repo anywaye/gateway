@@ -169,7 +169,7 @@ func silenceLog(t *testing.T) *strings.Builder {
 // service credential — never the caller's — and the caller's `Cookie` does not
 // reach it at all. Both are asserted on the request the upstream **received**,
 // because a header builder that is correct and a transport that adds something back
-// produce the same green here and opposite behaviour in production.
+// produce the same green here and opposite behavior in production.
 func TestTheCallersCredentialNeverReachesAnInternalService(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -465,7 +465,7 @@ func TestAnUpstreamThatHangsIsA503AndNotAHungGateway(t *testing.T) {
 //
 // `set-cookie` is dropped because a service answering `Set-Cookie: __Host-bff-session=…`
 // would be writing the browser's session from behind the edge — session fixation
-// arriving through the gateway on an origin where the `__Host-` prefix is honoured.
+// arriving through the gateway on an origin where the `__Host-` prefix is honored.
 // `cache-control: no-store` is the one header added rather than forwarded, because
 // proxied traffic is authenticated and a shared cache in front of this is an
 // account's data at rest.
@@ -544,7 +544,7 @@ func TestOnlyA2xxOrA4xxIsRelayed(t *testing.T) {
 	translated := []int{300, 301, 302, 303, 304, 307, 308, 399, 500, 502, 503, 504}
 
 	// The predicate, over the same boundaries — the first run of the reference's own
-	// suite got this wrong as a range check, so the predicate and the behaviour are
+	// suite got this wrong as a range check, so the predicate and the behavior are
 	// held together rather than one of them being assumed.
 	for _, status := range relayed {
 		if !IsRelayableStatus(status) {

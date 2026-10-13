@@ -11,7 +11,7 @@
 // comparisons on `/v1/me` would fail on key order.
 //
 // The substrate already hit this once, for `/readyz`'s `deps`, and solved it by
-// marshalling that one object by hand (`orderedDeps`). This is the same problem
+// marshaling that one object by hand (`orderedDeps`). This is the same problem
 // one layer down and the same answer: the order a caller wrote is the order the
 // response carries.
 //
@@ -149,7 +149,7 @@ func (c Claims) String(name string) string {
 // Presence and type are separate questions and the difference matters in exactly
 // one place: `principalOf` REJECTS a `scope` claim that is present and is not a
 // string, while it IGNORES an `account_id` that is present and is not a string.
-// A single accessor that conflated them would make one of those two behaviours
+// A single accessor that conflated them would make one of those two behaviors
 // unreachable.
 func (c Claims) Lookup(name string) (any, bool) {
 	at, ok := c.index[name]

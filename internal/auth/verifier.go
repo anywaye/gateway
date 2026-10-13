@@ -371,7 +371,7 @@ func publicKeyOf(key jwk) (*rsa.PublicKey, *Refusal) {
 //
 // RS256 is `RSASSA-PKCS1-v1_5` over `SHA-256`, per RFC 7518 §3.3. PKCS#1 v1.5 and
 // not PSS: the algorithm is named in the token's own header, so a verifier that
-// honoured `alg: PS256` would honour the claim this whole file exists to refuse.
+// honored `alg: PS256` would honor the claim this whole file exists to refuse.
 // The `crypto.Hash` is hard-coded rather than looked up from a name, for the same
 // reason.
 func checkSignature(key *rsa.PublicKey, header, payload, signature string) error {

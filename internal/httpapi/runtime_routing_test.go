@@ -178,7 +178,7 @@ func TestTheAssertionKeyIsReadFromTheEnvironmentAndNothingElseIs(t *testing.T) {
 //
 // Nothing is listening on `127.0.0.1:1`, so a relayed request answers `503`. The
 // assertion below is that it answers `401` instead — the refusal happens above the
-// pass-through, so the dead port is never dialled. That is the observable difference
+// pass-through, so the dead port is never dialed. That is the observable difference
 // between "relayed anonymously" and "refused", and it is worth being able to tell
 // them apart from a test rather than from a log line.
 func TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstream(t *testing.T) {
@@ -206,7 +206,7 @@ func TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstre
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil))
 
 	if rec.Code != 401 {
-		t.Fatalf("an anonymous request answered %d, want 401 — a `503` would mean it reached the pass-through and dialled a dead upstream, which is the failure the gate above the pass-through exists to prevent", rec.Code)
+		t.Fatalf("an anonymous request answered %d, want 401 — a `503` would mean it reached the pass-through and dialed a dead upstream, which is the failure the gate above the pass-through exists to prevent", rec.Code)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
 		t.Errorf("Content-Type is %q on the 401, want application/problem+json", got)

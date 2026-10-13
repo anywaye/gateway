@@ -177,7 +177,7 @@ func instanceOf(r *http.Request) string {
 // `{"code":…,"detail":…,"instance":…,"status":…,"title":…,"trace_id":…,"type":…}`.
 //
 // That is the same trap `/readyz` hit and for the same reason: `encoding/json`
-// honours struct field order and the generator writes fields sorted. The
+// honors struct field order and the generator writes fields sorted. The
 // equivalence check found it on the first run of a single 503 case — every problem
 // document in the comparison differed on nothing else — and every client parses
 // both spellings identically, which is exactly why it would have shipped.
@@ -225,7 +225,7 @@ func jsonStringMember(name, value string) string {
 // one level down: `api.FieldError` is a GENERATED struct, so its fields are
 // alphabetical — `code` before `field` — and `internal/equivalence` compared bodies
 // BYTE FOR BYTE. The proxy packet, which owns this function, had no 422 to compare
-// and marshalled the array; the BFF packet, which did, hand-rendered it. Taking one
+// and marshaled the array; the BFF packet, which did, hand-rendered it. Taking one
 // side of the merge wholesale dropped the other's fix, and this is the commit that
 // puts it back with a note on why it is not the obvious one line.
 //
@@ -274,7 +274,7 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	// legal JSON and every client parses it identically, which is exactly why it
 	// is the kind of difference that ships unnoticed and is worth the byte.
 	//
-	// `Marshal` first, `WriteHeader` second, is the other half: a marshalling
+	// `Marshal` first, `WriteHeader` second, is the other half: a marshaling
 	// failure means the handler built a body the document does not allow, and
 	// doing it in this order means nothing has been written yet. There is
 	// therefore nothing half-sent for a client to parse.

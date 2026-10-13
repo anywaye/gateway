@@ -297,7 +297,7 @@ func TestEndpointPrefersTheCafayeName(t *testing.T) {
 			want:     "http://otel.example:4317",
 		},
 		{
-			name:     "the standard spelling is honoured when the cafaye one is unset",
+			name:     "the standard spelling is honored when the cafaye one is unset",
 			standard: "http://generic:4317",
 			want:     "http://generic:4317",
 		},

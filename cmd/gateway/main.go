@@ -86,7 +86,7 @@ func probeHealthz(url string) int {
 	if err != nil {
 		return 1
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, response.Body)
 
 	// Any 2xx, not `== 200`: what is being asserted is "this process is answering",
@@ -153,7 +153,7 @@ func run() error {
 	// Everything telemetry reads is read HERE rather than through
 	// `httpapi.RuntimeOptions`, and that is deliberate rather than tidiness. That
 	// function's contract is an exhaustive, asserted list of the variables that
-	// configure the GATEWAY's behaviour — a list with a test holding it exact in
+	// configure the GATEWAY's behavior — a list with a test holding it exact in
 	// both directions — and four variables that configure where telemetry goes are
 	// not gateway configuration. They are read from the generated package's own
 	// functions, which carry core's contract for them.
@@ -167,7 +167,7 @@ func run() error {
 		return err
 	}
 	defer func() {
-		// A separate context: the one above is not cancelled on SIGTERM by anything
+		// A separate context: the one above is not canceled on SIGTERM by anything
 		// in this function, and a telemetry flush must not be able to hold up a
 		// shutdown. Bounded by the SDK's own timeout.
 		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

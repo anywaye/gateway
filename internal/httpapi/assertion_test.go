@@ -646,7 +646,7 @@ func TestAPublicEntryIsRefusedAnAssertionEvenByATableThatBootWouldHaveRefused(t 
 // and `n`.
 //
 // In Go the mistake is available as a struct with a private-exponent field, and the
-// defence is that `JSONWebKey` **has no such field** — so this asserts the exact
+// defense is that `JSONWebKey` **has no such field** — so this asserts the exact
 // field set rather than merely that the key verifies.
 func TestThePublishedJWKCarriesOnlyThePublicHalf(t *testing.T) {
 	minter := testMinter(t)
@@ -799,7 +799,7 @@ func mustECKeyPEM(t *testing.T) string {
 
 	// A syntactically valid PKCS#8 block holding an EC key. Hand-built rather than
 	// generated so the test does not depend on `crypto/ec` being worth importing for
-	// one string: the marshalled form below is the smallest ASN.1 sequence the
+	// one string: the marshaled form below is the smallest ASN.1 sequence the
 	// standard library's parser will accept as a key, and any key that is not RSA is
 	// refused by the type assertion in `ReadAssertionKey` either way.
 	der := []byte{

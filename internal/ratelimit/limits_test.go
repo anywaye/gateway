@@ -253,7 +253,7 @@ func TestAPrefixMustEndAtAPathSegmentBoundary(t *testing.T) {
 }
 
 // A SUBDIAGONAL PATH IS STILL UNDER ITS PREFIX, and this is the reference's
-// behaviour rather than a reading of it.
+// behavior rather than a reading of it.
 //
 // The packet for this port asked for a test that `/auth/login/extra` does NOT
 // match the `/auth/login` entry. It does match, and porting that is correct: the
@@ -432,7 +432,7 @@ func TestValidationRefusesABadNumberOrName(t *testing.T) {
 			want: "/v1/.limit",
 		},
 		{
-			name: "a policy name too long to serialise",
+			name: "a policy name too long to serialize",
 			table: LimitTable{
 				Default: Limit{Limit: 1, Window: time.Second, Policy: "default"},
 				Routes:  map[string]Limit{"/v1/": {Limit: 1, Window: time.Second, Policy: strings.Repeat("a", 65)}},
@@ -570,7 +570,7 @@ func TestTheResolverGivesTheLimiterANameAndTheNumbersBehindIt(t *testing.T) {
 // The fallback is FALLIBLE, and that is the point.
 //
 // A name the index does not carry answers `false`, and `Limiter.allow` then uses its
-// constructor allowance. This is the reference's documented behaviour rather than a
+// constructor allowance. This is the reference's documented behavior rather than a
 // convenience: a typo in a table costs the default allowance and nothing else, which
 // is a failure a gateway mid-cutover can absorb.
 func TestANameTheTableDoesNotCarryIsNotResolved(t *testing.T) {

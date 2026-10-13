@@ -65,7 +65,7 @@ type recorded struct {
 // fixture exists in this shape.
 //
 // The SDK's Batcher is asynchronous — a span reaches the exporter on a background
-// goroutine, in batches, which is the correct production behaviour and the wrong
+// goroutine, in batches, which is the correct production behavior and the wrong
 // thing to assert against. A test that reads the recorder straight after a request
 // sees an empty slice and concludes the middleware spans nothing, which is a false
 // negative on the one property this file exists to prove. So the test flushes, and
@@ -85,7 +85,7 @@ func installTelemetry(t *testing.T, disabled bool, lookup func(string) string) *
 	t.Cleanup(func() { otel.SetTracerProvider(previous) })
 
 	shutdown, err := telemetry.Install(context.Background(), telemetry.Options{
-		// The endpoint is never dialled: the exporter below is the one that runs, and
+		// The endpoint is never dialed: the exporter below is the one that runs, and
 		// this string is here so the "configured" and "disabled" cases differ in
 		// exactly one field.
 		Endpoint: "http://otel-collector:4317",

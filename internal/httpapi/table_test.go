@@ -453,7 +453,7 @@ func TestAPublicRouteIsDecidedByTheSameResolverThatDecidesTheDestination(t *test
 		{path: "/v1/catalog/services", want: true},
 		{path: "/v1/catalog/imports", want: false},
 		{path: "/v1/catalog/imports/x", want: false},
-		{path: "/v1/catalogue", want: false},
+		{path: "/v1/catalogue", want: false}, //nolint:misspell // a fixture PATH, not prose: it shares /v1/catalog's prefix without a path boundary, which is exactly what this case proves.
 		{path: "/healthz", want: false},
 	}
 

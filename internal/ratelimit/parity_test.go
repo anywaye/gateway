@@ -33,7 +33,7 @@ import (
 // `GCRALua` in Go.
 //
 // NOT a mock and NOT a canned answer: it is the algorithm, written out again, so the
-// client-side code (key names, argument marshalling, reply decoding) is executed
+// client-side code (key names, argument marshaling, reply decoding) is executed
 // against a reply shaped the way Redis shapes one — four integers, in an array — and
 // the arithmetic is compared against `MemoryStore`'s independently.
 //
@@ -441,7 +441,7 @@ func TestTheInstantsAreWhereTheArithmeticPutsThem(t *testing.T) {
 			// milliseconds does not.
 			//
 			// `live_test.go` found it against a real redis-server: ten of four hundred
-			// randomised steps came back with one fewer unit of allowance than the
+			// randomized steps came back with one fewer unit of allowance than the
 			// memory store had just granted, because the two backends were running
 			// different arithmetic. So the decision was not "more precise" — it was
 			// "a different algorithm, agreeing on the decisions by luck". The nanosecond

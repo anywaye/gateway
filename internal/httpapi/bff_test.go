@@ -22,7 +22,7 @@ import (
 // detail, and all three can be right while the DOCUMENT is wrong — which is exactly
 // what happened. `api.Problem` declares its fields alphabetically because
 // `oapi-codegen` emits a struct in the order it finds them in the document's
-// `properties` map, so marshalling it writes `code, detail, instance, status, title,
+// `properties` map, so marshaling it writes `code, detail, instance, status, title,
 // trace_id, type` where `src/problem.ts` (removed at cutover) writes `type, title, status, detail,
 // instance, code, trace_id`. Byte-identical content, different order, and
 // `internal/equivalence` reported 13 differences on it.
@@ -442,7 +442,7 @@ func TestDisagreeingOriginSignalsAreRefused(t *testing.T) {
 	}
 }
 
-// A read is not gated. CSRF defence protects a caller from a page they did not
+// A read is not gated. CSRF defense protects a caller from a page they did not
 // navigate to, and `GET /auth/me` changes nothing.
 func TestTheReadIsNotGated(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
@@ -451,7 +451,7 @@ func TestTheReadIsNotGated(t *testing.T) {
 	res := h.do(t, http.MethodGet, "/auth/me", "", map[string]string{"Cookie": cookie, "Sec-Fetch-Site": "cross-site"})
 
 	if res.StatusCode != http.StatusOK {
-		t.Errorf("GET /auth/me with a hostile Sec-Fetch-Site answered %d. The gate is CSRF defence and a read needs none.", res.StatusCode)
+		t.Errorf("GET /auth/me with a hostile Sec-Fetch-Site answered %d. The gate is CSRF defense and a read needs none.", res.StatusCode)
 	}
 }
 
@@ -600,7 +600,7 @@ func TestClearingTheCookieRepeatsEveryAttribute(t *testing.T) {
 }
 
 // PROPERTY 3 — the browser never receives an identity token. Source and
-// behaviour, because a leak test that only greps finds the handler that forgot
+// behavior, because a leak test that only greps finds the handler that forgot
 // and not the one that was never written.
 
 // PROPERTY 4 — one sentence for every refused credential. Two DIFFERENT causes,
@@ -1226,7 +1226,7 @@ func TestAPanickingIdentityIsA503AndNotADeadGateway(t *testing.T) {
 func TestAHungIdentityIsBounded(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		// Ignores its context on purpose: that is the `Doer` the timer exists for,
-		// and a `Doer` that honoured the deadline would not test the timer.
+		// and a `Doer` that honored the deadline would not test the timer.
 		time.Sleep(2 * time.Second)
 		return answer(http.StatusOK, `{}`), nil
 	}, func(o *BffOptions) { o.IdentityTimeout = 60 * time.Millisecond })
@@ -1505,7 +1505,7 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 	}
 }
 
-// PROPERTY 3, as a source check. The behavioural tests above search for one
+// PROPERTY 3, as a source check. The behavioral tests above search for one
 // literal token; this reads the file to catch the handler that writes a token
 // without the fixture's literal ever appearing in it.
 func TestTheBrowserNeverReceivesTheIdentityToken(t *testing.T) {

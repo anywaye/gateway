@@ -7,7 +7,7 @@
 // an import cycle, and the workaround for that is either a second copy of the
 // fixture or a duplicated mini-interface. A leaf is the third option, and it is
 // the shape Go's own libraries use for exactly this — a contract with no
-// behaviour in it, implemented by packages that depend on it and not on each
+// behavior in it, implemented by packages that depend on it and not on each
 // other.
 //
 // # WHERE A BROWSER SESSION LIVES

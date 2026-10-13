@@ -146,7 +146,7 @@ func DefaultLimitTable() LimitTable {
 			// Worth knowing before editing the 60: the reference's own suite pins only
 			// the POLICY NAME for this row — `limits.test.ts` asserts
 			// `gateway-api-keys` and no number, while it does pin 10, 5 and 600 for
-			// its neighbours. The three Go assertions over this number
+			// its neighbors. The three Go assertions over this number
 			// (`limits_test.go` twice, `internal/httpapi/runtime_limits_test.go` once,
 			// the last of them through the whole HTTP stack) are therefore the only
 			// thing in either tree holding it, and this comment is why they say 60.
@@ -158,7 +158,7 @@ func DefaultLimitTable() LimitTable {
 // ValidateLimitTable is a table, checked.
 //
 // Every number and every policy name is checked here, at construction, because a
-// limit of `0` or a policy name that cannot be serialised into a header is a
+// limit of `0` or a policy name that cannot be serialized into a header is a
 // startup failure and not a surprise on the first request of the week. Nothing is
 // validated on the request path: `ResolveLimit` is called on every request and
 // must stay a map scan.
@@ -296,7 +296,7 @@ func ResolveLimit(table LimitTable, path string) Limit {
 // # `resolve` IS FALLIBLE, AND THAT IS THE POINT
 //
 // A name the index does not carry answers `false`, and the limiter then falls back
-// to its constructor allowance. That is the reference's documented behaviour rather
+// to its constructor allowance. That is the reference's documented behavior rather
 // than a convenience: a typo in a table costs the default allowance and nothing
 // else, which is the failure a gateway serving a cutover can absorb. It is also
 // the reason the index is built here and the fallback lives in `allow()`.
@@ -325,7 +325,7 @@ func PolicyResolver(table LimitTable) (func(string) string, func(string) (int, t
 	// its own numbers with it. Since `DefaultLimitTable` gives both the same
 	// numbers this is a no-op for the shipped table, and it is written the
 	// reference's way rather than the obvious one so a deployment that diverges
-	// them gets the reference's behaviour.
+	// them gets the reference's behavior.
 	for _, entry := range append([]Limit{table.Default}, routeEntries(table)...) {
 		if known, ok := index[entry.Policy]; ok && known != entry {
 			return nil, nil, fmt.Errorf("%w: policy %q is claimed by more than one entry with different numbers (%d/%v and %d/%v). Two entries sharing a name share an allowance, so they must agree; otherwise which one a request draws is a map's iteration order", ErrNotConfigured, entry.Policy, known.Limit, known.Window, entry.Limit, entry.Window)

@@ -35,7 +35,7 @@ import (
 //
 // # THE PROPERTIES THIS FILE EXISTS TO HOLD
 //
-//  1. The origin gate is the CSRF defence. There is no double-submit token and
+//  1. The origin gate is the CSRF defense. There is no double-submit token and
 //     there must not be one — `RequireSameOrigin` says why in full, and the
 //     reason is not "we did not get to it".
 //  2. The session cookie is `__Host-bff-session`. The prefix is a guarantee the
@@ -230,7 +230,7 @@ func (b *Bff) call(ctx context.Context, method, path string, options callOptions
 
 // within runs one call under a deadline, on its own goroutine.
 //
-// A context deadline bounds a `Doer` that honours it and cannot bound one that
+// A context deadline bounds a `Doer` that honors it and cannot bound one that
 // does not, and an injected `Doer` is exactly the kind that might not: the whole
 // point of the seam is that a test can supply something that is not a real HTTP
 // client. So the deadline is enforced twice — on the context, which stops a real
@@ -549,7 +549,7 @@ func (b *Bff) Me(w http.ResponseWriter, r *http.Request) {
 // # THERE IS NO DOUBLE-SUBMIT TOKEN HERE, AND ADDING ONE WOULD BE A REGRESSION
 //
 // The README says it outright — a token is not present because the origin gate IS
-// the defence, and adding one would be "a second thing to get right for the same
+// the defense, and adding one would be "a second thing to get right for the same
 // protection". The failure mode is worth being concrete about, because the
 // reasoning is what stops the next reader from "improving" this:
 //
@@ -558,12 +558,12 @@ func (b *Bff) Me(w http.ResponseWriter, r *http.Request) {
 //     HttpOnly cookie by design. So the second cookie would be readable by the
 //     very cross-site script the first one hides from, which means the token is
 //     compared against a value the ATTACKER supplied. That is not a second
-//     defence; it is the same defence with the secret moved somewhere public.
+//     defense; it is the same defense with the secret moved somewhere public.
 //   - It survives being implemented wrongly. Two cookies, one readable and one
 //     not, is exactly the shape of the `__Host-` fixation bug above, and the
 //     prefix that prevents that does not exist for a non-prefixed cookie.
 //
-// So the CSRF defence is one mechanism, the browser enforces the part of it that
+// So the CSRF defense is one mechanism, the browser enforces the part of it that
 // matters, and this gate is the part a caller cannot forge.
 func RequireSameOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -796,7 +796,7 @@ func (b *Bff) readSubmittedBody(w http.ResponseWriter, r *http.Request) (string,
 //
 // Two reasons, both of them about the BYTES.
 //
-// The first is ordering: `api.User` declares `Email` before `ID`, so marshalling
+// The first is ordering: `api.User` declares `Email` before `ID`, so marshaling
 // it writes `{"email":…,"id":…}` where the reference writes `{"id":…,"email":…}`.
 // `internal/equivalence` compared bodies byte for byte, so that is a failure and
 // not a note.

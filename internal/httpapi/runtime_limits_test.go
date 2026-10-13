@@ -135,7 +135,7 @@ func authenticatedGateway(t *testing.T) (http.Handler, string) {
 // permissive on the most attacked surface it serves, and it would still announce
 // `q=600` and look configured.
 //
-// `/v1` needs the token `authenticatedGateway` mints; `/auth` and unrecognised
+// `/v1` needs the token `authenticatedGateway` mints; `/auth` and unrecognized
 // paths do not, because the credential gate is mounted on `/v1/` only. Nothing
 // asserts the STATUS here -- which route a path resolves to is the route table's
 // business and is tested there -- because a `404` from an unmounted route still

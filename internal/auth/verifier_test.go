@@ -254,7 +254,7 @@ func TestKeyRefreshIsSingleFlight(t *testing.T) {
 		// The FIRST request spends the budget and reports the outage. The other four
 		// find the budget spent, answer off the CACHED set, and are told the key is
 		// unknown — which is false while identity is down, and is `jwt.ts`'s
-		// behaviour exactly:
+		// behavior exactly:
 		//
 		//     if (!fetched && refreshSpentIn !== window) { … await load(false) … }
 		//     if (!publishes(set, header.kid)) return unauthorized("…unknown key");
@@ -274,7 +274,7 @@ func TestKeyRefreshIsSingleFlight(t *testing.T) {
 				t.Errorf("request 0 against a failing key set was answered %+v, want a 503", refusal)
 			}
 			if i > 0 && refusal.Detail != "token was signed by an unknown key" {
-				t.Errorf("request %d was answered %q. Once the budget is spent the answer comes off the cached set, so this is the reference's behaviour — see the comment above — and the port is holding to it.", i, refusal.Detail)
+				t.Errorf("request %d was answered %q. Once the budget is spent the answer comes off the cached set, so this is the reference's behavior — see the comment above — and the port is holding to it.", i, refusal.Detail)
 			}
 		}
 		if got := f.fetches(); got != before+1 {
@@ -486,7 +486,7 @@ func TestExpiryAndNotBeforeAreVerifiedAndNoLifetimeCeilingExists(t *testing.T) {
 	})
 
 	t.Run("no ceiling is a property of the code, not of a case", func(t *testing.T) {
-		// A test presenting a long token proves today's behaviour. This proves there
+		// A test presenting a long token proves today's behavior. This proves there
 		// is nothing in the source that could refuse one — which is the property, and
 		// it catches a `maxTokenAge` added with its own test.
 		source := read(t, "verifier.go")
@@ -534,7 +534,7 @@ func TestAnUnreachableIdentityIsA503AndNeverA401(t *testing.T) {
 		// then CROSS THE TTL, because a fresh cache never fetches and an outage is
 		// therefore invisible to verification until the key set expires.
 		//
-		// That is the reference's behaviour and it is correct: a gateway holding a fresh
+		// That is the reference's behavior and it is correct: a gateway holding a fresh
 		// key set is holding the answer, and going to identity to confirm would make
 		// every request depend on identity's availability for no gain. It is also the
 		// reason the TTL is bounded rather than "refresh on every request" — the outage
