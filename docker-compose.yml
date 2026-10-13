@@ -427,3 +427,23 @@ services:
       retries: 5
       start_period: 5s
     restart: unless-stopped
+
+# `platform` IS DEFINED HERE TOO, and it is not a duplicate of kit's definition.
+#
+# This file is an OVERRIDE — the documented way to run it is with kit's base
+# compose file as the first `-f` — and kit's base is where `platform` is normally
+# declared. But `docker compose build` (and `docker compose config`) is run on
+# THIS file alone by the `image` CI job and by anyone following AGENTS.md, and
+# compose validates the whole project before it does anything: a service that
+# names a network the same project never declares is `service "gateway" refers
+# to undefined network platform: invalid compose project`, which is a NON-ZERO
+# exit before a single layer builds. That is the exact failure the `image` job
+# reported, and it is not downstream of any test: the suite inside the image had
+# already passed when the compose step failed.
+#
+# An empty definition merges on top of kit's with nothing to override, and gives
+# a standalone `docker compose build` a project that parses. Neither `internal`
+# nor a driver is set, for the reason kit's own comment gives: the stack needs to
+# reach package mirrors.
+networks:
+  platform:

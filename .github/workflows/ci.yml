@@ -155,6 +155,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: redis-server, which the runtime session tests exec
+        # `internal/httpapi`'s runtime session tests start a real `redis-server`
+        # by EXECUTING THE BINARY rather than dialing a URL, on purpose: the tier
+        # "cannot lie about having run", and a URL an operator set could be
+        # unreachable while the run stayed green. So a runner with no Redis binary
+        # fails three tests loudly, and this job was doing exactly that:
+        #
+        #   runtime_session_test.go:52: this test needs a real `redis-server` on
+        #   PATH and there is none ... exec: "redis-server": executable file not
+        #   found in $PATH
+        #
+        # The `bin/prime` job has no way to start a Redis service, so the binary is
+        # installed here. It is NOT the `redis (live tier)` job's service: that job
+        # runs a different, URL-gated tier against a container.
+        run: sudo apt-get update -qq && sudo apt-get install -y redis-server
       - name: bin/prime
         run: bin/prime
       - name: go.mod and go.sum are untouched
