@@ -26,7 +26,16 @@
 #      collide with the issuer: operator annotations render beside it, and an
 #      explicit operator `cert-manager.io/cluster-issuer` wins over the value
 #      (a duplicate key is invalid YAML, so one of them must).
-#   4. `helm lint` passes.
+#   4. THE DEPLOYMENT PULLS THE PUBLISHED IMAGE. The rendered container image is
+#      `<published>` at the chart's appVersion, where `<published>` is derived
+#      from this repository's own go.mod module path — the same derivation kit's
+#      image workflow makes. The control is a hostless `image.repository`: it
+#      renders `cafaye/gateway:0.1.0`, the Docker Hub-shaped value that sent a
+#      pod into a permanent image-pull failure, and the published path is absent.
+#      `bin/prime` holds the same fact statically (its "the chart names the image
+#      the publish loop pushes" step); this is the render-level half, which is
+#      the only place a template that ignored the value could be caught.
+#   5. `helm lint` passes.
 #
 # set -euo pipefail is the whole mechanism — no error handling to forget.
 
@@ -65,6 +74,15 @@ assert_absent() {
 ingress_doc() {
   helm template gateway "$CHART" "$@" 2>&1 | awk '
     /^# Source: gateway\/templates\/ingress\.yaml$/ { f=1 }
+    f && /^---$/ { exit }
+    f { print }
+  '
+}
+
+# deployment_doc [helm args...] — the rendered Deployment document, same shape.
+deployment_doc() {
+  helm template gateway "$CHART" "$@" 2>&1 | awk '
+    /^# Source: gateway\/templates\/deployment\.yaml$/ { f=1 }
     f && /^---$/ { exit }
     f { print }
   '
@@ -118,7 +136,33 @@ assert "an explicit operator issuer wins" \
 assert_absent "the value-derived issuer does not duplicate it" \
   "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
 
-note "4. helm lint"
+note "4. the Deployment pulls the image the publish loop pushes"
+# DERIVED, not typed: kit's image workflow pushes to ghcr.io/<github.repository>
+# and takes no input for the name, so the expected path comes from this
+# repository's own go.mod module path. A hostless value is the measured failure.
+module_path="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' go.mod | head -n1)"
+published="ghcr.io/${module_path#github.com/}"
+app_version="$(sed -n 's/^appVersion:[[:space:]]*//p' "$CHART/Chart.yaml" | head -n1 | tr -d "\"'")"
+
+doc=$(deployment_doc)
+if [ -z "$doc" ]; then
+  bad "helm template renders the Deployment — it did not"
+else
+  ok "helm template renders the Deployment"
+fi
+assert "the container image is the published path at the chart's appVersion" \
+  "image: \"$published:$app_version\"" "$doc"
+
+# The control: a hostless repository renders Docker Hub-shaped, which is what the
+# box measured, and the published path is absent — so the assertion above is
+# about the value and not about a string that happens to appear.
+doc=$(deployment_doc --set image.repository=cafaye/gateway)
+assert "the control renders a hostless image (cafaye/gateway:0.1.0)" \
+  "image: \"cafaye/gateway:$app_version\"" "$doc"
+assert_absent "the control does not render the published path" \
+  "image: \"$published:" "$doc"
+
+note "5. helm lint"
 if helm lint "$CHART" >/dev/null 2>&1; then
   ok "helm lint passes"
 else

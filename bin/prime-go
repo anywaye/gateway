@@ -236,6 +236,91 @@ if [ "$chart_version" != "$substrate_target" ]; then
 fi
 echo "publish: $caller calls kit's composed publish workflow with push: true, grants packages: write, and points at charts/gateway/ — whose Chart.yaml version $chart_version is the substrate's targetRevision $substrate_target"
 
+step "the chart names the image the publish loop pushes"
+# THE IMAGE THE DEPLOYMENT PULLS IS THE IMAGE THE LOOP PUSHES, and this step
+# exists because the two disagreed in one value and nothing read it.
+#
+# WHAT WAS MEASURED, on a Contabo box: `charts/gateway/values.yaml` said
+# `repository: cafaye/gateway`, with no registry host. The Deployment renders
+# `"{{ .Values.image.repository }}:{{ .Values.image.tag }}"`, so containerd
+# resolved the hostless value against Docker Hub and the pod reached image-pull
+# and failed forever:
+#
+#     Failed to pull image "cafaye/gateway:0.1.0": ... pull access denied,
+#     repository does not exist or may require authorization
+#
+# The chart was the only place the published name appeared without its host.
+# `docker-compose.yml`'s `cafaye/gateway:dev` and the `Dockerfile`'s
+# `docker build -t cafaye/gateway:dev` are LOCAL tags — `docker compose build`
+# writes the former, and neither is ever pulled — so they are correctly bare and
+# are deliberately not asserted here. Every sibling chart names the host
+# (`ghcr.io/cafaye/identity`, …).
+#
+# WHY THE EXPECTED VALUE IS DERIVED AND NOT TYPED. kit's image workflow pushes
+# to `ghcr.io/<github.repository>`, lowercased, and takes no input for the name:
+# "the repository that builds an image is the only authority on what it is
+# called." So the expected path is derived from this repository's own identity —
+# `go.mod`'s module path is `github.com/<owner>/<repo>` — rather than typed,
+# because a literal here would be a second copy of a fact the repository already
+# states, and a rename would move the image and leave the check behind.
+#
+# THE HOST TEST IS A HOST TEST, NOT A CHARSET. A repository value is
+# `<host>/<path>`; containerd reads a first segment with no `.` and no `:` as a
+# Docker Hub namespace, so `cafaye/gateway` IS `docker.io/cafaye/gateway`. The
+# equality below catches the drift; this test is what makes the failure message
+# name Docker Hub instead of printing two strings that differ at character one.
+values="charts/gateway/values.yaml"
+if [ ! -f "$values" ]; then
+  echo "bin/prime-go: $values does not exist, so the image the Deployment pulls" >&2
+  echo "  is unchecked. The chart is the deploy artifact; a gate that cannot find" >&2
+  echo "  it is not a gate that passed." >&2
+  exit 1
+fi
+
+module_path="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' go.mod | head -n1)"
+case "$module_path" in
+  github.com/*) ;;
+  *)
+    echo "bin/prime-go: go.mod's module path is \"$module_path\", not a github.com" >&2
+    echo "  path, so the published image name (ghcr.io/<owner>/<repo>) cannot be" >&2
+    echo "  derived from it. Say where the image lives rather than skipping the" >&2
+    echo "  check — a check that cannot run is not a check that passed." >&2
+    exit 1
+    ;;
+esac
+published="ghcr.io/${module_path#github.com/}"
+
+image_repo="$(sed -n 's/^  repository:[[:space:]]*//p' "$values" | head -n1 | tr -d "\"'")"
+if [ -z "$image_repo" ]; then
+  echo "bin/prime-go: $values sets no image.repository, and the Deployment renders" >&2
+  echo "  its container image from exactly that value." >&2
+  exit 1
+fi
+
+host="${image_repo%%/*}"
+case "$host" in
+  *.* | *:* | localhost) ;;
+  *)
+    echo "bin/prime-go: $values sets image.repository to \"$image_repo\", which" >&2
+    echo "  carries no registry host. containerd resolves a hostless value against" >&2
+    echo "  Docker Hub — \"$image_repo\" is docker.io/$image_repo, not the image the" >&2
+    echo "  publish workflow pushes — and the pod reaches image-pull and fails" >&2
+    echo "  forever with 'pull access denied, repository does not exist'." >&2
+    echo "  The published path is $published (ghcr.io/<github.repository>)." >&2
+    exit 1
+    ;;
+esac
+
+if [ "$image_repo" != "$published" ]; then
+  echo "bin/prime-go: $values sets image.repository to \"$image_repo\", and the" >&2
+  echo "  publish workflow pushes $published — ghcr.io/<github.repository>," >&2
+  echo "  derived from go.mod's module path $module_path and never passed in." >&2
+  echo "  A chart that names a different image than the loop pushes pulls an" >&2
+  echo "  image nothing published." >&2
+  exit 1
+fi
+echo "chart image: $values sets image.repository to $published, the image the publish workflow pushes"
+
 step "gofmt -l"
 # `-l` prints the files that NEED formatting and exits 0 either way, so the count
 # is the assertion. An empty list is the pass and a non-empty one is a red that

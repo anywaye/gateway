@@ -45,6 +45,9 @@
 #           workflow with push: true, grants packages: write, and points at
 #           charts/gateway/ — whose Chart.yaml version 0.1.0 is the
 #           substrate's targetRevision 0.1.0
+#         ==> the chart names the image the publish loop pushes
+#         chart image: charts/gateway/values.yaml sets image.repository to
+#           ghcr.io/cafaye/gateway, the image the publish workflow pushes
 #         ==> gofmt -l
 #         every file under ./cmd and ./internal is gofmt-clean
 #         ==> go build ./...
@@ -105,6 +108,14 @@
 #                                    and `chart-dir: charts/gateway/`, and that
 #                                    Chart.yaml's version must be the
 #                                    substrate's `targetRevision: 0.1.0`.
+#     chart-image —          —        NEW. The chart's `image.repository` must
+#                                    carry a registry host and equal the path
+#                                    the publish workflow pushes
+#                                    (`ghcr.io/cafaye/gateway`), derived from
+#                                    go.mod's module path. A hostless value is
+#                                    resolved by containerd against Docker Hub,
+#                                    which is the image-pull failure a box
+#                                    measured.
 #     ok          —          —        kept in spirit; the line changed from
 #                                    `== prime ok (bun …)` to `== prime ok`.
 #
@@ -248,6 +259,17 @@ gate:
       # the opt-in, or points at the wrong directory publishes nothing or
       # publishes a chart the substrate never finds.
       match: '^==> the publish caller publishes the image and the chart$'
+    - id: chart-image
+      # THE IMAGE THE DEPLOYMENT PULLS IS THE IMAGE THE LOOP PUSHES, and this is
+      # the fact the loop was open at on the other end. `charts/gateway/
+      # values.yaml` named `image.repository: cafaye/gateway` with no registry
+      # host, so containerd resolved it against Docker Hub and the pod reached
+      # image-pull and failed forever ("pull access denied, repository does not
+      # exist"). The step derives the published path from go.mod's module path
+      # and requires the chart's value to equal it, so the two cannot drift
+      # again. A proof slot earned the way the publish one was: a fact that
+      # makes a deploy work, not a file that exists.
+      match: '^==> the chart names the image the publish loop pushes$'
     - id: go-generated
       # The contract is current. This is the step that regenerates
       # `internal/api/api.gen.go` from `openapi/v1.yaml` and fails when the
@@ -295,16 +317,17 @@ gate:
       # finishing.
       match: '^== prime ok$'
     #
-    # SIX OF EIGHT, and the counting changed to get here. The schema caps
-    # `proof` at 8; this file has 6. It was at the cap — eight — until the
+    # SEVEN OF EIGHT, and the counting changed to get here. The schema caps
+    # `proof` at 8; this file has 7. It was at the cap — eight — until the
     # `publish` proof above arrived as the ninth, and the fold this comment
     # prescribed was made: `gofmt`/`go-build`/`go-vet`/`go-test` are now ONE
     # alternation (`go-mechanical`), which is what "the one to fold, if a ninth
     # is ever needed" said to do. What the fold loses is only the attribution
     # of WHICH step stopped, which the exit code and the step that never
-    # printed its banner both already report. Two slots are free again; the
-    # next ninth should earn its place the same way this one did — a fact that
-    # makes a loop work, not a file that exists.
+    # printed its banner both already report. The `chart-image` proof above took
+    # one of the two free slots; one remains, and the next occupant should earn
+    # it the same way both of these did — a fact that makes a loop work, not a
+    # file that exists.
     #
     # WHAT IS NOT HERE, AND WHY:
     #   * a proof on `==> toolchain: go`. `bin/prime-go` compares mise.toml's
