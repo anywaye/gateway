@@ -43,6 +43,8 @@ name: publish
 on:
   push:
     branches: [master]
+  # Operator republish path: GitHub will not re-run a jobless failed-resolution run, so without this the only republish is an empty commit.
+  workflow_dispatch:
 
 permissions:
   contents: read

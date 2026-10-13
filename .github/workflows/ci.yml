@@ -118,6 +118,10 @@ jobs:
   prime:
     name: bin/prime
     runs-on: ubuntu-latest
+    # 15, and not GitHub's 360-minute default: a hung job burns billing hours.
+    # bin/prime with no database is minutes of Go build and test, so 15 is a
+    # ceiling a healthy run never reaches.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       # `go-version-file: go.mod` rather than a literal version, and that is the
@@ -216,6 +220,9 @@ jobs:
   redis:
     name: redis (live tier)
     runs-on: ubuntu-latest
+    # 10, and not GitHub's 360-minute default: fourteen live tests against a
+    # service-container Redis — seconds of test behind a setup-go.
+    timeout-minutes: 10
     services:
       redis:
         # Pinned, never `latest`: the script's arithmetic is the thing under
@@ -359,6 +366,9 @@ jobs:
   manifest:
     name: manifest
     runs-on: ubuntu-latest
+    # 10, and not GitHub's 360-minute default: one curl, one pip install, one
+    # schema validation — about a minute's work.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: cafaye.yml validates against core's schema
@@ -385,6 +395,10 @@ jobs:
   image:
     name: image
     runs-on: ubuntu-latest
+    # 30, and not GitHub's 360-minute default: two docker builds with the suite
+    # running inside the test stage — the slowest job this file owns, still
+    # minutes on a warm cache, so 30 bounds the hang without touching health.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: the Dockerfile is lint-clean
