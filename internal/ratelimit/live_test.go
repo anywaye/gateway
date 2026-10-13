@@ -426,7 +426,7 @@ func TestAnErrorReplyLeavesAStoreThatKeepsCounting(t *testing.T) {
 func TestAnUnreachableServerThrowsRatherThanResolving(t *testing.T) {
 	// The port is opened and released here, so the check cannot collide with a
 	// developer's own Redis.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not open a port to close: %v", err)
 	}

@@ -454,7 +454,7 @@ func TestTheShippedBinaryLinksThisStore(t *testing.T) {
 		t.Fatalf("cannot resolve the module root: %v", err)
 	}
 
-	list := exec.Command("go", "list", "-deps", "./cmd/...")
+	list := exec.CommandContext(context.Background(), "go", "list", "-deps", "./cmd/...")
 	list.Dir = module
 	out, err := list.CombinedOutput()
 	if err != nil {

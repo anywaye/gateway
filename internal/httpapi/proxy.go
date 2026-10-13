@@ -249,7 +249,7 @@ func (p *routeProxy) call(r *http.Request, route ResolvedRoute, target string) *
 		// The same 503 a dead socket gets, because from the caller's side they are
 		// the same sentence — gateway cannot answer right now — and the detail goes
 		// to the log so the operator can tell them apart at 3am.
-		fmt.Fprintf(stderr, "gateway: could not mint the principal assertion for %s: %v\n", route.Prefix, err)
+		_, _ = fmt.Fprintf(stderr, "gateway: could not mint the principal assertion for %s: %v\n", route.Prefix, err)
 		return nil
 	}
 
@@ -258,7 +258,7 @@ func (p *routeProxy) call(r *http.Request, route ResolvedRoute, target string) *
 
 	outgoing, err := http.NewRequestWithContext(ctx, r.Method, target, bodyOf(r))
 	if err != nil {
-		fmt.Fprintf(stderr, "gateway: upstream %s could not be reached: %v\n", target, err)
+		_, _ = fmt.Fprintf(stderr, "gateway: upstream %s could not be reached: %v\n", target, err)
 		return nil
 	}
 	// A fresh header set rather than a copy of the request's, and the reason the
@@ -270,11 +270,11 @@ func (p *routeProxy) call(r *http.Request, route ResolvedRoute, target string) *
 	// `Host` is deliberately left unset, which is what makes `net/http` send the
 	// target's own host. The caller's `Host` header would otherwise be the one
 	// reaching the upstream, and it is caller-chosen.
-	response, err := upstreamClient.Do(outgoing)
+	response, err := upstreamClient.Do(outgoing) //nolint:bodyclose // the body is carried in upstreamAnswer and closed by relayUpstream.
 	if err != nil {
 		// The URL, the socket error and the stack go to the log. They are the
 		// platform's to know and an authenticated caller is not to be told.
-		fmt.Fprintf(stderr, "gateway: upstream %s could not be reached: %v\n", target, err)
+		_, _ = fmt.Fprintf(stderr, "gateway: upstream %s could not be reached: %v\n", target, err)
 		return nil
 	}
 
@@ -430,7 +430,7 @@ func IsRelayableStatus(status int) bool {
 // gateway did not decide to drop, which is what makes "it drops `set-cookie`" a
 // property rather than a line somebody maintains.
 func relayUpstream(w http.ResponseWriter, response *upstreamAnswer) {
-	defer response.body.Close()
+	defer func() { _ = response.body.Close() }()
 
 	for _, name := range ForwardedResponseHeaders {
 		if value, present := headerValue(response.header, name); present {
@@ -454,7 +454,7 @@ func relayUpstream(w http.ResponseWriter, response *upstreamAnswer) {
 
 	w.WriteHeader(response.status)
 	if _, err := io.Copy(w, response.body); err != nil {
-		fmt.Fprintf(stderr, "gateway: relaying a %d from an upstream did not write: %v\n", response.status, err)
+		_, _ = fmt.Fprintf(stderr, "gateway: relaying a %d from an upstream did not write: %v\n", response.status, err)
 	}
 }
 
@@ -483,7 +483,7 @@ func unusableUpstream(target string, response *upstreamAnswer) Problem {
 	shape := shapeOf(response)
 	_ = response.body.Close()
 
-	fmt.Fprintf(stderr, "gateway: upstream %s answered %d (%s), which this contract does not relay\n", target, response.status, shape)
+	_, _ = fmt.Fprintf(stderr, "gateway: upstream %s answered %d (%s), which this contract does not relay\n", target, response.status, shape)
 
 	return Problem{Status: 503, Code: api.ProblemCodeUnavailable, Detail: "the service this request needs did not answer"}
 }

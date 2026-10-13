@@ -510,7 +510,7 @@ func ReadAssertionKey(pemText, keyID string) (AssertionKey, error) {
 
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return AssertionKey{}, fmt.Errorf("%w: ReadAssertionKey: the assertion signing key is not a PKCS#8 key: %v", ErrNotConfigured, err)
+		return AssertionKey{}, fmt.Errorf("%w: ReadAssertionKey: the assertion signing key is not a PKCS#8 key: %w", ErrNotConfigured, err)
 	}
 
 	private, ok := parsed.(*rsa.PrivateKey)

@@ -403,7 +403,7 @@ func newIdentityStub(t *testing.T) *identityStubT {
 		_, _ = io.WriteString(w, `{"id":"cd000000-0000-4000-8000-000000000009","email":"`+stub.email+`"}`)
 	})
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not listen for the identity stub: %v", err)
 	}
@@ -417,7 +417,7 @@ func newIdentityStub(t *testing.T) *identityStubT {
 
 // send is one request through a built handler, with the host the origin gate and
 // the cookie parser expect.
-func send(t *testing.T, handler http.Handler, method, path, body string, headers map[string]string) *http.Response {
+func send(t *testing.T, handler http.Handler, method, path, body string, headers map[string]string) testResponse {
 	t.Helper()
 
 	var reader io.Reader
@@ -431,7 +431,7 @@ func send(t *testing.T, handler http.Handler, method, path, body string, headers
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	return rec.Result()
+	return testResponse{rec.Result()}
 }
 
 // startRedis is a real `redis-server` on a free port, for this process only.
@@ -460,7 +460,7 @@ func startRedis(t *testing.T) string {
 	}
 
 	dir := t.TempDir()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not find a free port for redis-server: %v", err)
 	}
@@ -469,7 +469,7 @@ func startRedis(t *testing.T) string {
 		t.Fatalf("could not release the port redis-server is to use: %v", err)
 	}
 
-	server := exec.Command(binary,
+	server := exec.CommandContext(context.Background(), binary,
 		"--port", portOf(addr),
 		"--bind", "127.0.0.1",
 		"--save", "",

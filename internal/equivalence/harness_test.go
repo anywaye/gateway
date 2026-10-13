@@ -65,16 +65,6 @@ type caseSpec struct {
 	want      limiterWant
 }
 
-// runsUnder says whether a case is asked in a scenario.
-func (c caseSpec) runsUnder(scenario string) bool {
-	for _, name := range c.scenarios {
-		if name == scenario {
-			return true
-		}
-	}
-	return false
-}
-
 // limiterWant is what the Go gateway must answer for one case.
 //
 // Two numbers and a count, and they are not interchangeable. `first` and `last`

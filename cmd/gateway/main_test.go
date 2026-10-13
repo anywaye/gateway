@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -129,7 +130,7 @@ func TestAnUnsetPortProbesTheDefaultTheServerListensOn(t *testing.T) {
 	// and CI has no such tool, so CI never sees the failure. Aiming the probe at a
 	// port the test controls keeps the assertion and makes it stronger: unset PORT
 	// resolves to the default, and the default answers.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not hold a port for the probe to find: %v", err)
 	}

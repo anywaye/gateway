@@ -194,11 +194,6 @@ const (
 	fixtureIdentity = "http://identity.test"
 )
 
-// The cookie ceiling `hono/cookie` imposes, in days. See the BFF packet's report:
-// the contract declares no maximum session lifetime, so this is a
-// deployment-visible ceiling nothing in `openapi/v1.yaml` mentions.
-const fixtureExpiryWindowDays = 400
-
 // clock is the one time source in this package, so a scenario that signs in and
 // then reads the session is not racing the wall clock between the two.
 var clock = func() time.Time { return time.Now() }

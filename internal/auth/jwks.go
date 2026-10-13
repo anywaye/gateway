@@ -217,7 +217,7 @@ func (c *jwksCache) fetch(ctx context.Context) ([]jwk, error) {
 		Keys []json.RawMessage `json:"keys"`
 	}
 	if err := json.Unmarshal(body, &document); err != nil {
-		return nil, fmt.Errorf("%w: %s is not JSON: %v", errKeySetUnavailable, c.url, err)
+		return nil, fmt.Errorf("%w: %s is not JSON: %w", errKeySetUnavailable, c.url, err)
 	}
 	if len(document.Keys) == 0 {
 		return nil, fmt.Errorf("%w: %s is not a key set — no keys, which is what a login page or an empty array looks like", errKeySetUnavailable, c.url)

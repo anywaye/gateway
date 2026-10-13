@@ -109,7 +109,7 @@ type Verifier struct {
 func New(options Options) (*Verifier, error) {
 	issuer, err := trimIssuer(options.Issuer)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotConfigured, err)
+		return nil, fmt.Errorf("%w: %w", ErrNotConfigured, err)
 	}
 
 	audience := strings.TrimSpace(options.Audience)
@@ -137,7 +137,7 @@ func New(options Options) (*Verifier, error) {
 	if jwksURL == "" {
 		jwksURL = issuer + JWKSPath
 	} else if err := assertHTTPURL(jwksURL); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotConfigured, err)
+		return nil, fmt.Errorf("%w: %w", ErrNotConfigured, err)
 	}
 
 	now := options.Now

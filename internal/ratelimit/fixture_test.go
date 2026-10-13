@@ -63,27 +63,11 @@ func (rec *recorder) refuse(w http.ResponseWriter, r *http.Request, status int, 
 	refuseInTest(w, r, status, code, detail)
 }
 
-// only is the single refusal a test expected exactly one of.
-//
-// It PANICS rather than returning a zero value, because a test that asserted on a
-// zero-valued refusal would report a shape mismatch — which reads as "the limiter
-// answered the wrong thing" — when the truth is "the limiter answered nothing and the
-// test did not notice".
-func (rec *recorder) only(t *testing.T) recorded {
-	t.Helper()
-
-	if len(rec.refusals) != 1 {
-		t.Fatalf("the limiter wrote %d refusals, want exactly 1: %+v", len(rec.refusals), rec.refusals)
-	}
-	return rec.refusals[0]
-}
-
 // fixedClock is a clock a test moves, which is how a window boundary is crossed
 // without sleeping.
 type fixedClock struct{ now time.Time }
 
-func (c *fixedClock) Now() time.Time           { return c.now }
-func (c *fixedClock) advance(by time.Duration) { c.now = c.now.Add(by) }
+func (c *fixedClock) Now() time.Time { return c.now }
 
 // claimSet parses a JSON object into an `auth.Claims`, for the tests about what a
 // bucket falls back to.

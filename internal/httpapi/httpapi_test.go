@@ -617,12 +617,3 @@ func sortedKeys(set map[string]struct{}) []string {
 	sort.Strings(keys)
 	return keys
 }
-
-func sortedNames(set map[string]bool) []string {
-	names := make([]string, 0, len(set))
-	for name := range set {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}

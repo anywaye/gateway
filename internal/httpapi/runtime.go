@@ -437,7 +437,7 @@ func assertionFromEnv(env Env) (*AssertionMinter, error) {
 
 	key, err := ReadAssertionKey(string(document), trimSpace(env("ASSERTION_SIGNING_KEY_ID")))
 	if err != nil {
-		return nil, fmt.Errorf("%w: gateway: ASSERTION_SIGNING_KEY_FILE names %q and gateway could not use it: %v", ErrNotConfigured, path, err)
+		return nil, fmt.Errorf("%w: gateway: ASSERTION_SIGNING_KEY_FILE names %q and gateway could not use it: %w", ErrNotConfigured, path, err)
 	}
 
 	ttl, err := assertionTTLFromEnv(env)
@@ -633,7 +633,7 @@ func keySetProbe(url string) Probe {
 			// reaches a response body.
 			return fmt.Errorf("identity: the JWKS did not answer: %w", err)
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 
 		if response.StatusCode < 200 || response.StatusCode > 299 {
 			return fmt.Errorf("identity: the JWKS answered %d", response.StatusCode)

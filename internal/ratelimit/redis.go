@@ -293,7 +293,12 @@ func Connect(options RedisConnectionOptions) (*Connection, error) {
 	dialer := &net.Dialer{Timeout: timeout}
 	var socket net.Conn
 	if target.tls {
-		socket, err = tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(target.hostname, target.port), &tls.Config{})
+		// DialContext rather than `tls.DialWithDialer`, because `Connect` has no
+		// caller context to thread and a context-less dial is what `noctx` refuses
+		// fleet-wide. The timeout that matters is already on `dialer`, and the
+		// deadline on every `Do` covers a socket that goes quiet after the dial.
+		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{}}
+		socket, err = tlsDialer.DialContext(context.Background(), "tcp", net.JoinHostPort(target.hostname, target.port))
 	} else {
 		socket, err = dialer.Dial("tcp", net.JoinHostPort(target.hostname, target.port))
 	}
@@ -395,8 +400,8 @@ func (c *Connection) readReply() (Value, error) {
 	for {
 		if len(c.buffered) > 0 {
 			value, read, err := ParseReply(c.buffered, 0)
-			switch {
-			case err == nil:
+			switch err {
+			case nil:
 				c.buffered = c.buffered[read:]
 				return value, nil
 

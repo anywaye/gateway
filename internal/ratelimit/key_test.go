@@ -38,15 +38,6 @@ func request(peer string, forwarded string, headers map[string]string) *http.Req
 	return req
 }
 
-// principalWith builds a verified principal carrying an account id, the shape
-// `AccountIDOf` reads first.
-func principalWith(accountID string) *auth.Principal {
-	if accountID == "" {
-		return &auth.Principal{Sub: "sub-1"}
-	}
-	return &auth.Principal{Sub: "sub-1", AccountID: &accountID}
-}
-
 // -----------------------------------------------------------------------------
 // PROPERTY 5 — the bucket order is the policy.
 //

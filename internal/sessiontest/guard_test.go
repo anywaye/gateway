@@ -1,6 +1,7 @@
 package sessiontest
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +61,7 @@ func TestNoProductionFileImportsTheSessionDouble(t *testing.T) {
 	// package's tests in that package's own directory. Omitting it made the command
 	// fail with "directory not found" — which, per the rule above, correctly
 	// failed the test rather than quietly skipping the check.
-	list := exec.Command("go", "list", "-deps", "./cmd/...")
+	list := exec.CommandContext(context.Background(), "go", "list", "-deps", "./cmd/...")
 	list.Dir = module
 	out, err := list.CombinedOutput()
 	if err != nil {

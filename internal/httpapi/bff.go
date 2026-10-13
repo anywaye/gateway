@@ -263,7 +263,7 @@ func within(ctx context.Context, timeout time.Duration, do Doer, req *http.Reque
 				answered <- outcome{err: fmt.Errorf("%s panicked: %v", what, r)}
 			}
 		}()
-		res, err := do.Do(req.WithContext(bounded))
+		res, err := do.Do(req.WithContext(bounded)) //nolint:bodyclose // the response is returned to the caller, which closes it via drain().
 		answered <- outcome{res: res, err: err}
 	}()
 
@@ -347,7 +347,7 @@ func (b *Bff) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	answer, err := b.call(r.Context(), http.MethodPost, identitySession, callOptions{body: body})
+	answer, err := b.call(r.Context(), http.MethodPost, identitySession, callOptions{body: body}) //nolint:bodyclose // Login always drains it: refuseLogin and jsonOf each close.
 	if err != nil {
 		log.Printf("gateway: identity call failed: %v", err)
 		writeProblem(w, r, unreachable())

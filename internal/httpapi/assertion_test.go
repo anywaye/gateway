@@ -51,10 +51,9 @@ func principal(claims map[string]any) Principal {
 
 // decodedAssertion is a compact JWS taken apart.
 type decodedAssertion struct {
-	Header  map[string]any
-	Claims  map[string]any
-	Raw     string
-	Sigined bool
+	Header map[string]any
+	Claims map[string]any
+	Raw    string
 }
 
 // decode reads a compact JWS apart WITHOUT verifying it, so a test that wants to
@@ -103,7 +102,6 @@ func (d decodedAssertion) verify(t *testing.T, key *rsa.PublicKey) {
 	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], signature); err != nil {
 		t.Fatalf("the assertion does not verify against the key this gateway publishes: %v", err)
 	}
-	d.Sigined = true
 }
 
 // mintOne asks the pass-through for an assertion and returns what the upstream saw.

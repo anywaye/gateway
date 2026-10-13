@@ -154,7 +154,7 @@ func (s *server) RevokeAPIKey(w http.ResponseWriter, r *http.Request, id api.API
 		return
 	}
 
-	store.Revoke(account, string(id))
+	store.Revoke(account, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

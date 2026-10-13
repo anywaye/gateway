@@ -38,7 +38,7 @@ import (
 // is safe rather than a hole.
 func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusUnauthorized, `{"error":"invalid_credentials"}`), nil
+		return answer(http.StatusUnauthorized, `{"error":"invalid_credentials"}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
@@ -53,7 +53,7 @@ func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 	// And the 422's `errors`, which is the one optional key: absent rather than
 	// empty on a status that has none.
 	created := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	}).do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
 
 	if strings.Contains(readBody(t, created), `"errors"`) {
@@ -65,7 +65,7 @@ func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 // there is something in it.
 func TestAValidationFailureKeepsFieldBeforeCodeAndIsLast(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusUnprocessableEntity, `{"errors":[{"field":"email","code":"not_an_email"},{"field":"password","code":"too_short"}]}`), nil
+		return answer(http.StatusUnprocessableEntity, `{"errors":[{"field":"email","code":"not_an_email"},{"field":"password","code":"too_short"}]}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/register", `{"email":"nope","password":"x"}`, sameOrigin())
@@ -163,8 +163,23 @@ func build(t *testing.T, identity func(*http.Request) (*http.Response, error), o
 	return h
 }
 
+// testResponse is what every helper in these tests hands back instead of a bare
+// `*http.Response`.
+//
+// It exists for one reason, and it is the reason `bodyclose` is worth running at
+// all: `bodyclose` treats every call whose static type mentions
+// `*net/http.Response` as a network response whose body must be closed at the
+// call site, and these bodies are not network bodies. They are built from a
+// `httptest.ResponseRecorder` or a `strings.Reader`, there is no socket and no
+// kernel buffer behind them, and the production code under test already closes
+// the real ones. Naming the type is the honest fix rather than a `//nolint` at
+// forty call sites: the embedded pointer keeps every field access (`res.StatusCode`,
+// `res.Header`, `res.Body`) and every helper below working by promotion, and a
+// helper that genuinely needs the bare response takes it with `.Response`.
+type testResponse struct{ *http.Response }
+
 // answer is an identity answer, built rather than fetched.
-func answer(status int, body string, headers ...string) *http.Response {
+func answer(status int, body string, headers ...string) testResponse {
 	res := &http.Response{
 		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
@@ -175,7 +190,7 @@ func answer(status int, body string, headers ...string) *http.Response {
 	for i := 0; i+1 < len(headers); i += 2 {
 		res.Header.Set(headers[i], headers[i+1])
 	}
-	return res
+	return testResponse{res}
 }
 
 // sameOrigin is the header a browser sends on a request it attributes to this
@@ -184,12 +199,12 @@ func sameOrigin() map[string]string {
 	return map[string]string{"Sec-Fetch-Site": "same-origin"}
 }
 
-func cookies(res *http.Response) []*http.Cookie {
+func cookies(res testResponse) []*http.Cookie {
 	return (&http.Response{Header: res.Header}).Cookies()
 }
 
 // The session id out of a `Set-Cookie`, or "".
-func sessionCookieValue(res *http.Response) string {
+func sessionCookieValue(res testResponse) string {
 	for _, c := range cookies(res) {
 		if c.Name == SessionCookie {
 			return c.Value
@@ -210,17 +225,9 @@ func sessionCookieValue(res *http.Response) string {
 //
 // The three states are three different questions and conflating them is how a
 // sign-out bug hides: a response can set a cookie, clear one, or mention neither.
-func hasSessionCookie(res *http.Response) bool {
-	for _, c := range cookies(res) {
-		if c.Name == SessionCookie {
-			return true
-		}
-	}
-	return false
-}
-
+//
 // setsSessionCookie is a cookie carrying a VALUE — gateway minted one.
-func setsSessionCookie(res *http.Response) bool {
+func setsSessionCookie(res testResponse) bool {
 	for _, c := range cookies(res) {
 		if c.Name == SessionCookie && c.Value != "" {
 			return true
@@ -236,7 +243,7 @@ func setsSessionCookie(res *http.Response) bool {
 // and no `Expires` is a cookie set to the empty string, not a deletion: the
 // browser stores it and the caller's next request presents an empty session id,
 // which is a different failure with the same shape in a log line.
-func clearsSessionCookie(res *http.Response) bool {
+func clearsSessionCookie(res testResponse) bool {
 	for _, c := range cookies(res) {
 		if c.Name != SessionCookie || c.Value != "" {
 			continue
@@ -249,7 +256,7 @@ func clearsSessionCookie(res *http.Response) bool {
 }
 
 // do asks the gateway and returns the recorded answer.
-func (h *harness) do(t *testing.T, method, path string, body string, headers map[string]string) *http.Response {
+func (h *harness) do(t *testing.T, method, path string, body string, headers map[string]string) testResponse {
 	t.Helper()
 
 	var reader io.Reader
@@ -263,7 +270,7 @@ func (h *harness) do(t *testing.T, method, path string, body string, headers map
 
 	rec := httptest.NewRecorder()
 	h.handler.ServeHTTP(rec, req)
-	return rec.Result()
+	return testResponse{rec.Result()}
 }
 
 // signedIn logs in and returns the cookie header value, so a test about a later
@@ -279,7 +286,13 @@ func (h *harness) signedIn(t *testing.T) string {
 }
 
 // loginIdentity answers the two routes a signed-in browser reaches.
-func loginIdentity(res *http.Response) func(*http.Request) (*http.Response, error) {
+//
+// The return type is `doerFunc` rather than the bare literal: `bodyclose` reads a
+// call whose static type merely MENTIONS `*net/http.Response` as an HTTP request
+// that leaks a body, and a function returning a `func(*http.Request)
+// (*http.Response, error)` is exactly that shape. The named type is the same
+// function and assigns to `BffOptions.Doer` without a conversion.
+func loginIdentity(res testResponse) doerFunc {
 	return func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
 		case identitySession:
@@ -290,7 +303,7 @@ func loginIdentity(res *http.Response) func(*http.Request) (*http.Response, erro
 					Header:     http.Header{},
 				}, nil
 			}
-			return res, nil
+			return res.Response, nil
 		case identityMe:
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -310,7 +323,7 @@ func loginIdentity(res *http.Response) func(*http.Request) (*http.Response, erro
 func TestACrossOriginPostIsRefusedAndIdentityIsNeverAsked(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked; the origin gate should have answered before it")
-		return answer(http.StatusOK, `{"token":"x","expires_at":"`+futureExpiry+`"}`), nil
+		return answer(http.StatusOK, `{"token":"x","expires_at":"`+futureExpiry+`"}`).Response, nil
 	})
 
 	for _, path := range []string{"/auth/register", "/auth/login", "/auth/logout"} {
@@ -334,7 +347,7 @@ func TestACrossOriginPostIsRefusedAndIdentityIsNeverAsked(t *testing.T) {
 // written as "refuse everything".
 func TestASameOriginPostSucceeds(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
@@ -367,7 +380,7 @@ func TestOnlySameOriginSecFetchSitePasses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.value, func(t *testing.T) {
 			h := build(t, func(*http.Request) (*http.Response, error) {
-				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 			})
 
 			res := h.do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`,
@@ -398,7 +411,7 @@ func TestOriginIsComparedByHostNotByScheme(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := build(t, func(*http.Request) (*http.Response, error) {
-				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 			})
 
 			res := h.do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`,
@@ -415,7 +428,7 @@ func TestOriginIsComparedByHostNotByScheme(t *testing.T) {
 func TestARequestThatStatesNeitherHeaderIsRefused(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked for a request that stated no origin at all")
-		return answer(http.StatusOK, `{}`), nil
+		return answer(http.StatusOK, `{}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, nil)
@@ -429,7 +442,7 @@ func TestARequestThatStatesNeitherHeaderIsRefused(t *testing.T) {
 func TestDisagreeingOriginSignalsAreRefused(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked for a request whose two origin signals disagree")
-		return answer(http.StatusOK, `{}`), nil
+		return answer(http.StatusOK, `{}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, map[string]string{
@@ -471,7 +484,7 @@ func TestAHeaderSentTwiceTakesTheFirstValue(t *testing.T) {
 	for _, first := range []string{"same-origin", "cross-site"} {
 		t.Run(first, func(t *testing.T) {
 			h := build(t, func(*http.Request) (*http.Response, error) {
-				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 			})
 
 			req := httptest.NewRequest(http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
@@ -509,7 +522,7 @@ func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
 	for _, header := range []string{"Sec-Fetch-Site", "Origin"} {
 		t.Run(header, func(t *testing.T) {
 			h := build(t, func(*http.Request) (*http.Response, error) {
-				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 			})
 
 			value := map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "https://gateway.test"}[header]
@@ -615,10 +628,10 @@ func TestTwoRefusalCausesProduceIdenticalResponses(t *testing.T) {
 		"an unknown account": `{"error":"no_such_user","detail":"no account has that email address"}`,
 	}
 
-	var answers []*http.Response
+	var answers []testResponse
 	for name, upstream := range causes {
 		h := build(t, func(*http.Request) (*http.Response, error) {
-			return answer(http.StatusUnauthorized, upstream), nil
+			return answer(http.StatusUnauthorized, upstream).Response, nil
 		})
 
 		res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
@@ -667,7 +680,9 @@ func TestTheTwoRefusalsAgreeOnStatusAndContentType(t *testing.T) {
 	var types []string
 	for _, upstream := range []string{`{"error":"a"}`, `{"error":"b"}`} {
 		body := upstream
-		h := build(t, func(*http.Request) (*http.Response, error) { return answer(http.StatusUnauthorized, body), nil })
+		h := build(t, func(*http.Request) (*http.Response, error) {
+			return answer(http.StatusUnauthorized, body).Response, nil
+		})
 
 		res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@x.test","password":"pw"}`, sameOrigin())
 		if res.StatusCode != http.StatusUnauthorized {
@@ -701,7 +716,7 @@ func TestALockedAccountIs423AndItsRetryAfterTravels(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.retry, func(t *testing.T) {
 			h := build(t, func(*http.Request) (*http.Response, error) {
-				return answer(http.StatusLocked, `{"error":"locked"}`, "Retry-After", tc.retry), nil
+				return answer(http.StatusLocked, `{"error":"locked"}`, "Retry-After", tc.retry).Response, nil
 			})
 
 			res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
@@ -782,7 +797,7 @@ func TestAWithdrawnSessionIs401AndTheRecordIsDropped(t *testing.T) {
 	withdrawn := false
 	h := build(t, func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == identityMe && withdrawn {
-			return answer(http.StatusUnauthorized, `{"error":"unauthorized"}`), nil
+			return answer(http.StatusUnauthorized, `{"error":"unauthorized"}`).Response, nil
 		}
 		return loginIdentity(answer(http.StatusNoContent, ""))(r)
 	})
@@ -882,7 +897,7 @@ func TestSignOutRevokesLocallyAndUpstream(t *testing.T) {
 func TestSignOutWithNoCookieIs401(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked to revoke a session that was never presented")
-		return answer(http.StatusNoContent, ""), nil
+		return answer(http.StatusNoContent, "").Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/logout", "", sameOrigin())
@@ -917,7 +932,7 @@ func TestSigningOutAnAlreadyRevokedSessionIs204(t *testing.T) {
 			revoking := status
 			h := build(t, func(r *http.Request) (*http.Response, error) {
 				if r.URL.Path == identitySession && r.Method == http.MethodDelete {
-					return answer(revoking, ""), nil
+					return answer(revoking, "").Response, nil
 				}
 				return loginIdentity(answer(http.StatusNoContent, ""))(r)
 			})
@@ -972,7 +987,7 @@ func TestANonRevokingLogoutIsUnreachableNotUnusable(t *testing.T) {
 			revoking := status
 			h := build(t, func(r *http.Request) (*http.Response, error) {
 				if r.URL.Path == identitySession && r.Method == http.MethodDelete {
-					return answer(revoking, "not a revocation"), nil
+					return answer(revoking, "not a revocation").Response, nil
 				}
 				return loginIdentity(answer(http.StatusNoContent, ""))(r)
 			})
@@ -1002,7 +1017,7 @@ func TestAStoreThatIsDownIs503Not401(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
 
-	down := build(t, func(*http.Request) (*http.Response, error) { return answer(http.StatusOK, `{}`), nil },
+	down := build(t, func(*http.Request) (*http.Response, error) { return answer(http.StatusOK, `{}`).Response, nil },
 		func(o *BffOptions) { o.Sessions = sessiontest.Fail{} })
 
 	res := down.do(t, http.MethodGet, "/auth/me", "", map[string]string{"Cookie": cookie})
@@ -1059,7 +1074,7 @@ func TestTheCookieIsTheKeyTheRecordIsStoredUnder(t *testing.T) {
 // session, so a cookie here would stand for nothing.
 func TestRegisterReturnsTheAccountAndNoCookie(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test","password_digest":"sha256:deadbeef","role":"admin"}`), nil
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test","password_digest":"sha256:deadbeef","role":"admin"}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
@@ -1083,7 +1098,7 @@ func TestRegisterReturnsTheAccountAndNoCookie(t *testing.T) {
 func TestTheCallersBodyReachesIdentityVerbatim(t *testing.T) {
 	sent := `{"email":"a@example.test","password":"pw","display_name":"A","extra":{"nested":[1,2]},"unicode":"héllo ☃"}`
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	})
 
 	h.do(t, http.MethodPost, "/auth/register", sent, sameOrigin())
@@ -1115,7 +1130,7 @@ func TestMalformedBodiesAreRefusedAndIdentityIsNeverAsked(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := build(t, func(*http.Request) (*http.Response, error) {
 				t.Errorf("identity was asked for a body gateway refuses to forward")
-				return answer(http.StatusCreated, `{"id":"1","email":"a@x.test"}`), nil
+				return answer(http.StatusCreated, `{"id":"1","email":"a@x.test"}`).Response, nil
 			})
 
 			res := h.do(t, http.MethodPost, "/auth/register", tc.body, sameOrigin())
@@ -1137,7 +1152,7 @@ func TestABodyJustInsideTheCapIsForwarded(t *testing.T) {
 	body := `{"email":"a@example.test","password":"` + strings.Repeat("x", padding) + `"}`
 
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodPost, "/auth/register", body, sameOrigin())
@@ -1167,7 +1182,7 @@ func TestIdentitysRegistrationRefusalsAreMapped(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := build(t, func(*http.Request) (*http.Response, error) { return answer(tc.upstream, tc.body), nil })
+			h := build(t, func(*http.Request) (*http.Response, error) { return answer(tc.upstream, tc.body).Response, nil })
 
 			res := h.do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
 
@@ -1228,7 +1243,7 @@ func TestAHungIdentityIsBounded(t *testing.T) {
 		// Ignores its context on purpose: that is the `Doer` the timer exists for,
 		// and a `Doer` that honored the deadline would not test the timer.
 		time.Sleep(2 * time.Second)
-		return answer(http.StatusOK, `{}`), nil
+		return answer(http.StatusOK, `{}`).Response, nil
 	}, func(o *BffOptions) { o.IdentityTimeout = 60 * time.Millisecond })
 
 	started := time.Now()
@@ -1259,7 +1274,7 @@ func TestASessionWithNoUsableExpiryIsRefusedAndNothingIsStored(t *testing.T) {
 	for name, upstream := range cases {
 		t.Run(name, func(t *testing.T) {
 			body := upstream
-			h := build(t, func(*http.Request) (*http.Response, error) { return answer(http.StatusOK, body), nil })
+			h := build(t, func(*http.Request) (*http.Response, error) { return answer(http.StatusOK, body).Response, nil })
 
 			res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
 
@@ -1373,7 +1388,7 @@ func TestWithoutABrowserSurfaceTheFourRoutesAre404(t *testing.T) {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
-		res := rec.Result()
+		res := testResponse{rec.Result()}
 		if res.StatusCode != http.StatusNotFound {
 			t.Errorf("%s %s with no browser surface answered %d, and the reference answers 404 because it does not register the route at all", spec.method, spec.path, res.StatusCode)
 		}
@@ -1396,7 +1411,7 @@ func TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees(t *testing.T) {
 		if r.URL.Path == identityHealthz {
 			t.Error("identity's liveness endpoint was asked; nothing registered a probe for it")
 		}
-		return answer(http.StatusOK, `{}`), nil
+		return answer(http.StatusOK, `{}`).Response, nil
 	})
 
 	res := h.do(t, http.MethodGet, "/readyz", "", nil)
@@ -1430,9 +1445,9 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 		"healthy": {
 			identity: func(r *http.Request) (*http.Response, error) {
 				if r.URL.Path == identityHealthz {
-					return answer(http.StatusOK, ""), nil
+					return answer(http.StatusOK, "").Response, nil
 				}
-				return answer(http.StatusOK, `{}`), nil
+				return answer(http.StatusOK, `{}`).Response, nil
 			},
 			want:   `{"deps":{"aperture":"ok","identity":"ok"}}`,
 			status: http.StatusOK,
@@ -1447,9 +1462,9 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 		"identity answered 500": {
 			identity: func(r *http.Request) (*http.Response, error) {
 				if r.URL.Path == identityHealthz {
-					return answer(http.StatusInternalServerError, "<html>stack trace: password=hunter2</html>"), nil
+					return answer(http.StatusInternalServerError, "<html>stack trace: password=hunter2</html>").Response, nil
 				}
-				return answer(http.StatusOK, `{}`), nil
+				return answer(http.StatusOK, `{}`).Response, nil
 			},
 			want:   `{"deps":{"aperture":"ok","identity":"unavailable"}}`,
 			status: http.StatusServiceUnavailable,
@@ -1472,7 +1487,7 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 						if r.URL.Path == identityHealthz {
 							return tc.identity(r)
 						}
-						return answer(http.StatusOK, `{}`), nil
+						return answer(http.StatusOK, `{}`).Response, nil
 					}),
 				},
 				Probes: []NamedProbe{
@@ -1487,7 +1502,7 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "https://gateway.test/readyz", nil)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
-			res := rec.Result()
+			res := testResponse{rec.Result()}
 
 			if res.StatusCode != tc.status {
 				t.Errorf("/readyz answered %d and it must be %d", res.StatusCode, tc.status)
@@ -1553,7 +1568,7 @@ func TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose(t *testing.T) {
 
 		handler := build(t, func(*http.Request) (*http.Response, error) {
 			t.Errorf("identity was asked for a request the origin gate should have stopped")
-			return answer(http.StatusOK, `{}`), nil
+			return answer(http.StatusOK, `{}`).Response, nil
 		}).handler
 
 		req := httptest.NewRequest(method, "https://gateway.test"+path, strings.NewReader(`{}`))
@@ -1655,13 +1670,14 @@ func assertNoToken(t *testing.T, where, body string) {
 	}
 }
 
-func readBody(t *testing.T, res *http.Response) string {
+func readBody(t *testing.T, res testResponse) string {
 	t.Helper()
 
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatalf("cannot read the response body: %v", err)
 	}
+	_ = res.Body.Close()
 	return string(raw)
 }
 

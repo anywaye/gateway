@@ -234,7 +234,7 @@ func jsonStringMember(name, value string) string {
 func encodeFieldErrors(fields []api.FieldError) string {
 	entries := make([]string, 0, len(fields))
 	for _, field := range fields {
-		entries = append(entries, "{"+jsonStringMember("field", field.Field)+","+jsonStringMember("code", string(field.Code))+"}")
+		entries = append(entries, "{"+jsonStringMember("field", field.Field)+","+jsonStringMember("code", field.Code)+"}")
 	}
 	return "[" + strings.Join(entries, ",") + "]"
 }

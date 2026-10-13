@@ -115,15 +115,6 @@ func (u *upstream) Count() int {
 	return u.requests
 }
 
-// reset forgets the record, so a case can assert that a request did **not** reach
-// the upstream at all.
-func (u *upstream) reset() {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.requests = 0
-	u.last = recordedRequest{}
-}
-
 // testKey is an RSA key pair for the assertion tests.
 //
 // Generated per test run rather than checked in, because a committed private key in
@@ -881,7 +872,7 @@ func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) 
 	// table claims, so the request reaches that gate through the wrapper `everyRequest`
 	// builds rather than through chi's `Use`.
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	})
 	handler, err := New(Options{
 		BFF:    bffOf(h),
@@ -925,7 +916,7 @@ func bffOf(h *harness) *BffOptions {
 		Sessions:    h.sessions,
 		Now:         func() time.Time { return h.now },
 		Doer: doerFunc(func(r *http.Request) (*http.Response, error) {
-			return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`), nil
+			return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 		}),
 	}
 }
