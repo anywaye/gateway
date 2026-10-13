@@ -21,10 +21,28 @@
 # platform. The customer brings the box; this is what runs on it.
 
 image:
-  repository: cafaye/gateway
+  # WITH the registry host, and the host is not decoration. A repository value
+  # with no host is resolved by containerd against Docker Hub, so a bare
+  # `cafaye/gateway` asks for `docker.io/cafaye/gateway` — not ours — and the
+  # pod reaches image-pull and fails forever:
+  #
+  #     Failed to pull image "cafaye/gateway:0.1.0": ... pull access denied,
+  #     repository does not exist or may require authorization
+  #
+  # The fleet's images live at `ghcr.io/<github.repository>` — kit's image
+  # workflow derives the name from the repository and takes no input for it, so
+  # this value is that derivation, not an independent choice — and every other
+  # service's chart names it with the host (`ghcr.io/cafaye/identity`, …).
+  # `bin/prime` fails the build if this value loses the host or stops naming the
+  # published path; the check is at the publish step, beside the caller that
+  # pushes the image.
+  repository: ghcr.io/cafaye/gateway
   # A value, never `latest`: a floating tag is a deploy that changes when
-  # somebody else pushes. The first real release must push this tag; until it
-  # exists, `docker-compose.yml`'s `cafaye/gateway:dev` is the local image.
+  # somebody else pushes. The publish path pushes this tag — it is
+  # `Chart.yaml`'s appVersion, read by `publish.reusable.yml` and handed to the
+  # image build — so the chart and the registry name the same image. Until a
+  # release exists, `docker-compose.yml`'s `cafaye/gateway:dev` is the LOCAL
+  # image, built by `docker compose build` and never pulled.
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
