@@ -906,7 +906,12 @@ gateway's chart is not at the template's default `chart/`) — calls kit's
 composed `publish.reusable.yml`: the image lands at
 `ghcr.io/cafaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest` on
 the default branch) and the chart at
-`oci://ghcr.io/cafaye/charts/gateway:<chart version>`. The chart's `version`
+`oci://ghcr.io/cafaye/charts/gateway:<chart version>`. The chart's
+`image.repository` is that same path (`ghcr.io/cafaye/gateway`) — a repository
+with no registry host is resolved by containerd against Docker Hub, which is
+where a pod once sat in a permanent image-pull failure — and `bin/prime` derives
+the published path from `go.mod` and fails if the two stop agreeing. The chart's
+`version`
 **is** that tag — `chart.reusable.yml` reads it from `Chart.yaml` and never
 takes it as an input — so it is the tag the substrate's `Application` must
 match: a service that bumps the version without the substrate bumping its

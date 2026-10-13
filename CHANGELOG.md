@@ -54,6 +54,37 @@ dependency versions follow npm's own rules.
   whole of the change, and no manifest can be left disagreeing with the
   `LICENSE` file because no manifest states a grant at all.
 
+### Fixed
+
+- **The chart's `image.repository` carries the registry host.** It said
+  `cafaye/gateway` with no host, and the Deployment renders
+  `"{{ .Values.image.repository }}:{{ .Values.image.tag }}"` — so containerd
+  resolved the value against Docker Hub and the pod reached image-pull and
+  failed forever:
+
+  ```
+  Failed to pull image "cafaye/gateway:0.1.0": ... pull access denied,
+  repository does not exist or may require authorization
+  ```
+
+  Measured on a box. It is now `ghcr.io/cafaye/gateway`, which is where kit's
+  image workflow pushes (`ghcr.io/<github.repository>`, derived and never passed
+  in) and what every sibling chart names (`ghcr.io/cafaye/identity`, …). The
+  chart was the only place the published name appeared without its host;
+  `docker-compose.yml`'s `cafaye/gateway:dev` and the `Dockerfile`'s
+  `docker build` example are LOCAL tags, built by `docker compose build` and
+  never pulled, and are deliberately left bare. The image tag is unchanged.
+
+  **A gate check keeps it from drifting again.** `bin/prime-go` now derives the
+  published path from `go.mod`'s module path and fails the gate when the chart's
+  `image.repository` carries no registry host or does not equal it — the host
+  test is what names the Docker Hub failure rather than printing two strings
+  that differ at character one. `bin/chart-test` (the repo's chart-render step,
+  deliberately outside `bin/prime`) holds the render-level half: the rendered
+  Deployment's container image equals the published path at the chart's
+  `appVersion`, with a hostless control. `gate.yml` declares the new step as the
+  `chart-image` proof.
+
 ### Added
 
 - **The shipped pantry routes mint the principal assertion (seam-audit F2).**
