@@ -33,21 +33,21 @@ Three commits, in gate-green order:
 
 | commit | what |
 |---|---|
-| `6d37ae8` | `caf gen telemetry` output: the generated setup, its suite, `telemetry/otel-endpoint.json` |
+| `6d37ae8` | `cafe gen telemetry` output: the generated setup, its suite, `telemetry/otel-endpoint.json` |
 | `f86f4d4` | the hand-written SDK half, the middleware, the binary wiring |
 | `5dbeee1` | the narrow test, the compose endpoint, and the one-placement fix it found |
 
 ### The route I took, which the packet asked me to state
 
-**The generator's, not the hand-mirrored one.** `caf gen telemetry` exists,
-`caf/internal/cli/gen.go:118` declares it, and it wrote gateway's three files
+**The generator's, not the hand-mirrored one.** `cafe gen telemetry` exists,
+`cafe/internal/cli/gen.go:118` declares it, and it wrote gateway's three files
 from gateway's manifest. gateway's generated file differs from the one already
-in `caf/internal/telemetry/` by exactly four lines — the service name and the
+in `cafe/internal/telemetry/` by exactly four lines — the service name and the
 endpoint variable name — which is what "derived from the manifest" is supposed to
 look like:
 
 ```
-$ diff caf/internal/telemetry/telemetry.go gateway/internal/telemetry/telemetry.go
+$ diff cafe/internal/telemetry/telemetry.go gateway/internal/telemetry/telemetry.go
 18c18
 < // From the manifest: the service name ("courier") and the language, which is what decided that
 ---
@@ -71,7 +71,7 @@ The hand-written half is `internal/telemetry/sdk.go`, and it is what the packet'
 hand-types its own copy of the allowlist check (`identity/internal/telemetry/telemetry.go:435`,
 `attributeValue`, with its own `httpMethods` and `routeTemplate` tables), gateway
 calls the GENERATED `Check` for every value instead — so a core release reaches
-gateway through `caf gen telemetry` and not through a table somebody remembered
+gateway through `cafe gen telemetry` and not through a table somebody remembered
 to update.
 
 ## The two decisions that are not mine
@@ -81,8 +81,8 @@ to update.
 The generator refuses any language it does not emit for:
 
 ```
-caf: caf gen telemetry: unsupported language: this manifest is written in
-typescript. caf generates telemetry for go only
+cafe: cafe gen telemetry: unsupported language: this manifest is written in
+typescript. cafe generates telemetry for go only
 ```
 
 `src/` was deleted at cutover (`f87c891`, `bin/prime-go`'s header says so) and
@@ -94,7 +94,7 @@ one command. What it does NOT do is resolve DECISION NEEDED item 7 in that file,
 which asks which implementation the manifest describes — that question is still
 open and this change does not pretend to answer it. **If the manager would rather
 the manifest keep saying `typescript` until item 7 is ruled on, revert this word
-and the rest of the packet stands** — but `caf gen telemetry` will then refuse,
+and the rest of the packet stands** — but `cafe gen telemetry` will then refuse,
 and the generated files will have to be maintained by hand.
 
 ### 2. gRPC, and OTel 1.46.0 rather than pins.md's 1.34.0  — WORTH A RULING

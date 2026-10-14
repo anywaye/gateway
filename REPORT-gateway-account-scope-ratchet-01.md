@@ -327,7 +327,7 @@ rename** — while its own `inScope` said `gateway`:
 
 ```
 $ .venv/bin/python3 -c "import hashlib;print(hashlib.sha256(chr(10).join(
-  ['identity','courier','guard','site','parlor','pantry','caf','kit','core']
+  ['identity','courier','guard','site','parlor','pantry','cafe','kit','core']
   ).encode()).hexdigest())"
 9fec5592376e521dd4c34adfeab238b8cd64f243fbe9a618a6d556ab91a434a9
 ```
@@ -347,7 +347,7 @@ BEFORE  COULD NOT RUN: … records fingerprint 9fec5592… and its own list hash
 
 AFTER   SCOPE-READ: tests/account_scope_fleet_scope.yml (vendored — no MVP-SCOPE.md
         beside the fleet) puts 9 repositories in the MVP: identity, courier,
-        gateway, site, parlor, pantry, caf, kit, core
+        gateway, site, parlor, pantry, cafe, kit, core
         SCOPE-FINGERPRINT: cba94d5ec791faa15e522e4d58440e83a307ba072fb054a73d16d02db29d81a2
         …runs…
 ```

@@ -32,7 +32,7 @@ address and the launch rate-limits all users as one.
 | `docker-compose.yml` | `REDIS_URL` and `TRUSTED_PROXIES` uncommented |
 | `CHANGELOG.md`, `README.md` | what the chart is for and what it is not |
 
-The chart is written **generated-shaped** as the reference `caf gen chart`
+The chart is written **generated-shaped** as the reference `cafe gen chart`
 (packet L10) must reproduce: every value that belongs in a manifest is in
 `values.yaml`, and nothing in the templates is a hand-typed constant a
 generator could not emit. The CHANGELOG carries the table of
@@ -182,5 +182,5 @@ to what `openapi/v1.yaml` generates. The 13 skips are the live Redis tier
 Push the `0.1.0` image tag (or appVersion) when the first release cuts, then
 re-run the plain `kubectl apply --dry-run=client` against a real cluster —
 the offline endpoint here proves the documents parse, not that they satisfy
-the schema. Then L10 (`caf gen chart`) has its specification: the
+the schema. Then L10 (`cafe gen chart`) has its specification: the
 values.yaml → manifest table in `CHANGELOG.md` and the chart itself.

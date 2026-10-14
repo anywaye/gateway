@@ -63,7 +63,12 @@ concurrency:
 # They are documentation, they do not affect any run, and they are a separate
 # packet from this one. They are named here so the next person does not have to
 # rediscover that the variable and the prose went out of date together.
-env: {}
+#
+# No `env:` block at all, and the empty `env: {}` that stood here is gone with
+# it: actionlint refuses an empty section ("env section should not be empty"),
+# and the paragraph above already argues that a variable set in CI and read by
+# nothing is worse than a missing one. An empty map is that shape with no
+# variable in it.
 
 jobs:
   # -------------------------------------------------------------- shared half
