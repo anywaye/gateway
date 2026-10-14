@@ -183,7 +183,7 @@ func liveTier(t *testing.T) (a, b *Connection) {
 		t.Helper()
 		connection, err := Connect(RedisConnectionOptions{URL: liveRedisURL})
 		if err != nil {
-			t.Fatalf("GATEWAY_REDIS_URL=%s did not answer: %v", liveRedisURL, err)
+			t.Fatalf("GATEWAY_REDIS_URL=%s did not answer: %v", redactRedisURL(liveRedisURL), err)
 		}
 		return connection
 	}
