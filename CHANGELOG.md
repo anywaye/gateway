@@ -8,6 +8,26 @@ dependency versions follow npm's own rules.
 
 ## [Unreleased]
 
+### Added
+
+- **Identity's public operations cross gateway with no credential and no
+  table entry.** Measured on the live box: `POST /v1/signup-timestamp` was
+  `200` direct to identity and `401` through gateway, and `POST /v1/users`
+  likewise — the credential gate only asked the `ROUTE_TABLE`, which names
+  pantry alone, so all fifteen operations identity marks `security: []` were
+  refused at the only public entry point. The gate now consults identity's
+  declaration for `/v1` paths the table does not own, and the pass-through
+  forwards them to `IDENTITY_URL` with the caller's path intact (a table entry
+  would strip its prefix and arrive as `/`). Matching is per operation —
+  `POST /v1/session` is public, `DELETE /v1/session` is still `401` — and a
+  table entry wins wherever both claim a path. Neither shipped `ROUTE_TABLE`
+  changed: both stacks already set `IDENTITY_URL`. The list is compiled in
+  `internal/httpapi/identitypublic.go`, extracted from identity's spec into
+  `internal/httpapi/testdata/identity-public.txt`, and held equal in both
+  directions by a drift check that fails when identity opens a public route
+  gateway does not know. Known follow-up, unchanged by this: the relay
+  translates upstream redirects, so the OAuth start's `302` becomes a `503`.
+
 ### Changed
 
 - **The chart pins the image by DIGEST, not by tag — a new build is now a

@@ -191,6 +191,42 @@ written for is "proxied traffic is authenticated" — which is no longer true of
 `public` entry. Relaxing that per entry is a real decision with a real
 consequence and it is [Not built yet](#not-built-yet).
 
+### Identity's public operations cross without a table entry
+
+The fifteen operations identity marks `security: []` in its `openapi/v1.yaml` —
+`POST /v1/users` and `POST /v1/signup-timestamp` (the signup path), `POST
+/v1/session` (the login), the password-reset, email-verification,
+email-change, session-link, agent-claim and OAuth-start operations — are
+forwarded to identity with **no caller credential and no table entry**. The
+declaration is identity's, not the table's: the gate consults identity's list
+for `/v1` paths the table does not own, and the pass-through forwards them to
+`IDENTITY_URL` with the caller's path intact.
+
+This is not a fifteenth table entry for a structural reason: a table entry
+strips its prefix before forwarding, so `/v1/users` aimed at identity would
+arrive as `/`, which identity does not serve. The fallback preserves the path
+— gateway and identity share the `/v1` namespace — and rebuilds it segment by
+segment with the same traversal defense a table entry gets. A table entry wins
+wherever both claim a path, in the gate and in the relay alike, so an
+operator's explicit routing is never second-guessed.
+
+Nothing is configured for this beyond what both stacks already set:
+`IDENTITY_URL` is the fallback's destination (with or without `REDIS_URL` — a
+relayed public operation holds no session state, so the browser surface's
+shared-store rule does not apply), and neither shipped `ROUTE_TABLE` needed an
+edit. The matching is per operation, not per path: `POST /v1/session` is
+public and `DELETE /v1/session` is still `401`, and `/v1/agents/claim/{token}`
+opens one segment and never zero or two. What identity answers crosses
+unchanged — a `200` and a `422` alike — except the statuses the relay never
+carries: a `302` (the OAuth start) becomes the same `503` any upstream redirect
+does, which is a known follow-up rather than part of this change.
+
+The compiled list lives in `internal/httpapi/identitypublic.go`, the
+extraction in `internal/httpapi/testdata/identity-public.txt` (source commit
+and command in its header), and the drift check fails the gate when identity
+opens a public route gateway does not know — or when gateway opens one
+identity never declared.
+
 ### What is validated, and why each refusal is at startup
 
 `ROUTE_TABLE` is read by `runtimeOptions` and checked by

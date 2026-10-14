@@ -140,6 +140,13 @@ type routeProxy struct {
 	table     RouteTable
 	timeout   time.Duration
 	assertion *AssertionMinter
+
+	// Identity's base URL, or "" for no fallback. When set, a /v1 path the
+	// table does not own but identity declares public is forwarded to
+	// identity with the caller's path intact (see `identityRoute`). Empty is
+	// the honest default for a deployment that fronts no identity: without a
+	// destination the gate refuses first, and this field never gets asked.
+	identity string
 }
 
 // proxyOptions is what the pass-through is built from. An argument rather than
@@ -150,6 +157,12 @@ type proxyOptions struct {
 	Routes    RouteTable
 	Timeout   time.Duration
 	Assertion *AssertionMinter
+
+	// Identity's base URL for the public fallback, or "" for none. It is the
+	// same origin the browser surface dials, and it is validated by `New`
+	// before it reaches here — a test building a proxy directly hands it an
+	// httptest origin, which is what `checkIdentityBaseURL` demands.
+	IdentityBaseURL string
 }
 
 func newRouteProxy(options proxyOptions) *routeProxy {
@@ -158,7 +171,7 @@ func newRouteProxy(options proxyOptions) *routeProxy {
 		timeout = DefaultUpstreamTimeout
 	}
 
-	return &routeProxy{table: options.Routes, timeout: timeout, assertion: options.Assertion}
+	return &routeProxy{table: options.Routes, timeout: timeout, assertion: options.Assertion, identity: options.IdentityBaseURL}
 }
 
 // handle wraps `next`, the rest of the gateway.
@@ -195,15 +208,25 @@ func (p *routeProxy) handle(next http.Handler) http.Handler {
 		}
 
 		route, ok := ResolveRoute(p.table, path)
-		if !ok {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		upstream, ok := UpstreamPath(route.Prefix, path)
-		if !ok {
-			next.ServeHTTP(w, r)
-			return
+		var upstream string
+		if ok {
+			var uok bool
+			upstream, uok = UpstreamPath(route.Prefix, path)
+			if !uok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		} else {
+			// Identity's public surface, for the paths the table does not
+			// own. Same precedence as the gate: a table entry wins over the
+			// fallback, so an operator's explicit routing is never
+			// second-guessed here.
+			var fok bool
+			route, upstream, fok = p.identityRoute(r, path)
+			if !fok {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		target := route.BaseURL + upstream + searchOf(r.URL)
@@ -225,6 +248,44 @@ func (p *routeProxy) handle(next http.Handler) http.Handler {
 
 		writeProblem(w, r, unusableUpstream(target, response))
 	})
+}
+
+// identityRoute is the fallback for a /v1 path the table does not own but
+// identity declares public: the synthesized entry that forwards it.
+//
+// The entry is PUBLIC, and that is what makes the relay safe rather than
+// merely configured: `outboundHeaders` attaches no service token for an entry
+// without one, and `assertionFor` mints no assertion for a public entry — so
+// identity receives the caller's method, path, query and body with
+// `content-type` and `accept`, and nothing that speaks for gateway or for a
+// caller that never authenticated. The PATH is the caller's own, rebuilt
+// rather than forwarded: `UpstreamPath` with an empty prefix decodes every
+// segment, refuses `.`, `..` and embedded separators, and re-encodes, which is
+// the same traversal defense a table entry gets. A path that cannot be
+// rebuilt is not a route this gateway serves, and the caller gets the same
+// 404 an unrouted path does.
+//
+// Table precedence is decided by the CALLER (`handle` only asks when no entry
+// claimed the path), so this function asks only the two questions left: is a
+// fallback configured, and is this request one of identity's public
+// operations. The gate asked the same two before the proxy ran, which is why
+// an anonymous caller can only arrive here on a path the gate already passed.
+func (p *routeProxy) identityRoute(r *http.Request, path string) (ResolvedRoute, string, bool) {
+	if p.identity == "" {
+		return ResolvedRoute{}, "", false
+	}
+	if !underRouteMount(path) {
+		return ResolvedRoute{}, "", false
+	}
+	if !isIdentityPublicRoute(r.Method, path) {
+		return ResolvedRoute{}, "", false
+	}
+
+	upstream, ok := UpstreamPath("", path)
+	if !ok {
+		return ResolvedRoute{}, "", false
+	}
+	return ResolvedRoute{Prefix: path, BaseURL: p.identity, Public: true}, upstream, true
 }
 
 // call makes one request to a service, or returns nil when there was no answer to

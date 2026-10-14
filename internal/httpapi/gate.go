@@ -110,7 +110,7 @@ func PrincipalFrom(r *http.Request) (Principal, bool) {
 // The `nil` is the state every deployment that has not configured a verifier is in,
 // and it is a documented one rather than an accident: `Options.Authenticate`'s own
 // comment says what an unconfigured gateway forwards.
-func credentialGate(authenticate Authenticate, routes RouteTable) func(http.Handler) http.Handler {
+func credentialGate(authenticate Authenticate, routes RouteTable, identity string) func(http.Handler) http.Handler {
 	if authenticate == nil {
 		return nil
 	}
@@ -136,10 +136,28 @@ func credentialGate(authenticate Authenticate, routes RouteTable) func(http.Hand
 			}
 
 			// MD18's exception, asked of the same resolver the pass-through asks.
-			// `IsPublicRoute` reads `ResolveRoute`, so the prefix that mounts without a
-			// credential is the prefix that forwards, and a change to the matching rule
-			// cannot leave this gate and that mount disagree about which paths are open.
-			if IsPublicRoute(routes, path) {
+			// The prefix that mounts without a credential is the prefix that
+			// forwards — read off `ResolveRoute` here, the way `IsPublicRoute`
+			// reads it elsewhere — so a change to the matching rule cannot
+			// leave this gate and that mount disagree about which paths are open.
+			route, claimed := ResolveRoute(routes, path)
+			if claimed && route.Public {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Identity's own public surface, for the /v1 paths the table does
+			// not own — and ONLY when it does not own them. A table entry is
+			// an operator's explicit routing decision, so a private entry
+			// claiming a path identity also declares public still requires
+			// the credential: the explicit configuration wins over the
+			// fallback, and the pass-through below forwards by the same rule,
+			// so the two cannot disagree about which destination an anonymous
+			// caller reaches. Empty `identity` means no fallback is
+			// configured, and the gate answers exactly what it answered before
+			// this packet: a declaration without a destination behind it
+			// would be a gate that passes callers to a 404.
+			if !claimed && identity != "" && isIdentityPublicRoute(r.Method, path) {
 				next.ServeHTTP(w, r)
 				return
 			}
