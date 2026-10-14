@@ -22,7 +22,7 @@ So `gateway-tls` was a secret nothing filled. That is launch item B7 ("no TLS
 anywhere in the stack… real sign-in requires an HTTPS terminator"), and
 gateway is the front door whose session cookie is `Secure` — without it the
 browser surface cannot work at all. W67 wrote the chart before W83 landed the
-ClusterIssuers; the generated charts are now ahead of it (`caf gen chart`
+ClusterIssuers; the generated charts are now ahead of it (`cafe gen chart`
 emits `ingress.clusterIssuer` and renders the annotation from it).
 
 ## What landed
@@ -78,8 +78,8 @@ spec:
 
 ## The divergences, measured
 
-Generator built at dispatch per the packet (`cd ../caf && mise exec -- go build
--o /tmp/caf-gen-w94 ./cmd/caf`), run in a scratch dir against gateway's
+Generator built at dispatch per the packet (`cd ../cafe && mise exec -- go build
+-o /tmp/cafe-gen-w94 ./cmd/cafe`), run in a scratch dir against gateway's
 `cafaye.yml` — nothing written into gateway's tree. The generated chart has
 seven files; gateway's has five. Full diff was read; the list is every place
 they differ, with a verdict on whether it matters.
@@ -133,13 +133,13 @@ gap 1).
 | 17 | **no chart `README.md`** | **matters mildly** — the packet names it. The generated README documents the loop (push a values commit, Argo syncs, hand edits self-heal, rollback is `git revert`), the `helm push` to GHCR, the secrets and the `/readyz` contract. gateway's chart carries the same information in `values.yaml`'s header comments and the repository README — but the chart ships to GHCR and stands alone there; whoever pulls it gets no README |
 | 18 | **no `fail`-when-enabled-without-host guard** | **matters** — the packet names it. The generator's Ingress opens with `{{- if not .Values.ingress.host }}{{- fail … }}{{- end }}`: an enabled Ingress with no host is a silent misroute, so the render refuses loudly. gateway's chart has no guard — an operator who clears `host` gets a broken Ingress instead of a failed render |
 | 19 | tls block gated on `tls.enabled` alone | **matters mildly** — the generator gates on `tls AND clusterIssuer` ("TLS without an issuer is a secret nothing writes"). After this packet, gateway's chart with `clusterIssuer: ""` still renders the `tls` block naming `gateway-tls` — a secret nothing writes. The packet scoped the change to the annotation and its control asserts only that "the Ingress still renders" with an empty issuer, so this is reported, not changed |
-| 20 | labels: gateway uses `_helpers.tpl` (`.Release.Service` → `Helm`, plus `app.kubernetes.io/version`); the generator hardcodes `app.kubernetes.io/managed-by: caf` | does not matter — cosmetic; both are valid label sets |
+| 20 | labels: gateway uses `_helpers.tpl` (`.Release.Service` → `Helm`, plus `app.kubernetes.io/version`); the generator hardcodes `app.kubernetes.io/managed-by: cafe` | does not matter — cosmetic; both are valid label sets |
 | 21 | `Chart.yaml`: gateway has a hand-written description and comments; the generator derives the description from the manifest and carries the `DO NOT EDIT` header | does not matter |
 
 ## Recommendations — for the manager, not implemented
 
 1. **Keep the hand-written chart as the reference; feed this list to L10
-   (`caf gen chart`) as the specification.** The chart encodes launch-specific
+   (`cafe gen chart`) as the specification.** The chart encodes launch-specific
    decisions the generator cannot know (the ConfigMap split, the required
    `secretKeyRef`, the liveness probe, the host, the issuer default). The
    generator should learn the `secrets:` shape, the liveness probe and the

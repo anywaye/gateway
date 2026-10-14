@@ -37,7 +37,7 @@ one would leave the other.
 | identity mints | `cafaye_` + 43 — `identity/internal/apikeys/apikeys.go:75` |
 
 **`cafaye_…` does not match `^caf_[A-Za-z0-9_-]{43}$` even though it starts with
-`caf`.** The gate's own shape check therefore rejects every key identity has ever
+`cafe`.** The gate's own shape check therefore rejects every key identity has ever
 minted, before the store is consulted. This is the defect with the widest blast
 radius of the three: the other two are a wrong scheme and a non-existent scope, and
 this one means a *correct* credential is refused.

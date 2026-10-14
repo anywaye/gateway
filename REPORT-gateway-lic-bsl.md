@@ -7,7 +7,7 @@ This repository only — no other worker's tree was read or written.
 ## What this packet was for
 
 OPS-P1 part 2. `CAFAYE-OPS.md` OPS-D2 splits the fleet's licences: the
-framework (`core`, `caf`, `kit`, `pantry`) under MIT or Apache-2.0, the
+framework (`core`, `cafe`, `kit`, `pantry`) under MIT or Apache-2.0, the
 services under a **Business Source Licence** — free to run, free to self-host,
 never to offer a competing service — and `conductor` and the artifact
 distribution closed (`/Users/kaka/Code/any/moon/CAFAYE-OPS.md:176`,

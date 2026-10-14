@@ -217,7 +217,7 @@ dependency versions follow npm's own rules.
   the chart is pulled by Argo, or it does not run. It is also not Kamal,
   not compose, and not a hosted platform.
 
-  **It is the reference `caf gen chart` (packet L10) must reproduce**, and
+  **It is the reference `cafe gen chart` (packet L10) must reproduce**, and
   is written generated-shaped: every value that belongs in a manifest is in
   `values.yaml`, and nothing in the templates is a hand-typed constant a
   generator could not emit. The manifest fields it reads, so L10 has a
@@ -262,7 +262,7 @@ dependency versions follow npm's own rules.
   the box, where Traefik appends exactly one hop.
 
 - **gateway emits real telemetry: one server span per request, and the fleet's
-  collector can now see them.** `internal/telemetry/` is `caf gen telemetry`
+  collector can now see them.** `internal/telemetry/` is `cafe gen telemetry`
   output — the per-signal attribute allowlists, the span-name grammar, the endpoint
   contract and the no-op path, all read out of core's vendored schemas — plus a
   hand-written SDK half (`sdk.go`) that consults that generated contract rather than
@@ -286,7 +286,7 @@ dependency versions follow npm's own rules.
   nothing configured gets traces.
 
   `cafaye.yml`'s `language` said `typescript`, an implementation deleted at cutover,
-  and `caf gen telemetry` refuses any language it does not emit for — so the field
+  and `cafe gen telemetry` refuses any language it does not emit for — so the field
   had to agree with the tree before the fleet's own generator could be used. That
   does not resolve DECISION NEEDED item 7, which is about which implementation the
   manifest describes.
@@ -1777,13 +1777,13 @@ dependency versions follow npm's own rules.
   install creates (`DEPLOYMENT.md`, "The ACME solver") — rendered as the
   `cert-manager.io/cluster-issuer` annotation **only when non-empty**: empty
   means no cert-manager, a secret nothing writes (the generator's own rule,
-  `caf gen chart`). The operator's `ingress.annotations` map still renders
+  `cafe gen chart`). The operator's `ingress.annotations` map still renders
   beside it, and an explicit operator `cert-manager.io/cluster-issuer` wins
   over the value — a duplicate annotation key is invalid YAML. `bin/chart-test`
   (new) asserts the committed render, the empty-issuer control, the collision
   rule and `helm lint`; it was red before the fix, green after.
 
-  **Divergences from `caf gen chart` are reported, not chased** — full list in
+  **Divergences from `cafe gen chart` are reported, not chased** — full list in
   `REPORT-gateway-w94-issuer-01.md`. The ones that matter: the values shape
   (`secrets:`/`secretName` vs the generated `secretName`, `replicaCount` vs
   `replicas`, `probes.*` vs `readinessProbe.*`, `ingress.tls.*` vs
