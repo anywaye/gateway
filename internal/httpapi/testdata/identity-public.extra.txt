@@ -1,0 +1,24 @@
+# identity-public.extra.txt — the RED-control fixture for the drift check.
+#
+# Identical to identity-public.txt except identity has opened ONE more public
+# route (POST /v1/password-resets/expired-purge — invented for this fixture;
+# it names no real operation). The drift check run against THIS file must
+# report exactly that route as missing from gateway, and fail. A check that
+# passes because it read only gateway's own list cannot do that, which is why
+# this fixture exists: it proves the comparison reads the declaration.
+POST /v1/agents
+GET /v1/agents/claim/{token}
+GET /v1/auth/oauth/{provider}
+GET /v1/auth/oauth/{provider}/callback
+POST /v1/email-changes/current-address
+POST /v1/email-changes/new-address
+POST /v1/email-verifications
+POST /v1/email-verifications/confirm
+POST /v1/password-resets
+POST /v1/password-resets/confirm
+POST /v1/password-resets/expired-purge
+POST /v1/session
+POST /v1/session-links/redeem
+POST /v1/session/mfa
+POST /v1/signup-timestamp
+POST /v1/users
