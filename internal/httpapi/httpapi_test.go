@@ -34,7 +34,7 @@ func ask(t *testing.T, options Options, method, path string, headers map[string]
 		body = strings.NewReader("{}")
 	}
 
-	req := httptest.NewRequest(method, path, body)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, body)
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}

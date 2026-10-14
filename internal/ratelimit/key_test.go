@@ -15,6 +15,7 @@
 package ratelimit
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,7 +26,7 @@ import (
 
 // request is a request with a socket peer and any headers a test wants.
 func request(peer string, forwarded string, headers map[string]string) *http.Request {
-	req := httptest.NewRequest("GET", "http://gateway.test/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "http://gateway.test/v1/me", nil)
 	if peer != "" {
 		req.RemoteAddr = peer
 	}

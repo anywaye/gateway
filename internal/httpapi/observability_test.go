@@ -117,7 +117,7 @@ func aGateway(t *testing.T, options httpapi.Options) http.Handler {
 
 // ask sends one request and returns what the caller saw.
 func ask(handler http.Handler, method, target string, header http.Header) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(method, target, nil)
+	request := httptest.NewRequestWithContext(context.Background(), method, target, nil)
 	for name, values := range header {
 		request.Header[name] = values
 	}

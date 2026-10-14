@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"io"
@@ -291,7 +292,7 @@ func TestABodyIsStreamedAndItsContentTypeCrossesWithIt(t *testing.T) {
 	service := newUpstream(t, nil)
 
 	payload := `{"name":"a service","version":"1.0.0"}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/pantry/services", strings.NewReader(payload))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/pantry/services", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 
 	handler, err := New(Options{Routes: RouteTable{"/v1/pantry": {BaseURL: service.Origin()}}})
@@ -882,7 +883,7 @@ func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) 
 		t.Fatalf("New refused a gateway with both a browser surface and a route table: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/catalog/items", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/catalog/items", nil)
 	req.Header.Add("Origin", "https://gateway.test")
 	req.Header.Add("Origin", "https://elsewhere.test")
 
@@ -1073,7 +1074,7 @@ func TestAnAssertionSigningFailureIsGatewayOwns503AndTheServiceIsNotAsked(t *tes
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a signing failure was answered %d, want 503", rec.Code)

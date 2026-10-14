@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,7 +86,7 @@ func TestEffectiveHostIsCaseInsensitiveAndPortless(t *testing.T) {
 		{"AUTH.CAFAYE.TEST:19090", "auth.cafaye.test"},
 		{"127.0.0.1:19090", "127.0.0.1"},
 	} {
-		r := httptest.NewRequest(http.MethodGet, "https://ignored/.well-known/openid-configuration", nil)
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://ignored/.well-known/openid-configuration", nil)
 		r.Host = tc.host
 		if got := effectiveHost(r); got != tc.want {
 			t.Errorf("effectiveHost(%q) = %q, want %q", tc.host, got, tc.want)
@@ -108,7 +109,7 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 
 	// The probes answer 200 from gateway itself.
 	for _, path := range []string{"/healthz", "/readyz"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		req.Host = "api.cafaye.test"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -120,7 +121,7 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 	// `/v1/me` is gateway's own route too: without a verifier it declines with
 	// the router's 404 rather than 200, and the assertion that matters is the
 	// same — the backend never sees it.
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Host = "api.cafaye.test"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -148,7 +149,7 @@ func TestAnUnknownHostnameFallsThroughToTheRouter(t *testing.T) {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/.well-known/openid-configuration", nil)
 	req.Host = "unknown.cafaye.test"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -172,7 +173,7 @@ func TestANamedHostnameProxiesTheWholePathToItsBackend(t *testing.T) {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration?pretty=true", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/.well-known/openid-configuration?pretty=true", nil)
 	req.Host = "auth.cafaye.test"
 	req.Header.Set("Authorization", "Bearer caller-credential")
 	req.Header.Set("Cookie", "session=caller-cookie")
@@ -219,7 +220,7 @@ func TestATraversalThroughANamedHostnameReachesNoBackend(t *testing.T) {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/a%2f..%2f..%2fsecret", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/a%2f..%2f..%2fsecret", nil)
 	req.Host = "auth.cafaye.test"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -257,7 +258,7 @@ func TestTheVhostSplitLeavesThePathTableAlone(t *testing.T) {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
-	apiReq := httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil)
+	apiReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil)
 	apiReq.Host = "api.cafaye.test"
 	apiRec := httptest.NewRecorder()
 	handler.ServeHTTP(apiRec, apiReq)
@@ -265,7 +266,7 @@ func TestTheVhostSplitLeavesThePathTableAlone(t *testing.T) {
 		t.Fatalf("GET /v1/pantry/items through api.cafaye.test = %q, want the path table's backend", apiRec.Body.String())
 	}
 
-	authReq := httptest.NewRequest(http.MethodGet, "/oidc/authorize", nil)
+	authReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/oidc/authorize", nil)
 	authReq.Host = "auth.cafaye.test"
 	authRec := httptest.NewRecorder()
 	handler.ServeHTTP(authRec, authReq)

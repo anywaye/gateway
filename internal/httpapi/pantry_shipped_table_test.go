@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -161,7 +162,7 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			if !ok || writeRoute.Prefix != writePrefix {
 				t.Fatalf("%s: %s resolves to %q, want the write prefix %s", file, writePath, writeRoute.Prefix, writePrefix)
 			}
-			minted, err := proxy.assertionFor(withPrincipal(httptest.NewRequest(http.MethodPost, writePath, nil), caller), writeRoute)
+			minted, err := proxy.assertionFor(withPrincipal(httptest.NewRequestWithContext(context.Background(), http.MethodPost, writePath, nil), caller), writeRoute)
 			if err != nil {
 				t.Fatalf("minting for the write prefix failed: %v", err)
 			}
@@ -187,7 +188,7 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			if !ok || !readRoute.Public {
 				t.Fatalf("%s: /v1/pantry/projects does not resolve to the public read prefix", file)
 			}
-			if got, err := proxy.assertionFor(withPrincipal(httptest.NewRequest(http.MethodGet, "/v1/pantry/projects", nil), caller), readRoute); err != nil || got != "" {
+			if got, err := proxy.assertionFor(withPrincipal(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/projects", nil), caller), readRoute); err != nil || got != "" {
 				t.Errorf("%s: the public read prefix minted %q (err %v), want nothing — a public route has no verified caller to assert anything about", file, got, err)
 			}
 		})

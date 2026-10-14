@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -203,7 +204,7 @@ func TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstre
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil))
 
 	if rec.Code != 401 {
 		t.Fatalf("an anonymous request answered %d, want 401 — a `503` would mean it reached the pass-through and dialed a dead upstream, which is the failure the gate above the pass-through exists to prevent", rec.Code)
@@ -236,7 +237,7 @@ func TestAPublicRouteStillAnswersForAnAnonymousCallerOnAGatewayWithAVerifier(t *
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/catalog/items", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/catalog/items", nil))
 
 	// `503`, not `401`: port 1 is closed, so a request that was NOT refused at the
 	// gate reaches the pass-through and finds nothing listening. A `401` here would
