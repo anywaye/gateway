@@ -210,6 +210,36 @@ jobs:
           sparse-checkout: lint
           sparse-checkout-cone-mode: false
           persist-credentials: false
+      - name: the oapi-codegen tool the gate runs, in the module cache
+        # `bin/prime-go` regenerates `internal/api/api.gen.go` by running
+        # `go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0`
+        # (`internal/api/generate.go`'s first `//go:generate` line). A `go run
+        # pkg@version` fetches that version's MODULE on demand, and a fresh
+        # runner has no cache entry for it — so the gate failed on a runner that
+        # had never seen the generator:
+        #
+        #     go: github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0:
+        #     github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0:
+        #     reading file:///home/runner/go/pkg/mod/cache/download/...
+        #     internal/api/generate.go:35: running "go": exit status 1
+        #
+        # The failure is a gate that cannot run rather than a gate that failed,
+        # which is the class `roll-c5-ci-tool-parity` opened. One `go mod
+        # download` of the module makes the cache entry and every later `go run`
+        # in this job is offline.
+        #
+        # THE VERSION IS READ, NOT WRITTEN. A literal here would be a third copy
+        # beside `generate.go`'s pin, and a drift between them is a gate that
+        # runs a different generator than the tree declares. The tree has
+        # exactly one source for it: `generate.go`.
+        run: |
+          version="$(grep -oE 'oapi-codegen/v2/cmd/oapi-codegen@[^ ]+' internal/api/generate.go | head -1 | sed 's/.*@//')"
+          if [ -z "$version" ]; then
+            echo "::error::generate.go names no oapi-codegen version to pre-seed" >&2
+            exit 1
+          fi
+          echo "pre-seeding oapi-codegen $version"
+          go mod download "github.com/oapi-codegen/oapi-codegen/v2@${version}"
       - name: redis-server, which the runtime session tests exec
         # `internal/httpapi`'s runtime session tests start a real `redis-server`
         # by EXECUTING THE BINARY rather than dialing a URL, on purpose: the tier
