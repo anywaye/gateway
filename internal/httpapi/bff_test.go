@@ -263,7 +263,7 @@ func (h *harness) do(t *testing.T, method, path string, body string, headers map
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, "https://gateway.test"+path, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, "https://gateway.test"+path, reader)
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}
@@ -487,7 +487,7 @@ func TestAHeaderSentTwiceTakesTheFirstValue(t *testing.T) {
 				return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 			})
 
-			req := httptest.NewRequest(http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
 			req.Header.Add("Sec-Fetch-Site", first)
 			req.Header.Add("Sec-Fetch-Site", "cross-site")
 
@@ -527,7 +527,7 @@ func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
 
 			value := map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "https://gateway.test"}[header]
 
-			req := httptest.NewRequest(http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "https://gateway.test/auth/register", strings.NewReader(`{"email":"a@x.test","password":"pw"}`))
 			req.Header.Add(header, value)
 			req.Header.Add(header, value)
 
@@ -1384,7 +1384,7 @@ func TestWithoutABrowserSurfaceTheFourRoutesAre404(t *testing.T) {
 		{http.MethodPost, "/auth/logout"},
 		{http.MethodGet, "/auth/me"},
 	} {
-		req := httptest.NewRequest(spec.method, "https://gateway.test"+spec.path, strings.NewReader(`{}`))
+		req := httptest.NewRequestWithContext(context.Background(), spec.method, "https://gateway.test"+spec.path, strings.NewReader(`{}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -1499,7 +1499,7 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 				t.Fatalf("New refused the configuration: %v", err)
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "https://gateway.test/readyz", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://gateway.test/readyz", nil)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 			res := testResponse{rec.Result()}
@@ -1571,7 +1571,7 @@ func TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose(t *testing.T) {
 			return answer(http.StatusOK, `{}`).Response, nil
 		}).handler
 
-		req := httptest.NewRequest(method, "https://gateway.test"+path, strings.NewReader(`{}`))
+		req := httptest.NewRequestWithContext(context.Background(), method, "https://gateway.test"+path, strings.NewReader(`{}`))
 		// A body gateway refuses, so a `400` means the request REACHED the
 		// handler, and a `403` means the gate stopped it in front.
 		req.Header.Set("Sec-Fetch-Site", "cross-site")

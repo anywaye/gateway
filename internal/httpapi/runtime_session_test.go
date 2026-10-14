@@ -424,7 +424,7 @@ func send(t *testing.T, handler http.Handler, method, path, body string, headers
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, "https://gateway.test"+path, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, "https://gateway.test"+path, reader)
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}

@@ -28,8 +28,15 @@
 # TypeScript source to run, no manifest, no lockfile, and no test runner that
 # finds a test; a pin for a runtime the gate never invokes is a second number
 # for a reader to wonder whether somebody forgot to remove the first one.
+# golangci-lint is the fleet's Go linter. Pinned here so `bin/prime-go` and CI
+# agree on the version that decides whether the tree is lint-clean. The pin
+# lives in one more place: `cafaye/kit/.github/workflows/ci.reusable.yml`'s
+# `golangci/golangci-lint-action` step, which pins the same version via its
+# `version:` input. A bump touches both, in the same commit — otherwise local
+# and CI disagree, which is the defect this packet exists to close.
 [tools]
 go = "1.26.1"
+"golangci-lint" = "2.14.0"
 
 [tasks.prime]
 description = "The gate: the Go tier, gofmt/build/vet/test plus generated-code currency"

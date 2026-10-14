@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,7 @@ func write(t *testing.T, p Problem) *httptest.ResponseRecorder {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	writeProblem(rec, httptest.NewRequest(http.MethodPost, "/v1/whatever", nil), p)
+	writeProblem(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/whatever", nil), p)
 	return rec
 }
 
@@ -153,7 +154,7 @@ func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 // unauthenticated caller reads.
 func TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeProblem(rec, httptest.NewRequest(http.MethodGet, "/v1/me?token=caf_secret_value&x=1", nil), Problem{
+	writeProblem(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me?token=caf_secret_value&x=1", nil), Problem{
 		Status: 401,
 		Code:   api.ProblemCodeUnauthorized,
 		Detail: "no credential presented",

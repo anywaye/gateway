@@ -6,6 +6,7 @@
 package ratelimit
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -98,7 +99,7 @@ func strptr(value string) *string { return &value }
 func ask(t *testing.T, limiter *Limiter, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, nil)
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}

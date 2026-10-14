@@ -13,6 +13,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,7 +165,7 @@ func TestEveryShippedRouteDrawsItsOwnNamedAllowance(t *testing.T) {
 				handler = secured
 			}
 
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.path, nil)
 			if tc.authed {
 				req.Header.Set("Authorization", bearer(token))
 			}
@@ -194,7 +195,7 @@ func TestLoginIsNotAnsweredUnderTheDefaultAllowance(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/login", nil))
 	name, quota, window := limitPolicy(t, rec.Header())
 
 	if name == "gateway-api" {
@@ -239,7 +240,7 @@ func TestTheLoginAllowanceIsEnforcedAndNotJustAnnounced(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			for i := 1; i <= tc.allow; i++ {
 				rec := httptest.NewRecorder()
-				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+				handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.path, nil))
 
 				if rec.Code == http.StatusTooManyRequests {
 					t.Fatalf("request %d of %d was already refused; the allowance is %d, so this test is counting from the wrong number", i, tc.allow, tc.allow)
@@ -247,7 +248,7 @@ func TestTheLoginAllowanceIsEnforcedAndNotJustAnnounced(t *testing.T) {
 			}
 
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.path, nil))
 
 			if rec.Code != http.StatusTooManyRequests {
 				t.Fatalf("request %d of %d was answered %d, want 429; the allowance is being announced and not enforced", tc.allow+1, tc.allow, rec.Code)
@@ -278,7 +279,7 @@ func TestExhaustingOneAuthBudgetLeavesTheOtherSpendingItsOwn(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/register", nil))
+		handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/register", nil))
 		if rec.Code == http.StatusTooManyRequests {
 			t.Fatalf("registration was refused at request %d of 5", i+1)
 		}
@@ -286,7 +287,7 @@ func TestExhaustingOneAuthBudgetLeavesTheOtherSpendingItsOwn(t *testing.T) {
 
 	// Registration is spent. Login is a different policy and is untouched.
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/login", nil))
 
 	if rec.Code == http.StatusTooManyRequests {
 		t.Error("exhausting the registration budget refused a login; the two share a bucket and a caller could burn one to deny the other")
@@ -307,7 +308,7 @@ func TestARouteThatMerelySharesANameDoesNotInheritItsAllowance(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/loginfoo", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/loginfoo", nil))
 	name, quota, _ := limitPolicy(t, rec.Header())
 
 	if name == "gateway-auth-logout" {
@@ -343,7 +344,7 @@ func TestTheProbePathsAreStillNeverCounted(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			for i := 0; i < 5; i++ {
 				rec := httptest.NewRecorder()
-				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+				handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
 
 				if rec.Code == http.StatusTooManyRequests {
 					t.Fatalf("%s was throttled on request %d; a throttled probe is an orchestrator that cannot see a healthy process", path, i+1)
@@ -376,7 +377,7 @@ func TestTheConstructorAllowanceDoesNotOverrideAnEntryTheTableNames(t *testing.T
 	})
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/login", nil))
 
 	if name, quota, window := limitPolicy(t, rec.Header()); name != "gateway-auth-login" || quota != "10" || window != "60" {
 		t.Errorf("/auth/login drew %s;q=%s;w=%s, want gateway-auth-login;q=10;w=60; a route the table names must not inherit RATE_LIMIT_REQUESTS", name, quota, window)
