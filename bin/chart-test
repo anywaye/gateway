@@ -26,15 +26,22 @@
 #      collide with the issuer: operator annotations render beside it, and an
 #      explicit operator `cert-manager.io/cluster-issuer` wins over the value
 #      (a duplicate key is invalid YAML, so one of them must).
-#   4. THE DEPLOYMENT PULLS THE PUBLISHED IMAGE. The rendered container image is
-#      `<published>` at the chart's appVersion, where `<published>` is derived
-#      from this repository's own go.mod module path — the same derivation kit's
-#      image workflow makes. The control is a hostless `image.repository`: it
-#      renders `cafaye/gateway:0.1.0`, the Docker Hub-shaped value that sent a
-#      pod into a permanent image-pull failure, and the published path is absent.
-#      `bin/prime` holds the same fact statically (its "the chart names the image
-#      the publish loop pushes" step); this is the render-level half, which is
-#      the only place a template that ignored the value could be caught.
+#   4. THE DEPLOYMENT PULLS THE PUBLISHED IMAGE, NAMED BY DIGEST. The rendered
+#      container image is `<published>@<digest>` — the digest read from the
+#      same values.yaml the Deployment renders — and a CHANGED digest changes
+#      the rendered text, which is the property Argo's diff reads. The
+#      measured defect this replaced: the chart pinned the image by TAG
+#      (`repository:tag`), the tag is overwritten on every master push, so the
+#      rendered string was identical before and after a build, Argo reported
+#      `Synced` with no rollout, and `imagePullPolicy: IfNotPresent` kept the
+#      node on the six-hour-old image (REPORT-roll-c5-image-digest.md carries
+#      the two digests). THE RED CONTROL: an empty or malformed digest renders
+#      a reference no registry answers (`repository@`, `repository@nonsense`),
+#      and a values.yaml with NO digest is refused HERE before anything
+#      asserts on it — an assertion would otherwise match the broken render
+#      with an empty digest, which is exactly how a check passes because the
+#      field is absent. The same absence and malformation are refused by
+#      `bin/prime-go` statically, the way the host check above is.
 #   5. `helm lint` passes.
 #
 # set -euo pipefail is the whole mechanism — no error handling to forget.
@@ -136,13 +143,16 @@ assert "an explicit operator issuer wins" \
 assert_absent "the value-derived issuer does not duplicate it" \
   "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
 
-note "4. the Deployment pulls the image the publish loop pushes"
+note "4. the Deployment pulls the image the publish loop pushes, NAMED BY DIGEST"
 # DERIVED, not typed: kit's image workflow pushes to ghcr.io/<github.repository>
 # and takes no input for the name, so the expected path comes from this
 # repository's own go.mod module path. A hostless value is the measured failure.
 module_path="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' go.mod | head -n1)"
 published="ghcr.io/${module_path#github.com/}"
 app_version="$(sed -n 's/^appVersion:[[:space:]]*//p' "$CHART/Chart.yaml" | head -n1 | tr -d "\"'")"
+# The digest, READ from the same values.yaml the Deployment renders: a check
+# that typed its own digest would be a copy of the value, not a reading of it.
+image_digest="$(sed -n 's/^  digest:[[:space:]]*//p' "$CHART/values.yaml" | head -n1 | tr -d "\"'")"
 
 doc=$(deployment_doc)
 if [ -z "$doc" ]; then
@@ -150,17 +160,52 @@ if [ -z "$doc" ]; then
 else
   ok "helm template renders the Deployment"
 fi
-assert "the container image is the published path at the chart's appVersion" \
+
+# THE ABSENCE IS THE FAILURE, NAMED FIRST. With an empty digest the assertion
+# below would MATCH the broken render — `image: "$published@"` — and a check
+# that passes because the field is absent is worse than no check. So the
+# absence is refused here, at the render level, and statically in bin/prime-go.
+if [ -z "$image_digest" ]; then
+  bad "values.yaml names no image.digest — the Deployment would render '$published@', a reference no registry answers"
+  image_digest="sha256:$(printf '%064d' 0)"
+else
+  ok "values.yaml names image.digest $image_digest"
+fi
+assert "the container image is the published repository at the committed digest" \
+  "image: \"$published@$image_digest\"" "$doc"
+assert_absent "the container image is NOT named by the mutable tag" \
   "image: \"$published:$app_version\"" "$doc"
 
-# The control: a hostless repository renders Docker Hub-shaped, which is what the
-# box measured, and the published path is absent — so the assertion above is
-# about the value and not about a string that happens to appear.
+# THE CASE ARGO'S DIFF READS: a changed digest is a changed Deployment. The
+# tag was identical before and after a build, which is why the diff never
+# fired and the box never rolled; this is the property the packet buys.
+changed="sha256:$(printf '%064d' 1)"
+doc=$(deployment_doc --set image.digest="$changed")
+assert "a changed digest changes the rendered image (the diff Argo reads)" \
+  "image: \"$published@$changed\"" "$doc"
+assert_absent "the committed digest is gone from the changed render" \
+  "image: \"$published@$image_digest\"" "$doc"
+
+# The control: a hostless repository renders Docker Hub-shaped, which is what
+# the box measured, and the published path is absent — so the assertion above
+# is about the value and not about a string that happens to appear.
 doc=$(deployment_doc --set image.repository=cafaye/gateway)
-assert "the control renders a hostless image (cafaye/gateway:0.1.0)" \
-  "image: \"cafaye/gateway:$app_version\"" "$doc"
+assert "the control renders a hostless repository at the digest" \
+  "image: \"cafaye/gateway@$image_digest\"" "$doc"
 assert_absent "the control does not render the published path" \
-  "image: \"$published:" "$doc"
+  "image: \"$published@" "$doc"
+
+# THE RED CONTROL, at the render level: an empty or malformed digest renders a
+# reference no registry answers. The template cannot refuse a value it is
+# handed — that refusal is bin/prime-go's static check, and this is the half
+# that shows what the refusal is about: a chart that would render these
+# shapes is a pod in image-pull failure with nothing naming the field.
+doc=$(deployment_doc --set image.digest="")
+assert "an empty digest renders the broken reference 'repository@'" \
+  "image: \"$published@\"" "$doc"
+doc=$(deployment_doc --set image.digest="not-a-digest")
+assert "a malformed digest renders exactly what it was given" \
+  "image: \"$published@not-a-digest\"" "$doc"
 
 note "5. helm lint"
 if helm lint "$CHART" >/dev/null 2>&1; then

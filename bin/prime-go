@@ -450,6 +450,64 @@ if [ "$image_repo" != "$published" ]; then
 fi
 echo "chart image: $values sets image.repository to $published, the image the publish workflow pushes"
 
+# THE DIGEST, AND WHY THE TAG ALONE WAS MEASURED NOT TO BE ENOUGH. The
+# repository check above names the image; this one names the BUILD, and the
+# two digests in the brief are the whole argument:
+#
+#     registry: ghcr.io/cafaye/gateway:0.1.0 → sha256:c264…37165
+#     node:     ghcr.io/cafaye/gateway:0.1.0 → sha256:8e60…e79b
+#
+# The Deployment rendered `repository:tag`, `image.tag` is a hardcoded
+# constant here, and the publish loop OVERWRITES that tag on every master
+# push — so the rendered text was identical before and after the fix, Argo's
+# diff reported `Synced` with no rollout, and `imagePullPolicy:
+# IfNotPresent` kept the node on the six-hour-old build. The tag is a value
+# a RELEASE commits and there was no release; a mutable release tag is
+# `latest` with a better-sounding name.
+#
+# `image.digest` is `sha256:` + 64 hex and nothing else: it is the manifest
+# digest `chart.reusable.yml` reads off the image the publish just built and
+# writes into this file before `helm push`. An EMPTY one renders
+# `$published@` — a reference no registry answers — and a malformed one is
+# worse, because it looks like a pin. Both are refused HERE rather than at
+# the pull, and the render-level half of the control is bin/chart-test's.
+image_digest="$(sed -n 's/^  digest:[[:space:]]*//p' "$values" | head -n1 | tr -d "\"'")"
+if [ -z "$image_digest" ]; then
+  echo "bin/prime-go: $values sets no image.digest, and the Deployment renders" >&2
+  echo "  its container image from exactly that value — the digest is the only" >&2
+  echo "  name for an image that cannot move. The measured failure is two" >&2
+  echo "  digests for one tag: the registry's ghcr.io/cafaye/gateway:0.1.0 held" >&2
+  echo "  sha256:c264…37165 while the node ran sha256:8e60…e79b, six hours" >&2
+  echo "  behind, because a chart pinned by tag renders an UNCHANGED Deployment" >&2
+  echo "  and Argo never rolls it. Publish writes the digest" >&2
+  echo "  (chart.reusable.yml, before helm push); the committed value is the" >&2
+  echo "  last published image, and it must be a real one." >&2
+  exit 1
+fi
+case "$image_digest" in
+  sha256:?*)
+    # `sha256:` plus exactly 64 lowercase hex. The charset and the length are
+    # both asserted because a digest that is merely PREFIXED right is the
+    # shape a reader stops checking.
+    if ! printf '%s' "$image_digest" | grep -qE '^sha256:[0-9a-f]{64}$'; then
+      echo "bin/prime-go: $values sets image.digest to \"$image_digest\", which" >&2
+      echo "  is not sha256:<64 hex> — the manifest digest chart.reusable.yml" >&2
+      echo "  writes before helm push. A malformed digest is worse than a" >&2
+      echo "  missing one: it looks like a pin and fails at image-pull with" >&2
+      echo "  nothing naming this field." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "bin/prime-go: $values sets image.digest to \"$image_digest\", which" >&2
+    echo "  carries no sha256: prefix — the manifest digest chart.reusable.yml" >&2
+    echo "  writes before helm push is sha256:<64 hex>, and anything else is a" >&2
+    echo "  tag-shaped value that can move under a running box." >&2
+    exit 1
+    ;;
+esac
+echo "chart image: $values pins image.digest $image_digest — immutable, so a new build is a textual diff Argo rolls"
+
 step "gofmt -l"
 # `-l` prints the files that NEED formatting and exits 0 either way, so the count
 # is the assertion. An empty list is the pass and a non-empty one is a red that

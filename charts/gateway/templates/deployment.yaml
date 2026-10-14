@@ -19,7 +19,20 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          # THE IMAGE IS NAMED BY DIGEST, NOT BY TAG — the measured defect,
+          # on the live box: the registry's `ghcr.io/cafaye/gateway:0.1.0`
+          # held sha256:c264…37165 (the Redis AUTH fix) while the node ran
+          # sha256:8e60…e79b, six hours older. `repository:tag` renders a
+          # string that is IDENTICAL before and after a new build — the tag
+          # is overwritten on every master push — so Argo's diff reported
+          # `Synced`, rolled nothing, and `IfNotPresent` re-served the node's
+          # stale copy on every restart. A digest cannot move, so the
+          # rendered text changes when the image changes and Argo rolls the
+          # Deployment. `pullPolicy` stays `IfNotPresent`: the digest already
+          # guarantees the content, and the operator-readable tag stays in
+          # values.yaml beside this reference (values.yaml's `image` block
+          # carries the measured evidence).
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
