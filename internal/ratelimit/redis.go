@@ -303,10 +303,48 @@ func Connect(options RedisConnectionOptions) (*Connection, error) {
 		socket, err = dialer.Dial("tcp", net.JoinHostPort(target.hostname, target.port))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("ratelimit: connectRedis: %s did not answer: %w", options.URL, err)
+		return nil, fmt.Errorf("ratelimit: connectRedis: %s did not answer: %w", redactRedisURL(options.URL), err)
 	}
 
-	return &Connection{socket: socket, timeout: timeout}, nil
+	connection := &Connection{socket: socket, timeout: timeout}
+
+	// AUTH before the connection is handed out. A password-protected server
+	// answers everything with NOAUTH until this write, so a wrong password
+	// refused here is the operator's password being wrong — said in those
+	// terms, at connect time — rather than a readiness probe failing on its
+	// first PING with nothing pointing at the credential.
+	if target.needsAuth() {
+		if err := connection.authenticate(target, options.URL); err != nil {
+			_ = socket.Close()
+			return nil, err
+		}
+	}
+
+	return connection, nil
+}
+
+// authenticate sends AUTH as the first command on a fresh connection and reads
+// its reply.
+//
+// The two shapes are the URL's, not a choice: an empty username is the legacy
+// `AUTH <password>` (the spelling kit writes), and a named one is the ACL
+// `AUTH <user> <password>`. The refusal names authentication and quotes only
+// the redacted URL — never the password — and the socket is closed by the
+// caller, because a connection that failed AUTH is not one anything should use.
+func (c *Connection) authenticate(target redisTarget, rawURL string) error {
+	command := []string{"AUTH", target.password}
+	if target.username != "" {
+		command = []string{"AUTH", target.username, target.password}
+	}
+
+	reply, err := c.Do(context.Background(), command...)
+	if err != nil {
+		return fmt.Errorf("ratelimit: connectRedis: %s refused the Redis password: authentication failed: %w", redactRedisURL(rawURL), err)
+	}
+	if text, ok := reply.(string); !ok || !strings.EqualFold(text, "OK") {
+		return fmt.Errorf("ratelimit: connectRedis: %s refused the Redis password: authentication failed: the server answered %s", redactRedisURL(rawURL), render(reply))
+	}
+	return nil
 }
 
 // Ping is `PING`, for the readiness probe.
@@ -560,9 +598,30 @@ type redisTarget struct {
 	hostname string
 	port     string
 	tls      bool
+
+	// The URL's userinfo, when it carries any. `redis://:s3cret@host` is an
+	// EMPTY username with a password — the spelling kit writes — and it must
+	// stay exactly that: empty user authenticates as `AUTH <password>`, while a
+	// named user authenticates as `AUTH <user> <password>` (Redis 6+ ACL).
+	// Both arrive percent-decoded from `net/url`, so a `p%40ss` password is the
+	// `p@ss` the server expects.
+	username string
+	password string
 }
 
+// needsAuth reports whether the URL carried credentials at all. Both empty is
+// no AUTH write: an unauthenticated Redis stays a supported deployment, and a
+// gratuitous AUTH against one is a failure the operator did not cause.
+func (t redisTarget) needsAuth() bool { return t.username != "" || t.password != "" }
+
 // parseRedisURL is `redis://` or `rediss://`, host and port, no path.
+//
+// The userinfo is RETURNED, not discarded: a password-protected Redis answers
+// every command with NOAUTH until the client sends AUTH, so dropping it here is
+// a readiness probe that reports `redis: unavailable` for as long as the
+// deployment stands. The username distinguishes the two AUTH shapes — empty
+// user is `AUTH <password>`, named user is `AUTH <user> <password>` — and both
+// empty is no AUTH at all.
 //
 // The PATH IS REFUSED rather than ignored: the quietest way to lose every bucket
 // is to write to database 0 and read from database 1, and a URL that quietly
@@ -570,22 +629,25 @@ type redisTarget struct {
 // parser and its own errors are discarded, because a message naming a character
 // position in a string the operator never wrote is the thing this repository's
 // configuration checks exist to avoid.
+//
+// Every refusal quotes the REDACTED url: the raw one may carry a password, and
+// a startup error is a log line.
 func parseRedisURL(value string) (redisTarget, error) {
 	trimmed := strings.TrimSpace(value)
 
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must be a redis:// URL, got %q", ErrNotConfigured, value)
+		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must be a redis:// URL, got %q", ErrNotConfigured, redactRedisURL(value))
 	}
 
 	if parsed.Scheme != "redis" && parsed.Scheme != "rediss" {
-		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must be redis:// or rediss://, got %q", ErrNotConfigured, value)
+		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must be redis:// or rediss://, got %q", ErrNotConfigured, redactRedisURL(value))
 	}
 	if parsed.Path != "" && parsed.Path != "/" {
-		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must have no path, got %q", ErrNotConfigured, value)
+		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must have no path, got %q", ErrNotConfigured, redactRedisURL(value))
 	}
 	if parsed.Hostname() == "" {
-		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must name a host, got %q", ErrNotConfigured, value)
+		return redisTarget{}, fmt.Errorf("%w: connectRedis: url must name a host, got %q", ErrNotConfigured, redactRedisURL(value))
 	}
 
 	port := parsed.Port()
@@ -597,7 +659,30 @@ func parseRedisURL(value string) (redisTarget, error) {
 		return redisTarget{}, fmt.Errorf("%w: connectRedis: port must be a whole number between 1 and 65535, got %q", ErrNotConfigured, port)
 	}
 
-	return redisTarget{hostname: parsed.Hostname(), port: port, tls: parsed.Scheme == "rediss"}, nil
+	target := redisTarget{hostname: parsed.Hostname(), port: port, tls: parsed.Scheme == "rediss"}
+	if parsed.User != nil {
+		target.username = parsed.User.Username()
+		target.password, _ = parsed.User.Password()
+	}
+	return target, nil
+}
+
+// redactRedisURL removes the userinfo from a Redis URL before it appears in an
+// error message or a log line.
+//
+// This file had no redaction convention because no error here ever quoted a
+// credential — the URL carried none. Now that it does, every interpolation of
+// one goes through here: the shape follows `redactUserinfo` in
+// `internal/httpapi`, which refuses a credential for the same reason rather
+// than quoting it. A URL with no userinfo passes through unchanged, so refusal
+// messages stay readable.
+func redactRedisURL(value string) string {
+	if at := strings.LastIndex(value, "@"); at >= 0 {
+		if scheme := strings.Index(value, "://"); scheme >= 0 && scheme+3 < at {
+			return value[:scheme+3] + "…" + value[at:]
+		}
+	}
+	return value
 }
 
 // assert the transport is what the interface says it is, at build time.
