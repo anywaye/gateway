@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -129,7 +130,7 @@ func mintOne(t *testing.T, minter *AssertionMinter, table RouteTable, principal 
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the gateway answered %d, want 200\n  %s", rec.Code, rec.Body.String())
 	}
@@ -180,7 +181,7 @@ func TestTheAssertionIsGatewaySignedAndNotTheCallersToken(t *testing.T) {
 		t.Fatalf("New refused: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil)
 	req.Header.Set("Authorization", "Bearer the-callers-own-jwt")
 	handler.ServeHTTP(rec, req)
 
@@ -570,7 +571,7 @@ func TestNoAssertionIsMintedWithoutAMinterOrWithoutADeclaration(t *testing.T) {
 				t.Fatalf("New refused: %v", err)
 			}
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pantry/items", nil))
+			handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil))
 
 			got := service.Last(t).Header.Get(AssertionHeader)
 			if tc.present && got == "" {
@@ -617,7 +618,7 @@ func TestAPublicEntryIsRefusedAnAssertionEvenByATableThatBootWouldHaveRefused(t 
 	)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodGet, "/v1/catalog/items", nil),
+	handler.ServeHTTP(rec, withPrincipal(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/catalog/items", nil),
 		Principal{Sub: "user-1", Claims: auth.ClaimsFrom(map[string]any{"sub": "user-1"})}))
 
 	if got := service.Last(t).Header.Get(AssertionHeader); got != "" {

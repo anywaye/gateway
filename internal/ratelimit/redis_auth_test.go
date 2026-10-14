@@ -33,7 +33,11 @@ type authFake struct {
 func newAuthFake(t *testing.T, expect []string) *authFake {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// `(*net.ListenConfig).Listen` rather than `net.Listen`, because the fleet's
+	// noctx lint forbids the net.Listen call and this file is not exempt: the
+	// listener is opened per test and closed in a t.Cleanup below, which is the
+	// context-free call the rule exists to catch.
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not open a port for the scripted Redis: %v", err)
 	}
