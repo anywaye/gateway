@@ -68,9 +68,12 @@ type Config struct {
 //	RATE_LIMIT_WINDOW_MS     the window's length
 //	TRUSTED_PROXIES          how much of `X-Forwarded-For` may be believed
 //	REDIS_URL                where buckets are counted, when there is more than one replica
-//	IDENTITY_URL             identity's base URL for the `/auth` calls — the browser
+//	IDENTITY_URL             identity's base URL: for the `/auth` calls — the browser
 //	                         surface, and only WITH `REDIS_URL`: see
-//	                         `browserSurfaceFromEnv` for why neither alone serves it
+//	                         `browserSurfaceFromEnv` for why neither alone serves it —
+//	                         and, WITH or without it, for the public-fallback
+//	                         pass-through, which forwards identity's public
+//	                         operations with the path intact (see `identitypublic.go`)
 //
 // The count is the assertion `TestTheRuntimeReaderReadsExactlyTheseVariables`
 // holds, and it is the assertion that makes this function safe to extend: a
@@ -235,6 +238,26 @@ func RuntimeOptions(env Env) (Config, error) {
 			Routes:   routes,
 			VHosts:   vhosts,
 			Assert:   assertion,
+
+			// THE PUBLIC FALLBACK, AND IT IS THE SAME ADDRESS THE BROWSER
+			// SURFACE DIALS. `IDENTITY_URL` is "there is an identity to ask",
+			// and the pass-through's fallback asks it for the operations
+			// identity declares public — no credential, path intact — while
+			// the browser surface asks it for sessions. One address for one
+			// service, read once here and handed to both. Unset means no
+			// fallback (and, by `browserSurfaceFromEnv`'s rule, no browser
+			// surface either); malformed is a refusal to boot from `New`,
+			// which validates this origin like every other.
+			//
+			// It is set WITHOUT `REDIS_URL` on purpose, and that is not a
+			// second reading of the browser-surface rule: a relayed public
+			// operation holds no session state, so there is nothing a restart
+			// or a peer could disagree about. The local stack and the chart
+			// both set `IDENTITY_URL` already, so both stacks gain the
+			// fallback with no table edit — which is the packet's answer to
+			// "fix both or say why one is exempt": the fix is in the binary
+			// both run, not in either table.
+			IdentityBaseURL: trimSpace(env("IDENTITY_URL")),
 
 			// THE BROWSER SURFACE, AND IT IS NOT A POINTER TO NOTHING.
 			//

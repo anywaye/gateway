@@ -95,6 +95,25 @@ type Options struct {
 	// carries no authz of its own.
 	VHosts VHostTable
 
+	// Identity's base URL for the public fallback, or "" for none.
+	//
+	// Empty is the honest default and the reason this field is additive: a
+	// gateway without one refuses anonymous /v1 traffic exactly as it did
+	// before this field existed. Set, identity's own public operations — the
+	// 15 `security: []` operations in identity's openapi/v1.yaml, compiled in
+	// `identitypublic.go` — cross to identity with no caller credential, on
+	// paths the route table does not own. A table entry wins over the
+	// fallback wherever both claim a path, in the gate and in the
+	// pass-through alike.
+	//
+	// It is the same origin the browser surface dials (`BFF.IdentityURL`), and
+	// `RuntimeOptions` sets it from the same `IDENTITY_URL` — one address for
+	// one service, read once. Validated here like every other origin: a value
+	// that is not an http(s) base URL is a refusal to construct, because a
+	// fallback that cannot reach identity would pass anonymous callers to a
+	// 503.
+	IdentityBaseURL string
+
 	// The principal minter, or nil for none.
 	//
 	// Nil means **no assertion is minted on any route** — which is the state every
@@ -364,7 +383,7 @@ func New(options Options) (http.Handler, error) {
 	router.Method(http.MethodHead, "/healthz", headOf(svc.Liveness))
 	router.Method(http.MethodHead, "/readyz", headOf(svc.Readiness))
 
-	if options.Routes == nil && options.VHosts == nil {
+	if options.Routes == nil && options.VHosts == nil && options.IdentityBaseURL == "" {
 		// Nothing in front of the router to mount on, so `everyRequest`'s list is
 		// already on chi (above, with the bearer gate in it) and this returns the
 		// bare `*chi.Mux` — which `chi.Walk` can read, and which is why
@@ -394,6 +413,19 @@ func New(options Options) (http.Handler, error) {
 		return nil, err
 	}
 
+	// The identity fallback's origin, or "" for none. Validated AGAIN here for
+	// the reason the tables are: this is the copy the service reads, so a
+	// caller cannot hand a checked gateway an unchecked address afterwards.
+	// Empty stays empty — no fallback, and the gate refuses exactly what it
+	// refused before this packet.
+	identity := ""
+	if options.IdentityBaseURL != "" {
+		identity, err = checkIdentityBaseURL(options.IdentityBaseURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// The pass-through, and the credential gate in front of that — the same order
 	// `src/index.ts` (removed at cutover) registers them, and the order is the property: a request is
 	// authenticated *before* anything decides to spend an upstream call on it.
@@ -416,9 +448,10 @@ func New(options Options) (http.Handler, error) {
 	// registrations, and `TestTheRouterServesExactlyWhatTheGeneratedDocument-
 	// Declares` keeps working on a configured gateway as well as an empty one.
 	proxied := newRouteProxy(proxyOptions{
-		Routes:    table,
-		Timeout:   options.UpstreamTimeout,
-		Assertion: options.Assert,
+		Routes:          table,
+		Timeout:         options.UpstreamTimeout,
+		Assertion:       options.Assert,
+		IdentityBaseURL: identity,
 	}).handle(router)
 
 	// The chain in front of the pass-through, in the order the reference registers
@@ -429,7 +462,7 @@ func New(options Options) (http.Handler, error) {
 	// same rule an unverified token gets.
 	gates := everyRequest(telemetryMiddleware, limiter,
 		apiKeyGate(options.APIKeys),
-		credentialGate(authentication(options), table),
+		credentialGate(authentication(options), table, identity),
 		scopeGate(options.Verifier, table),
 		vhostGate(vhosts, options.UpstreamTimeout, options.Assert),
 	)
@@ -860,6 +893,15 @@ func (o Options) validate() error {
 	// points at configuration.
 	if o.VHosts != nil {
 		if _, err := ValidateVHostTable(o.VHosts); err != nil {
+			return err
+		}
+	}
+	// The identity fallback, by the same rule a third time: a base URL that is
+	// not an origin would pass anonymous callers to a destination that cannot
+	// answer, which reads as an outage rather than as the configuration
+	// mistake it is.
+	if o.IdentityBaseURL != "" {
+		if _, err := checkIdentityBaseURL(o.IdentityBaseURL); err != nil {
 			return err
 		}
 	}

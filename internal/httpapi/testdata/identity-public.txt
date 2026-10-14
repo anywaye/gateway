@@ -1,0 +1,54 @@
+# identity-public.txt — identity's public /v1 surface, as gateway enforces it.
+#
+# SOURCE: cafaye/identity, openapi/v1.yaml, every operation under /v1/* that
+# declares `security: []`. Identity is the authority; gateway never invents an
+# entry here. Do not hand-edit the list below: re-run the extraction and replace
+# the whole body.
+#
+# Extracted 2026-10-15 from identity 9dc80c9, with:
+#
+#   python3 -c "
+#   import re
+#   lines = open('openapi/v1.yaml').read().splitlines()
+#   cur_path = cur_op = cur_sec = None; ops = {}
+#   def flush():
+#       global cur_op, cur_sec
+#       if cur_op and cur_path: ops.setdefault(cur_path, []).append((cur_op, cur_sec))
+#       cur_op = None; cur_sec = 'auth'
+#   for l in lines:
+#       m = re.match(r'^  (/\S*):', l)
+#       if m: flush(); cur_path = m.group(1); continue
+#       m = re.match(r'^    (get|post|put|patch|delete|head|options):', l)
+#       if m: flush(); cur_op = m.group(1).upper(); continue
+#       m = re.match(r'^      security: \[\]', l)
+#       if m and cur_op: cur_sec = 'public'
+#   flush()
+#   for p in sorted(ops):
+#       for op, sec in ops[p]:
+#           if p.startswith('/v1/') and sec == 'public': print(op, p)
+#   "
+#
+# That run printed the 15 lines below — 15 operations on 15 paths (the brief's
+# "seventeen" overcounts by two: the only other `security: []` hits in the file
+# are identity's own /healthz and /readyz, which are not under /v1/*).
+#
+# FORMAT: one `METHOD /v1/path` per line. `{name}` is one template segment: it
+# matches exactly one non-empty path segment, and the segment count must agree,
+# so /v1/agents/claim/{token} opens /v1/agents/claim/abc and never /v1/agents
+# itself, /v1/agents/claim, or /v1/agents/claim/abc/extra. The method is part
+# of the entry: POST /v1/session is public and DELETE /v1/session is not.
+POST /v1/agents
+GET /v1/agents/claim/{token}
+GET /v1/auth/oauth/{provider}
+GET /v1/auth/oauth/{provider}/callback
+POST /v1/email-changes/current-address
+POST /v1/email-changes/new-address
+POST /v1/email-verifications
+POST /v1/email-verifications/confirm
+POST /v1/password-resets
+POST /v1/password-resets/confirm
+POST /v1/session
+POST /v1/session-links/redeem
+POST /v1/session/mfa
+POST /v1/signup-timestamp
+POST /v1/users
