@@ -141,6 +141,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - name: read kit.ref
+        # GitHub Actions cannot read a file's contents into an expression, so
+        # the pin goes through $GITHUB_ENV once and the checkout below reads it
+        # from the environment. `grep -v` on the comment marker rather than
+        # `sed -n 2p`, because a file whose comment block grows must not silently
+        # hand the checkout the wrong line.
+        run: |
+          ref="$(grep -v '^\s*#' kit.ref | grep -v '^\s*$' | head -1)"
+          if [ -z "$ref" ]; then
+            echo "::error::kit.ref holds no ref (only comments/blanks) — the gate cannot find kit's lint config" >&2
+            exit 1
+          fi
+          echo "KIT_REF=$ref" >> "$GITHUB_ENV"
       # `go-version-file: go.mod` rather than a literal version, and that is the
       # point: the pin now lives in `go.mod` (which the compiler enforces) and in
       # `mise.toml` (which `bin/prime-go`'s first step checks against it), and a
@@ -172,6 +185,31 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: kit (lint config)
+        # kit's `lint/golangci.yml`, sparse-checked out beside the repository so
+        # `bin/prime-go` finds it at `.kit/lint/golangci.yml`. The config is NOT
+        # copied into this repo — kit's own header says why ("Not copied into a
+        # service repo") and a copy is a second policy to drift. Without this
+        # step the gate runs the linter with no config at all and, per golangci
+        # v2's measured behaviour, exits 0 on a file this config rejects.
+        #
+        # The same seam kit's own `go` job carries (`ci.reusable.yml`,
+        # `KIT_LINT_DIR`) — one shape in two places, because the shared job and
+        # this service's gate both need it and neither can read the other's.
+        #
+        # The ref is `kit.ref`, the pin this repository runs, read out of the
+        # file because a branch would move and a lint policy that moves under a
+        # repo is the drift the file's own header forbids. The file's first line
+        # is a comment, so the read skips comments and blanks rather than
+        # assuming line 2.
+        uses: actions/checkout@v7
+        with:
+          repository: cafaye/kit
+          ref: ${{ env.KIT_REF }}
+          path: .kit
+          sparse-checkout: lint
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: redis-server, which the runtime session tests exec
         # `internal/httpapi`'s runtime session tests start a real `redis-server`
         # by EXECUTING THE BINARY rather than dialing a URL, on purpose: the tier
