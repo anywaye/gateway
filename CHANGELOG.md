@@ -22,8 +22,10 @@ dependency versions follow npm's own rules.
   after the build: a `kubectl patch` refresh reported `Synced` with no diff,
   and `imagePullPolicy: IfNotPresent` re-served the node's stale copy on every
   restart. `charts/gateway/values.yaml` gains `image.digest`
-  (`sha256:c264705049277625458a0f2d2b56fcac4a8801db28f3068627d3394df5c237165`,
-  the last published image) and `templates/deployment.yaml` renders
+  (`sha256:9edaa9ce56ad12add32c67632ca8d23c6642c265308a404c7152ca90f1f5e3b1`,
+  the registry's digest for `0.1.0` when this landed — the brief's `c264…37165`
+  had already been overwritten, which is the defect) and
+  `templates/deployment.yaml` renders
   `{{ .Values.image.repository }}@{{ .Values.image.digest }}` — an immutable
   name, so the render changes when the image changes and the box rolls.
   `image.tag` stays, equal to `appVersion`, as the human-readable half (kit's

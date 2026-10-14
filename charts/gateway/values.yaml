@@ -40,7 +40,7 @@ image:
   # THE REFERENCE, AND IT IS IMMUTABLE ON PURPOSE — the defect this field
   # exists to close was MEASURED, on the live box:
   #
-  #     registry: ghcr.io/cafaye/gateway:0.1.0 → sha256:c26470504927…37165
+  #     registry: ghcr.io/cafaye/gateway:0.1.0 → sha256:c2647050487…37165
   #     node:     ghcr.io/cafaye/gateway:0.1.0 → sha256:8e6059b012…e79b
   #
   # Two different digests, six hours after the Redis AUTH fix was merged,
@@ -65,10 +65,22 @@ image:
   # malformed digest — a chart that renders `repository@` is a pod in
   # image-pull failure with nothing naming this field.
   #
+  # THE COMMITTED VALUE, AND HOW FAST IT AGES. It is the digest
+  # `ghcr.io/cafaye/gateway:0.1.0` resolved to when this packet was written,
+  # read with `docker buildx imagetools inspect` and quoted in
+  # REPORT-roll-c5-image-digest.md; it is the image built from master
+  # `f8a5caa`. The brief's registry digest was `sha256:c264…37165` (master
+  # `d7d8a68`) — so BETWEEN THE BRIEF AND THIS COMMIT THE TAG MOVED AGAIN,
+  # and no one but a manual re-resolve noticed: that is the defect this field
+  # exists to close, in its own commit. The staleness is expected rather than
+  # fixed by hand: the publish run overwrites this line with the digest it
+  # just built, so the OCI chart always names the bytes beside it, and this
+  # committed value is the floor a `push: false` run and a fresh clone render.
+  #
   # The chart VERSION does not move (Chart.yaml's `version` is the OCI tag
   # and the substrate's Application targetRevision), so the chart's content
   # changes under a fixed tag and the diff fires on refresh.
-  digest: "sha256:c264705049277625458a0f2d2b56fcac4a8801db28f3068627d3394df5c237165"
+  digest: "sha256:9edaa9ce56ad12add32c67632ca8d23c6642c265308a404c7152ca90f1f5e3b1"
   # A value, never `latest`: a floating tag is a deploy that changes when
   # somebody else pushes. Kept, and kept EQUAL to Chart.yaml's appVersion —
   # kit's publish seam asserts the pair — because the tag is the
