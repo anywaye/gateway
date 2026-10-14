@@ -1,11 +1,11 @@
 # oapi-codegen's configuration for the gateway SERVICE.
 #
-# The generator is pinned at v2.8.0 by the `//go:generate` line in generate.go
-# rather than here, and the split is deliberate and copied from pantry's
-# `internal/api/oapi-codegen.yaml`: `go run <module>@<version>` resolves in
-# module-aware mode and ignores this module's go.mod, so the GENERATOR is never a
-# dependency of this repository. What is a dependency is
-# `github.com/oapi-codegen/runtime`, which the generated code imports.
+# The generator is pinned at v2.8.0 in go.mod (through the blank import in
+# tools.go) rather than here, and the split is deliberate and copied from
+# pantry's `internal/api/oapi-codegen.yaml`: the GENERATOR is a build tool, so
+# its version lives in exactly one place and that place is the module manifest.
+# What is a runtime dependency is `github.com/oapi-codegen/runtime`, which the
+# generated code imports.
 #
 #   package: api   The same package as generate.go, and NOT a subpackage. This
 #                  module's generated types are under `internal/`, so they are

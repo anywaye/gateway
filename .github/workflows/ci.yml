@@ -210,36 +210,29 @@ jobs:
           sparse-checkout: lint
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      - name: the oapi-codegen tool the gate runs, in the module cache
+      - name: the generator's dependency graph, in the module cache
         # `bin/prime-go` regenerates `internal/api/api.gen.go` by running
-        # `go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0`
-        # (`internal/api/generate.go`'s first `//go:generate` line). A `go run
-        # pkg@version` fetches that version's MODULE on demand, and a fresh
-        # runner has no cache entry for it — so the gate failed on a runner that
-        # had never seen the generator:
+        # `go generate ./internal/api/`, and it does so OFFLINE — through a
+        # file:// proxy over the module cache — so a graph that was never
+        # fetched is a regeneration that cannot run rather than a gate that
+        # failed. The generator is declared in this module (the blank import in
+        # `tools.go`, version in `go.mod`), so one `go mod download` fills its
+        # whole transitive graph, and `setup-go`'s cache — keyed on `go.sum` —
+        # carries it across runs.
         #
-        #     go: github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0:
-        #     github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0:
-        #     reading file:///home/runner/go/pkg/mod/cache/download/...
-        #     internal/api/generate.go:35: running "go": exit status 1
+        # The explicit step is load-bearing rather than belt-and-braces:
+        # everything before the regeneration in `bin/prime-go` (`go build`,
+        # `go vet`, `go test`) SKIPS the `tools`-tagged import, so none of them
+        # fetches it, and on a fresh runner the cache holds nothing until this
+        # step runs. What was here before fetched only the tool's own module
+        # (`go mod download <module>@<version>`) and left its dependencies
+        # unfetched, which is the cold-runner failure this packet closes.
         #
-        # The failure is a gate that cannot run rather than a gate that failed,
-        # which is the class `roll-c5-ci-tool-parity` opened. One `go mod
-        # download` of the module makes the cache entry and every later `go run`
-        # in this job is offline.
-        #
-        # THE VERSION IS READ, NOT WRITTEN. A literal here would be a third copy
-        # beside `generate.go`'s pin, and a drift between them is a gate that
-        # runs a different generator than the tree declares. The tree has
-        # exactly one source for it: `generate.go`.
-        run: |
-          version="$(grep -oE 'oapi-codegen/v2/cmd/oapi-codegen@[^ ]+' internal/api/generate.go | head -1 | sed 's/.*@//')"
-          if [ -z "$version" ]; then
-            echo "::error::generate.go names no oapi-codegen version to pre-seed" >&2
-            exit 1
-          fi
-          echo "pre-seeding oapi-codegen $version"
-          go mod download "github.com/oapi-codegen/oapi-codegen/v2@${version}"
+        # THERE IS NO VERSION HERE, and the absence is the point. The one copy
+        # lives in `go.mod`; a literal here would be a second pin beside it,
+        # and a drift between them is a gate running a different generator
+        # than the tree declares.
+        run: go mod download
       - name: redis-server, which the runtime session tests exec
         # `internal/httpapi`'s runtime session tests start a real `redis-server`
         # by EXECUTING THE BINARY rather than dialing a URL, on purpose: the tier
@@ -316,6 +309,13 @@ jobs:
         # `api.gen.go` matching `openapi/v1.yaml`, and it uses the module cache
         # offline — so a manifest that resolved differently is a manifest the
         # regeneration step would also have disagreed about.
+        #
+        # Re-read for the tools.go route, and the intent holds unchanged: go.mod
+        # now ALSO declares the generator (the blank import in tools.go, with
+        # its graph in go.sum), and neither `go mod download` above nor the
+        # in-module `go generate` rewrites the manifests — so this guard covers
+        # the tool's pin too. A bump of the generator is a committed go.mod
+        # change like any other, not something the gate does on the side.
         run: |
           git diff --exit-code -- go.mod go.sum \
             || { echo "bin/prime moved go.mod or go.sum — the build is no longer against the committed tree"; exit 1; }
