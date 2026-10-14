@@ -118,6 +118,135 @@ for pair in "Dockerfile:$image_go" "docker-compose.yml:$compose_go"; do
 done
 echo "image tag: Dockerfile and docker-compose.yml build on go $expected_prefix, the major.minor mise.toml pins as $pinned_go"
 
+step "the CI jobs install every tool this gate requires"
+# THE CHECK THAT KEEPS A GREEN GATE AND A RED CI FROM PARTING COMPANY.
+#
+# The failure this exists for had happened twice, in the same shape: a step added
+# a REQUIREMENT to the gate and the CI job that runs the gate was not taught to
+# PROVIDE it. `roll-c5-lint-parity` added `golangci-lint run` to this script (it
+# refuses with exit 127 without the binary) and CI's `prime` job — which installs
+# Go and redis-server and runs `bin/prime`, but never mise — exited 127. And
+# gateway's runtime session tests exec a real `redis-server` (see
+# `internal/httpapi/runtime_session_test.go`), which kit's shared `go` job did
+# not install, so `ci (kit) / go` failed on a missing apt package. Both were
+# found by a red CI run rather than by the gate, which is the whole objection: a
+# gate that is green locally and red in CI is a gate whose local green verified
+# nothing about the environment it claims to describe.
+#
+# SO THE REQUIREMENTS ARE DERIVED, NOT LISTED. Two sources, one per way a tool
+# reaches this gate:
+#
+#   * `command -v <tool>` in the gate scripts — the tools this gate REFUSES to
+#     run without. Today: `go` and `golangci-lint`.
+#   * `exec.LookPath("<binary>")` in `*_test.go` — the binaries the tests EXEC
+#     rather than dial. Today: `redis-server`.
+#
+# A hand-written list here would be the failure mode itself: the next tool added
+# to the gate would not be in it, and the check would stay green about it.
+# Reading the same source the gate reads means a new `command -v` guard turns
+# this step RED until `.github/workflows/ci.yml` installs the tool — which is the
+# point of putting it in the gate instead of in a review checklist.
+#
+# THE TWO JOBS ARE CHECKED DIFFERENTLY, because they provide tools differently.
+# Both run the suite, so both need the TEST binaries: the `prime` job installs
+# them itself (`bin/prime` runs `go test`), and the kit `ci` job names them in
+# its `with:` block for kit to install (`test-packages`), which is the seam
+# added in the same packet as this check. The gate TOOLS only reach `prime`,
+# because kit's `go` job runs its own `go test` and never calls `bin/prime`.
+#
+# COMMENTS ARE STRIPPED BEFORE THE SEARCH, and this is load-bearing rather than
+# tidiness: the `prime` job's own header comment NAMES `redis-server` while
+# explaining why the install exists, so a check that read the raw text would find
+# the name in the prose and pass on a job that had lost the install. Finding the
+# thing in the sentence that describes it is the red herring
+# `internal/api/stripbaseurl`'s check hit with its own header — a check whose
+# verdict is decided by the text describing the thing it checks is a check whose
+# verdict means nothing. `install` must also share a LINE with the tool, so a
+# step NAME that names the tool cannot satisfy the check on its own; `go` is the
+# one exception, satisfied by `actions/setup-go`, because that is how it is
+# installed.
+#
+# This is the shell-level form of the control the packet asked for. In CI the
+# step runs as part of `bin/prime` and fails NAMING the tool and the job, before
+# the `command -v` guard could exit 127 — so a requirement added to the gate
+# without its install reds the job a developer runs, in the same commit, rather
+# than the job only CI runs.
+
+# Read one job's block out of `.github/workflows/ci.yml`, comments stripped.
+# `want` is the job's key at two-space indent; the block ends at the next key at
+# that indent.
+ci_job_block() { # <job-key>
+  awk -v want="$1" '
+    $0 ~ "^  " want ":" { found = 1; next }
+    found && /^  [A-Za-z0-9_.-]+:/ { exit }
+    found { print }
+  ' .github/workflows/ci.yml | grep -vE '^[[:space:]]*#'
+}
+
+# Does this block install <tool>? `install` and the tool must share a line, so a
+# step name that merely mentions the tool cannot pass for its install.
+ci_provides() { # <block> <tool>
+  case "$2" in
+    go) printf '%s\n' "$1" | grep -qE 'uses:[[:space:]]*actions/setup-go' ;;
+    *) printf '%s\n' "$1" | grep -qE "install.*$2" ;;
+  esac
+}
+
+if [ ! -f .github/workflows/ci.yml ]; then
+  echo "bin/prime-go: .github/workflows/ci.yml is not here, so the job that runs" >&2
+  echo "  this gate cannot be checked against the tools it needs. A check that" >&2
+  echo "  cannot read its subject is not a check that passed." >&2
+  exit 1
+fi
+ci_job="$(ci_job_block ci)"
+prime_job="$(ci_job_block prime)"
+if [ -z "$ci_job" ] || [ -z "$prime_job" ]; then
+  echo "bin/prime-go: read an empty 'ci' or 'prime' job out of" >&2
+  echo "  .github/workflows/ci.yml. A job that was renamed or deleted is a job" >&2
+  echo "  this check can no longer see, and an empty block passes every test." >&2
+  exit 1
+fi
+
+# Derived, never listed — see the header comment above.
+gate_tools="$(grep -hoE 'command -v [A-Za-z0-9_.+-]+' bin/prime bin/prime-go | sed 's/.*command -v //' | sort -u)"
+test_binaries="$(grep -rhoE 'exec\.LookPath\("[^"]+"\)' ./cmd ./internal --include='*_test.go' | sed -n 's/.*exec\.LookPath("\([^"]*\)").*/\1/p' | sort -u)"
+if [ -z "$gate_tools" ] && [ -z "$test_binaries" ]; then
+  echo "bin/prime-go: read no required tools out of the gate or the tests, and a" >&2
+  echo "  requirement set of zero is a check that cannot fail. Either the gate" >&2
+  echo "  stopped guarding its tools or this reader stopped seeing them." >&2
+  exit 1
+fi
+
+missing=0
+for tool in $gate_tools; do
+  if ! ci_provides "$prime_job" "$tool"; then
+    echo "::error::the CI 'prime' job does not install '$tool', which bin/prime-go" >&2
+    echo "  refuses to run without (it exits 127). Add the install to" >&2
+    echo "  .github/workflows/ci.yml's 'prime' job in the same commit as the" >&2
+    echo "  requirement — a green gate and a red CI are the same defect twice." >&2
+    missing=1
+  fi
+done
+for tool in $test_binaries; do
+  if ! ci_provides "$prime_job" "$tool"; then
+    echo "::error::the CI 'prime' job does not install '$tool', which the Go tests" >&2
+    echo "  exec, so 'bin/prime' there is a red run on a missing apt package." >&2
+    missing=1
+  fi
+  if ! printf '%s\n' "$ci_job" | grep -qF -- "$tool" ||
+    ! printf '%s\n' "$ci_job" | grep -qF -- 'test-packages'; then
+    echo "::error::the CI 'ci (kit)' job does not hand kit a 'test-packages' value" >&2
+    echo "  naming '$tool'. kit's shared 'go' job runs the same Go tests, so the" >&2
+    echo "  tool must reach it too — add 'test-packages: $tool' to the 'ci' job's" >&2
+    echo "  'with:' block." >&2
+    missing=1
+  fi
+done
+[ "$missing" -eq 0 ] || exit 1
+gate_tools_flat="$(printf '%s' "$gate_tools" | tr '\n' ' ' | sed 's/ *$//')"
+test_binaries_flat="$(printf '%s' "$test_binaries" | tr '\n' ' ' | sed 's/ *$//')"
+echo "CI tools: 'prime' installs ${gate_tools_flat} ${test_binaries_flat}; 'ci (kit)' passes ${test_binaries_flat} to kit"
+
 step "the publish caller publishes the image and the chart"
 # THE PUBLISH LOOP'S SERVICE HALF, and the check exists because the loop was
 # open at this end. kit's `m84` landed the reusable half —
