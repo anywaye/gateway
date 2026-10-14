@@ -38,12 +38,19 @@ Files touched:
 | kit | `tests/validate.sh` | check that the `test-packages` seam is declared, opt-in, and installed *before* `test` |
 | kit | `README.md` | the input documented in the workflow table and the adoption steps |
 
-Commits:
+Commits, and **there are two kit variants — read §7.1 before acting**:
 
-- gateway `843bd6e` — `ci: install redis-server and golangci-lint where the gate
-  requires them, and fail naming the tool when absent`
+- gateway `a1fe4c5` — `ci: install redis-server and golangci-lint where the gate
+  requires them, and fail naming the tool when absent` (this commit also bumps
+  `kit.ref` to `fd383c9`; see §7.1)
+- kit `fd383c9` — `ci: let a caller hand the Go job apt packages its tests exec`
+  — **this is the variant on `kit@master`/`origin/master`**, pushed by the
+  external manager, workflow-only
 - kit `1f9804d` — `ci: a caller can name the apt packages its suite execs
-  (test-packages)`
+  (test-packages)` — the branch `roll/c5-ci-tool-parity` in
+  `/Users/kaka/Code/any/moon/wt/roll-c5-ci-tool-parity-kit`, which adds the
+  README documentation and the `tests/validate.sh` durability check the pushed
+  variant lacks (§7.1)
 
 ---
 
@@ -229,8 +236,9 @@ The new step is in that run (`exit 0` includes it):
 `CI tools: 'prime' installs go golangci-lint redis-server; 'ci (kit)' passes
 redis-server to kit`.
 
-**Kit gate is green for the new check, measured.** A filtered run of kit's own
-gate against this branch:
+**Kit gate is green for the new check, measured — on my branch, not on the
+pushed variant.** A filtered run of kit's own gate against
+`roll/c5-ci-tool-parity` (`1f9804d`, §7.1):
 
 ```
 $ KIT_PYTHON=<main-tree .venv> bash tests/validate.sh --static-only --only=test-packages
@@ -269,25 +277,22 @@ push."* I followed the contract and left the push to the manager. So the
 pushed-CI green is **outstanding**, and the packet should not be read as done
 until it is run.
 
-**Ordering matters and is easy to get wrong:** gateway's `ci` job calls kit at
-`@master`, so kit's change must be on `kit@master` before gateway's `ci (kit)`
-job can go green. Merge kit first.
+**Ordering is already part-satisfied:** gateway's `ci` job calls kit at
+`@master`, and kit `master`/`origin/master` already carries the `test-packages`
+seam (`fd383c9`, pushed by the external manager — see §7.1). So the kit side of
+`ci (kit) / go` should install `redis-server` on gateway's next push. What
+remains unverified is gateway's own branch, and the two verdicts the DoD asks to
+be pasted in the commit message.
 
-The manager's steps, in order:
+The manager's steps:
 
 ```sh
-# 1. kit first (its branch is the fix for ci (kit)/go)
-git -C /Users/kaka/Code/any/moon/wt/roll-c5-ci-tool-parity-kit \
-  push origin roll/c5-ci-tool-parity
-#    ... merge to master (manager's call) ...
-
-# 2. gateway
 git -C /Users/kaka/Code/any/moon/wt/roll-c5-ci-tool-parity \
   push origin roll/c5-ci-tool-parity
 
-# 3. the two verdicts, pasted into the commit message per the DoD
-gh run list  --repo cafaye/gateway --branch roll/c5-ci-tool-parity --limit 1
-gh run view  --repo cafaye/gateway <run-id> \
+# the two verdicts, pasted into the commit message per the DoD
+gh run list --repo cafaye/gateway --branch roll/c5-ci-tool-parity --limit 1
+gh run view --repo cafaye/gateway <run-id> \
   --json jobs --jq '.jobs[] | "\(.name) \(.conclusion)"'
 ```
 
@@ -302,23 +307,62 @@ step; both must red the named job.
 
 ## 7. Residual notes and honest limits
 
-- **A commit I did not author appeared under my changes.** Gateway's commit
-  `843bd6e` contains exactly the edits in this report, but its message is not
-  the one I wrote and its `Author`/date are the user's — something outside this
-  session committed the tree between my last edit and my `git commit`, which
-  then reported "nothing to commit". Its message does not carry the pushed-CI
-  verdicts the DoD wants; that is the manager's to amend when it runs §6. Kit's
-  commit `1f9804d` is mine. Worth knowing because if a second agent is also
-  working this packet, the tree may move under both of us.
-- **`gateway/kit.ref` is not bumped.** It pins a kit commit for local tooling
-  and the comment requires a ref that exists on `origin/master`; the kit fix is
-  not pushed, so bumping it here would break other clones. It does not affect
-  CI, which resolves kit at `@master`. `bin/dev pin` moves it once kit lands.
+### 7.1 There are two kit variants, and the one on `master` is thinner
+
+While this packet was being worked, an external process (the manager) landed its
+own `test-packages` seam directly on kit `master` and pushed it:
+
+```
+kit master == origin/master == fd383c9
+  .github/workflows/ci.reusable.yml only — no README change, no tests/validate.sh
+```
+
+My branch `roll/c5-ci-tool-parity` (kit worktree, commit `1f9804d`) is **not** an
+ancestor of that; it is the same seam plus three things the pushed variant does
+not have:
+
+1. **The input is documented** — the workflow table row and the adoption
+   section (the brief: *"update the file that documents them in the same
+   commit"*).
+2. **The `tests/validate.sh` check** that the seam stays declared, opt-in, and
+   installed *before* `test` — the durability the brief asked for, on the kit
+   side.
+3. **The value reaches the shell through `env:`**, not `${{ inputs.test-packages }}`
+   interpolated inside `run:`. Interpolating a caller input into a script body is
+   the template-injection surface zizmor flags and kit's own conventions avoid;
+   `fd383c9` uses the interpolation. It is a caller's own value and the callers
+   are trusted, so it is not a live hole today — it is the spelling kit's own
+   lint-args guard exists to keep out of the shape.
+
+Both variants work. **Recommendation:** if `fd383c9` is kept as the kit fix,
+port items 1–3 onto it in a follow-up (or merge `roll/c5-ci-tool-parity`), so
+the seam carries its documentation and its control. Gateway's `kit.ref` already
+points at `fd383c9`, chosen by the external process, so gateway's local tooling
+resolves the thinner variant regardless of which branch here is adopted.
+
+### 7.2 A commit I did not author appeared under my changes
+
+Gateway's `a1fe4c5` contains exactly the edits in this report, but its message
+is not the one I wrote and its `Author`/date are the user's — something outside
+this session committed (and later amended/re-hashed) the tree between my last
+edit and my `git commit`, which then reported "nothing to commit". That same
+process also committed kit `fd383c9` and edited `gateway/kit.ref`. Worth knowing
+because if a second agent is also working this packet, the tree can move under
+both of us; the hashes in §1 are the state at the time of writing.
+
+### 7.3 Smaller notes
+
 - **No `CHANGELOG.md` entry.** The prior packet in this stack
   (`roll-c5-lint-parity`) added none, and the AGENTS.md changelog rule is scoped
   to adding an endpoint. Flagged in case the manager wants one.
 - **`test-packages` is currently a Go-job-only seam by design.** If a second
-  language ever needs it, the step is copied into that job and `validate.sh`'s
-  check grows to match — the same shape `required-tier` already has across the
-  language jobs. I chose not to pre-copy it into eight jobs, because that
-  mechanism would have been larger than the problem the brief described.
+  language ever needs it, the step is copied into that job and — on my branch —
+  `validate.sh`'s check grows to match, the same shape `required-tier` already
+  has across the language jobs. I chose not to pre-copy it into eight jobs,
+  because that mechanism would have been larger than the problem the brief
+  described.
+- **The gateway `prime` job's lint install is only exercised by a runner.**
+  Locally the pin resolves through mise and `bin/prime-go` asserts the running
+  version against `mise.toml`, so a mismatch is loud; but the `curl | tar`
+  release URL and the `linux-amd64`/`arm64` asset names are unverified on a
+  runner (see §5).
