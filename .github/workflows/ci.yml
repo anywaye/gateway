@@ -108,6 +108,23 @@ jobs:
       # value arrives from this caller and is not in any tree. That is why it is
       # written out in full rather than inherited from a default.
       versions: '{"go":"1.26.1"}'
+      # The binaries the Go tests EXEC, handed to kit so its shared `go` job
+      # installs them before `go test ./...`.
+      #
+      # `internal/httpapi`'s runtime session tests start a real `redis-server` by
+      # executing the binary rather than dialing a URL, and they FAIL rather than
+      # skip when it is absent — so kit's `go` job, which ran `go test ./...` and
+      # installed nothing, was red on a missing apt package rather than on a
+      # defect. This is the general seam kit grew for exactly that: a caller names
+      # the binary its suite needs, and the shared job provides it. The same tool
+      # is installed directly in the `prime` job below, because `bin/prime` runs
+      # its own `go test` and never passes through kit.
+      #
+      # `bin/prime-go` asserts this line exists — the tool is derived from the
+      # tests' `exec.LookPath` calls, not from a list somebody maintains — so a
+      # test that starts execing a NEW binary reds the local gate until a value
+      # here and a matching `test-packages` in kit provide it.
+      test-packages: redis-server
 
   # ------------------------------------------------- the gate a developer runs
   # Done means `bin/prime` is the gate and it is the same command locally and in
@@ -170,6 +187,51 @@ jobs:
         # installed here. It is NOT the `redis (live tier)` job's service: that job
         # runs a different, URL-gated tier against a container.
         run: sudo apt-get update -qq && sudo apt-get install -y redis-server
+      - name: golangci-lint, the version mise.toml pins
+        # THE TOOL `bin/prime` NOW REFUSES WITHOUT, INSTALLED AT THE PIN.
+        #
+        # `roll-c5-lint-parity` added `golangci-lint run` to `bin/prime-go`, which
+        # exits 127 when the binary is not on PATH — the refusal working, not a
+        # defect. This job installed Go and redis-server and ran `bin/prime`, but
+        # it never ran mise, so the binary the local gate gets for free was absent
+        # and the step exited 127. The gate was right; the job had not been taught
+        # to provide what the gate now requires.
+        #
+        # The VERSION IS READ FROM `mise.toml`, not typed here, and that is the
+        # point rather than a flourish: a literal here would be a THIRD copy of
+        # the number beside mise.toml's pin and kit's `golangci-lint-action`
+        # `version:`, and `bin/prime-go` already compares the running binary
+        # against mise.toml — so a literal that drifted would red every run with a
+        # version message whose fix is in a file that is not wrong. One pin, read
+        # where it lives.
+        #
+        # The RELEASE ARCHIVE is pinned by version, never the installer script at
+        # a moving ref: the linter version is what decides whether the tree is
+        # lint-clean, and an installer fetched from HEAD is that number with a
+        # fourth home. `bin/prime-go`'s version assertion is what proves this step
+        # installed the pin rather than something adjacent.
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^"golangci-lint" *= *"\(.*\)"/\1/p' mise.toml)"
+          if [ -z "$version" ]; then
+            echo "::error::mise.toml pins no golangci-lint, and bin/prime-go refuses"
+            echo "::error::to run without the binary. Restore the pin rather than"
+            echo "::error::installing whatever GitHub calls current."
+            exit 1
+          fi
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) arch=amd64 ;;
+            aarch64 | arm64) arch=arm64 ;;
+          esac
+          base="https://github.com/golangci/golangci-lint/releases/download/v${version}"
+          archive="golangci-lint-${version}-linux-${arch}.tar.gz"
+          curl -sSfL "$base/$archive" | tar -xz -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/golangci-lint-${version}-linux-${arch}/golangci-lint" "$HOME/.local/bin/golangci-lint"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          golangci-lint --version
       - name: bin/prime
         run: bin/prime
       - name: go.mod and go.sum are untouched
