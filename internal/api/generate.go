@@ -5,10 +5,16 @@ package api
 //
 // # The pin
 //
-// oapi-codegen v2.8.0, pinned to an exact version on the line below rather than
-// in oapi-codegen.yaml. `go run <module>@<version>` resolves in module-aware
-// mode and ignores this module's go.mod, so the generator is a build tool
-// invoked on purpose and cannot be moved by `go get`.
+// oapi-codegen v2.8.0, pinned in `go.mod` through the blank import in
+// `tools.go` — not on the `//go:generate` line below and not in
+// oapi-codegen.yaml. The line runs `go run <module>` with no `@<version>`,
+// so the generator resolves inside this module (whose graph `go mod tidy`
+// recorded and `go mod download` fills) rather than in a throwaway module
+// context whose transitive graph lives nowhere in this tree. A `go run
+// <module>@<version>` ignores this module's go.mod, so it cannot be moved by
+// `go get` — which is exactly why it also cannot run on a machine whose
+// module cache never saw it: a fresh CI runner. The one copy of the version
+// is the `require` in go.mod; read it there, never retype it here.
 //
 // # The document is this repository's own
 //
@@ -32,5 +38,5 @@ package api
 // measuring. Read that command's own header before touching `api.gen.go`.
 var _ = struct{}{}
 
-//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 --config oapi-codegen.yaml -generate models,chi-server ../../openapi/v1.yaml
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen --config oapi-codegen.yaml -generate models,chi-server ../../openapi/v1.yaml
 //go:generate go run ./stripbaseurl

@@ -408,8 +408,7 @@ external:
         unmet: >-
           bin/prime-go's "the generated server matches the OpenAPI document"
           step exits 1 with "regeneration FAILED" and names
-          `go mod download github.com/oapi-codegen/oapi-codegen/v2` as the one
-          command that fixes a cold machine
+          `go mod download` as the one command that fixes a cold machine
   # NOT required, and named so nobody goes going for them:
   #
   #   * no credential, of any kind. The suite is hermetic by construction: the
