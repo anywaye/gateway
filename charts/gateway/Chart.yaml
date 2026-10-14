@@ -11,5 +11,15 @@ type: application
 # commits. Neither is ever `latest` — a floating tag is a deploy that changes
 # when somebody else pushes, and DEPLOYMENT.md's rule is that everything that
 # can drift from Git must not.
+#
+# THE IMAGE ITSELF IS NAMED BY `image.digest`, NOT BY THAT TAG, and the two
+# names answer two questions. The tag is what an operator reads; the digest
+# is what the pod pulls, and it is the one that changes per build — the tag
+# is overwritten on every master push, so a chart pinned by tag rendered an
+# unchanged Deployment after every build and Argo never rolled the box
+# (measured: the two-digest gap REPORT-roll-c5-image-digest.md records).
+# `chart.reusable.yml` writes the digest into values.yaml before `helm push`,
+# so the pushed chart names the image just built; the chart VERSION is
+# unchanged, so the substrate Application's targetRevision still resolves.
 version: 0.1.0
 appVersion: "0.1.0"

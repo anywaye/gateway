@@ -10,6 +10,31 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
+- **The chart pins the image by DIGEST, not by tag — a new build is now a
+  textual diff Argo rolls.** Measured on the live box: the registry's
+  `ghcr.io/cafaye/gateway:0.1.0` held `sha256:c264…37165` (the merged Redis
+  AUTH fix) while the node ran `sha256:8e60…e79b`, six hours older, and
+  nothing closed the gap. Both reasons were structural: the `0.1.0` tag is
+  overwritten on every master push (`publish.reusable.yml` reads `Chart.yaml`'s
+  `appVersion` and hands it to the image build — a mutable release tag is
+  `latest` with a better-sounding name), and `image.tag` was a hardcoded
+  constant here, so the rendered Deployment was textually identical before and
+  after the build: a `kubectl patch` refresh reported `Synced` with no diff,
+  and `imagePullPolicy: IfNotPresent` re-served the node's stale copy on every
+  restart. `charts/gateway/values.yaml` gains `image.digest`
+  (`sha256:c264705049277625458a0f2d2b56fcac4a8801db28f3068627d3394df5c237165`,
+  the last published image) and `templates/deployment.yaml` renders
+  `{{ .Values.image.repository }}@{{ .Values.image.digest }}` — an immutable
+  name, so the render changes when the image changes and the box rolls.
+  `image.tag` stays, equal to `appVersion`, as the human-readable half (kit's
+  publish seam asserts that pair and `bin/chart-test` renders it beside the
+  digest); `pullPolicy` is unchanged. `bin/prime-go` now refuses a chart whose
+  `image.digest` is empty or not `sha256:<64 hex>`, the way it already refuses
+  a hostless `image.repository`, and `bin/chart-test`'s section 4 renders the
+  committed digest, proves a changed digest changes the rendered Deployment
+  text, refuses an absent digest before asserting on it, and shows what an
+  empty or malformed one renders (`repository@`).
+
 - **`openapi/v1.yaml`'s `Problem.status` is a plain `type: integer`, with no
   numeric `enum`.** `cafe contract lint` refuses numeric enums (the
   Kubernetes API convention), and gateway was the one service in the fleet
