@@ -206,7 +206,25 @@ env:
   # It carries upstream `token`s, so it is configuration with credentials in
   # it — the same shape `docker-compose.yml` has always carried it. Moving it
   # to the secret below is a one-line change when a packet wants it.
-  ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"http://pantry:8080","public":true},"/v1/pantry-writes":{"baseUrl":"http://pantry:8080","principal":["sub"]}}'
+  # THE ORIGIN IS THE OPERATED REGISTRY, AND IT IS NOT IN THIS CLUSTER.
+  # `http://pantry:8080` was an in-cluster name for a service a customer's box
+  # must never run: pantry is Cafaye-proprietary and its licence says it "runs on
+  # Cafaye infrastructure … the box pattern applies: closed code, public HTTPS
+  # endpoint". The live consequence was a public 503 —
+  #
+  #   GET https://api.cafaye.com/v1/pantry = 503 "the service this request needs
+  #   could not be reached"
+  #
+  # — because gateway published two routes to a service the substrate does not
+  # (and must not) deploy. `cafaye/cafe` already names the right origin:
+  # `internal/resolve/pantry.go:94` and `internal/publish/publish.go:461` both
+  # read "BaseURL is pantry's origin, e.g. https://pantry.cafaye.com", and
+  # `CAF_PANTRY_URL` is the environment variable a `caf` caller sets. This value
+  # is that same origin, in the one place gateway reads it.
+  #
+  # It is also the `aud` the assertion is minted with, so pantry's own
+  # `PANTRY_AUDIENCE` must equal it — the pairing the note further down states.
+  ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"https://pantry.cafaye.com","public":true},"/v1/pantry-writes":{"baseUrl":"https://pantry.cafaye.com","principal":["sub"]}}'
   # How long a minted principal assertion is good for, in milliseconds.
   # 120000 is the mechanism's default, restated here so the launch value sits
   # next to the table that requires it. Refused above 600000 — pantry's own
@@ -262,8 +280,8 @@ secrets:
   # The key inside it holding the PKCS#8 PEM. `openssl genpkey -algorithm RSA
   # -pkeyopt rsa_keygen_bits:2048` writes one; the public half goes to pantry
   # out of band as its verifier key, and PANTRY_AUDIENCE there must equal the
-  # origin ROUTE_TABLE above names (`http://pantry:8080`) — pantry refuses any
-  # other `aud`.
+  # origin ROUTE_TABLE above names (`https://pantry.cafaye.com`) — pantry
+  # refuses any other `aud`.
   assertionKeySecretKey: ASSERTION_SIGNING_KEY
 
 resources:

@@ -180,8 +180,42 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			if got := decoded.Claims["aud"]; got != writeRoute.BaseURL {
 				t.Errorf("the minted assertion is bound to aud=%v, want the write entry's origin %q", got, writeRoute.BaseURL)
 			}
-			if got := decoded.Claims["aud"]; got != "http://pantry:8080" {
-				t.Errorf("the minted assertion is bound to aud=%v, want pantry's in-cluster origin http://pantry:8080 — pantry's verifier demands aud == its own origin", got)
+			// AND THE ORIGIN IS AN OPERATED ONE, NOT AN IN-CLUSTER NAME. The
+			// assertion above proves the aud equals the table's own entry; this
+			// one proves the entry names a service that EXISTS, which is the
+			// property the shipped table got wrong:
+			//
+			//   GET https://api.cafaye.com/v1/pantry = 503 "the service this
+			//   request needs could not be reached"
+			//
+			// because `http://pantry:8080` was an in-cluster name for a service
+			// the substrate does not — and must not — deploy: pantry is
+			// Cafaye-proprietary and runs on Cafaye infrastructure. The check is
+			// the SHAPE (an https origin with a public host), not the literal
+			// string, so a second copy of the origin cannot drift here the way
+			// this one did.
+			// AND THE TWO SHIPPED TABLES ARE ALLOWED TO DIFFER, BECAUSE THE
+			// TWO STACKS ARE DIFFERENT STACKS.
+			//
+			//   * `docker-compose.yml` is the LOCAL stack, where pantry runs in
+			//     the same compose network — `http://pantry:8080` is where it
+			//     is, and naming anything else would be wrong there.
+			//   * `charts/gateway/values.yaml` is what a BOX deploys, and a
+			//     box must never run pantry: it is Cafaye-proprietary and "runs
+			//     on Cafaye infrastructure … the box pattern applies: closed
+			//     code, public HTTPS endpoint". An in-cluster name in the chart
+			//     is a route to a service that does not exist, which is the live
+			//     503 this check was written from.
+			//
+			// So the deployed chart is held to the public-origin SHAPE (an
+			// https origin with a public host, never a cluster-local name) and
+			// the local stack is not — while the assertion above, that the aud
+			// equals the table's own entry, holds for both.
+			if strings.Contains(file, "charts/") {
+				aud, _ := decoded.Claims["aud"].(string)
+				if !strings.HasPrefix(aud, "https://") || strings.Contains(aud, ".svc.cluster.local") || !strings.Contains(aud, ".") {
+					t.Errorf("the DEPLOYED chart mints aud=%q, which is not a public https origin — a box reaches the operated registry over HTTPS, so an in-cluster name here is a route to a service that does not exist (the live 503: GET https://api.cafaye.com/v1/pantry)", aud)
+				}
 			}
 
 			readRoute, ok := ResolveRoute(table, "/v1/pantry/projects")
