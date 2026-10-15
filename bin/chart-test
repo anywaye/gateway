@@ -26,22 +26,27 @@
 #      collide with the issuer: operator annotations render beside it, and an
 #      explicit operator `cert-manager.io/cluster-issuer` wins over the value
 #      (a duplicate key is invalid YAML, so one of them must).
-#   4. THE DEPLOYMENT PULLS THE PUBLISHED IMAGE, NAMED BY DIGEST. The rendered
-#      container image is `<published>@<digest>` — the digest read from the
-#      same values.yaml the Deployment renders — and a CHANGED digest changes
-#      the rendered text, which is the property Argo's diff reads. The
-#      measured defect this replaced: the chart pinned the image by TAG
-#      (`repository:tag`), the tag is overwritten on every master push, so the
-#      rendered string was identical before and after a build, Argo reported
-#      `Synced` with no rollout, and `imagePullPolicy: IfNotPresent` kept the
-#      node on the six-hour-old image (REPORT-roll-c5-image-digest.md carries
-#      the two digests). THE RED CONTROL: an empty or malformed digest renders
-#      a reference no registry answers (`repository@`, `repository@nonsense`),
-#      and a values.yaml with NO digest is refused HERE before anything
-#      asserts on it — an assertion would otherwise match the broken render
-#      with an empty digest, which is exactly how a check passes because the
-#      field is absent. The same absence and malformation are refused by
-#      `bin/prime-go` statically, the way the host check above is.
+#   4. THE DEPLOYMENT PULLS THE PUBLISHED IMAGE, AND IT RENDERS TWO WAYS. A
+#      committed digest renders `<published>@sha256:<64 hex>` — the digest
+#      read from the same values.yaml the Deployment renders — and a CHANGED
+#      digest changes the rendered text, which is the property Argo's diff
+#      reads. NO digest renders `<published>:<tag>`: the arm a chart that has
+#      not published yet takes, and the arm kit's own `pin the image by
+#      digest` inserts the field ahead of. The measured defect this replaced:
+#      the chart pinned the image by TAG, the tag is overwritten on every
+#      master push, so the rendered string was identical before and after a
+#      build, Argo reported `Synced` with no rollout, and
+#      `imagePullPolicy: IfNotPresent` kept the node on the six-hour-old image
+#      (REPORT-roll-c5-image-digest.md carries the two digests). A MALFORMED
+#      digest — non-empty, not `sha256:<64 lowercase hex>` — is REFUSED: the
+#      render fails and names `image.digest`, the same shape kit's pin step
+#      refuses before it writes the field and `bin/prime-go` refuses
+#      statically. `repository@not-a-digest` renders nothing a registry
+#      answers while looking like a pin, so it is never a render this chart
+#      produces. A values.yaml with NO digest is refused HERE before anything
+#      asserts on it — an assertion would otherwise match a render with an
+#      empty digest, which is exactly how a check passes because the field is
+#      absent.
 #   5. `helm lint` passes.
 #
 # set -euo pipefail is the whole mechanism — no error handling to forget.
@@ -143,7 +148,7 @@ assert "an explicit operator issuer wins" \
 assert_absent "the value-derived issuer does not duplicate it" \
   "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
 
-note "4. the Deployment pulls the image the publish loop pushes, NAMED BY DIGEST"
+note "4. the Deployment pulls the published image — by digest, or by tag"
 # DERIVED, not typed: kit's image workflow pushes to ghcr.io/<github.repository>
 # and takes no input for the name, so the expected path comes from this
 # repository's own go.mod module path. A hostless value is the measured failure.
@@ -195,17 +200,33 @@ assert "the control renders a hostless repository at the digest" \
 assert_absent "the control does not render the published path" \
   "image: \"$published@" "$doc"
 
-# THE RED CONTROL, at the render level: an empty or malformed digest renders a
-# reference no registry answers. The template cannot refuse a value it is
-# handed — that refusal is bin/prime-go's static check, and this is the half
-# that shows what the refusal is about: a chart that would render these
-# shapes is a pod in image-pull failure with nothing naming the field.
+# THE OTHER RENDER: no digest falls back to the committed tag. A chart that
+# has not published yet renders `<published>:<tag>` — the arm kit's `pin the
+# image by digest` inserts the field ahead of — and, unlike an unconditional
+# `repository@`, that is a name a registry answers.
 doc=$(deployment_doc --set image.digest="")
-assert "an empty digest renders the broken reference 'repository@'" \
+assert "no digest falls back to the committed tag" \
+  "image: \"$published:$app_version\"" "$doc"
+assert_absent "no digest does NOT render a bare 'repository@'" \
   "image: \"$published@\"" "$doc"
-doc=$(deployment_doc --set image.digest="not-a-digest")
-assert "a malformed digest renders exactly what it was given" \
-  "image: \"$published@not-a-digest\"" "$doc"
+
+# MALFORMED IS REFUSED, NOT RENDERED. A template cannot reject the value at
+# the source the way kit's pin step and bin/prime-go do, so it refuses the
+# RENDER instead, naming the field. This is the red control: the render must
+# FAIL, and a render that succeeded would be a chart shipping
+# `repository@nonsense` — the defect the kit step exists to prevent. The three
+# shapes are the three ways a digest goes wrong: not a digest at all, a
+# `sha256:` prefix with the wrong length, and the right length with a
+# non-hex character.
+for shape in not-a-digest sha256:abc "sha256:$(printf '%063d' 0)z"; do
+  if helm template gateway "$CHART" --set "image.digest=$shape" >/dev/null 2>&1; then
+    bad "a malformed digest is refused — '$shape' rendered instead"
+  else
+    ok "a malformed digest is refused: $shape"
+  fi
+  err="$(helm template gateway "$CHART" --set "image.digest=$shape" 2>&1 || true)"
+  assert "the refusal for '$shape' names image.digest" "image.digest" "$err"
+done
 
 note "5. helm lint"
 if helm lint "$CHART" >/dev/null 2>&1; then

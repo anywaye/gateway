@@ -53,26 +53,29 @@ image:
   # restart. A mutable release tag is `latest` with a better-sounding name.
   #
   # A DIGEST cannot move. The Deployment renders
-  # `repository@digest`, so a new build is a textual diff Argo will actually
-  # sync, and the pull policy no longer matters: the name names the bytes.
+  # `repository@digest` whenever this field is set, and `repository:tag` when
+  # it is not, so a new build is a textual diff Argo will actually sync, and
+  # the pull policy no longer matters: the name names the bytes.
   #
   # WHO WRITES THIS FIELD: `chart.reusable.yml`, in the publish run, from the
-  # digest of the image it just built — so the OCI chart that lands in
+  # digest of the image it just built (`publish.reusable.yml` hands it the
+  # image job's build output) — so the OCI chart that lands in
   # `oci://ghcr.io/cafaye/charts/gateway:0.1.0` names the image the registry
   # holds beside it. The value committed here is the LAST PUBLISHED image,
   # which is what a `push: false` run packages and what `helm template` on a
   # fresh clone renders. `bin/prime-go` refuses this file with an empty or
-  # malformed digest — a chart that renders `repository@` is a pod in
-  # image-pull failure with nothing naming this field.
+  # malformed digest: the committed value is the pin a fresh clone renders,
+  # so it must be real, and a chart that rendered `repository@nonsense` is a
+  # pod in image-pull failure with nothing naming this field.
   #
   # THE COMMITTED VALUE, AND HOW FAST IT AGES. It is the digest
-  # `ghcr.io/cafaye/gateway:0.1.0` resolved to when this packet was written,
-  # read with `docker buildx imagetools inspect` and quoted in
-  # REPORT-roll-c5-image-digest.md; it is the image built from master
-  # `f8a5caa`. The brief's registry digest was `sha256:c264…37165` (master
-  # `d7d8a68`) — so BETWEEN THE BRIEF AND THIS COMMIT THE TAG MOVED AGAIN,
-  # and no one but a manual re-resolve noticed: that is the defect this field
-  # exists to close, in its own commit. The staleness is expected rather than
+  # `ghcr.io/cafaye/gateway:0.1.0` held when this packet was written, read
+  # from the registry with `docker buildx imagetools inspect` and quoted in
+  # the brief. The value committed by the previous packet
+  # (`roll-c5-image-digest`) was `sha256:9edaa9ce…` (master `f8a5caa`) — so
+  # BETWEEN THE TWO PACKETS THE TAG MOVED AGAIN, and no one but a manual
+  # re-resolve noticed: that is the defect this field exists to close,
+  # restated by its own staleness. The staleness is expected rather than
   # fixed by hand: the publish run overwrites this line with the digest it
   # just built, so the OCI chart always names the bytes beside it, and this
   # committed value is the floor a `push: false` run and a fresh clone render.
@@ -80,7 +83,7 @@ image:
   # The chart VERSION does not move (Chart.yaml's `version` is the OCI tag
   # and the substrate's Application targetRevision), so the chart's content
   # changes under a fixed tag and the diff fires on refresh.
-  digest: "sha256:9edaa9ce56ad12add32c67632ca8d23c6642c265308a404c7152ca90f1f5e3b1"
+  digest: "sha256:33f4773a2d10b3a2eaf046a5d80c5955a4743512845e68833f28735a889e164d"
   # A value, never `latest`: a floating tag is a deploy that changes when
   # somebody else pushes. Kept, and kept EQUAL to Chart.yaml's appVersion —
   # kit's publish seam asserts the pair — because the tag is the

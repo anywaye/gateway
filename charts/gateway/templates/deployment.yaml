@@ -19,20 +19,47 @@ spec:
     spec:
       containers:
         - name: gateway
-          # THE IMAGE IS NAMED BY DIGEST, NOT BY TAG — the measured defect,
-          # on the live box: the registry's `ghcr.io/cafaye/gateway:0.1.0`
-          # held sha256:c264…37165 (the Redis AUTH fix) while the node ran
-          # sha256:8e60…e79b, six hours older. `repository:tag` renders a
-          # string that is IDENTICAL before and after a new build — the tag
-          # is overwritten on every master push — so Argo's diff reported
-          # `Synced`, rolled nothing, and `IfNotPresent` re-served the node's
-          # stale copy on every restart. A digest cannot move, so the
-          # rendered text changes when the image changes and Argo rolls the
-          # Deployment. `pullPolicy` stays `IfNotPresent`: the digest already
-          # guarantees the content, and the operator-readable tag stays in
-          # values.yaml beside this reference (values.yaml's `image` block
-          # carries the measured evidence).
-          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          # THE IMAGE IS NAMED BY DIGEST WHEN THERE IS ONE, AND BY TAG WHEN
+          # THERE IS NOT — a two-render conditional, and each arm is a
+          # measured failure avoided.
+          #
+          # `repository@digest` is the arm a PUBLISHED chart takes, and the
+          # defect it closes was measured on the live box: the registry's
+          # `ghcr.io/cafaye/gateway:0.1.0` held sha256:c264…37165 (the Redis
+          # AUTH fix) while the node ran sha256:8e60…e79b, six hours older.
+          # `repository:tag` renders a string IDENTICAL before and after a new
+          # build — the tag is overwritten on every master push — so Argo's
+          # diff reported `Synced`, rolled nothing, and `IfNotPresent`
+          # re-served the node's stale copy on every restart. A digest cannot
+          # move, so the rendered text changes when the image changes and Argo
+          # rolls the Deployment. `chart.reusable.yml` writes this value on
+          # every publish, and the committed digest in values.yaml is what a
+          # fresh clone renders.
+          #
+          # `repository:tag` is the arm an UNPUBLISHED chart takes. An empty
+          # digest interpolated unconditionally would render `repository@` —
+          # a reference no registry answers and a pod stuck in image-pull —
+          # so absence falls back to the tag rather than stamp a broken name.
+          # Kit's `pin the image by digest` INSERTS the field on a chart that
+          # has not adopted it yet, so this arm is also what the first publish
+          # renders before there is a digest to write.
+          #
+          # A MALFORMED DIGEST IS REFUSED, NOT RENDERED. The kit step refuses
+          # anything that is not `sha256:<64 lowercase hex>` before it writes
+          # the field, and `bin/prime-go` refuses it statically at the gate;
+          # the template mirrors both rather than render `repository@nonsense`,
+          # which LOOKS like a pin and fails at image-pull with nothing naming
+          # the field. Absent is legitimate — it falls back to the tag;
+          # malformed never is.
+          {{- $digest := .Values.image.digest | default "" }}
+          {{- if $digest }}
+          {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) }}
+          {{- fail (printf "image.digest is %q, which is not sha256:<64 lowercase hex>. A malformed digest renders a reference no registry answers, so the chart refuses it the way the publish step does. Drop the key to render the committed tag, or set a real sha256 digest." $digest) }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}@{{ $digest }}"
+          {{- else }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

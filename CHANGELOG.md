@@ -57,6 +57,23 @@ dependency versions follow npm's own rules.
   text, refuses an absent digest before asserting on it, and shows what an
   empty or malformed one renders (`repository@`).
 
+- **The digest render is now CONDITIONAL: `repository@digest` when a digest is
+  set, `repository:tag` when it is not, and a malformed digest is refused.**
+  The unconditional `repository@digest` above made an absent digest render
+  `repository@` — a pod in image-pull failure — so the field could never be
+  missing, even on a chart that had not published yet. `templates/deployment.yaml`
+  now fails back to the committed tag on absence — the arm kit's `pin the image
+  by digest` inserts the field ahead of (`chart.reusable.yml`: "INSERT it, for a
+  chart that has not adopted the field yet") — and REFUSES a non-empty value
+  that is not `sha256:<64 lowercase hex>`, the same shape the kit step and
+  `bin/prime-go` refuse, rather than render `repository@nonsense`. The
+  committed value moves to the registry's current
+  `sha256:33f4773a2d10b3a2eaf046a5d80c5955a4743512845e68833f28735a889e164d`
+  (the previous `sha256:9edaa9ce…` had already been overwritten again — the
+  defect, restated). `bin/chart-test`'s section 4 now asserts BOTH renders and
+  the refusal; `image.repository`, `image.tag`, `pullPolicy` and `bin/prime-go`
+  are unchanged.
+
 - **`openapi/v1.yaml`'s `Problem.status` is a plain `type: integer`, with no
   numeric `enum`.** `cafe contract lint` refuses numeric enums (the
   Kubernetes API convention), and gateway was the one service in the fleet
