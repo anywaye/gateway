@@ -83,7 +83,7 @@ image:
   # The chart VERSION does not move (Chart.yaml's `version` is the OCI tag
   # and the substrate's Application targetRevision), so the chart's content
   # changes under a fixed tag and the diff fires on refresh.
-  digest: "sha256:33f4773a2d10b3a2eaf046a5d80c5955a4743512845e68833f28735a889e164d"
+  digest: "sha256:451d334e3e5e46f00032998be745a6a582b2b356de78b461ed565da8691a250b"
   # A value, never `latest`: a floating tag is a deploy that changes when
   # somebody else pushes. Kept, and kept EQUAL to Chart.yaml's appVersion —
   # kit's publish seam asserts the pair — because the tag is the
