@@ -176,6 +176,22 @@ dependencies:
     version: ^0.1.0
     required: true
 
+env:
+  - name: PORT
+    required: false
+    default: "8080"
+    secret: false
+    description: "Listen port."
+  - name: IDENTITY_URL
+    required: false
+    default: "http://localhost:8080"
+    secret: false
+    description: "Identity base URL."
+  - name: REDIS_URL
+    required: false
+    secret: true
+    description: "Redis for counters/sessions."
+
 repository:
   # The GitHub repository was renamed guard -> gateway, so this URL is no
   # longer "deliberately stale": the old one redirects, and this one is where
