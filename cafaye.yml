@@ -198,7 +198,7 @@ repository:
   # the bytes actually live. `caf dev` and `pantry` read this field.
   url: git@github.com:cafaye/gateway.git
   defaultBranch: master
-  visibility: public
+  visibility: private
 
 owner:
   team: gateway
