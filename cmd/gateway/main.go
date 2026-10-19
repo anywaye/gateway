@@ -186,7 +186,12 @@ func run() error {
 		log.Printf("gateway: telemetry is off (%s)", reason)
 	}
 
+	httpapi.InitErrorReporting()
+
 	handler, err := httpapi.New(config.Options)
+	if err == nil {
+		handler = httpapi.RecoverMiddleware(handler)
+	}
 	if err != nil {
 		return err
 	}

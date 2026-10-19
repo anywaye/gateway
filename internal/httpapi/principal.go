@@ -35,6 +35,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"encoding/json"
 	"net/http"
 
@@ -68,6 +69,7 @@ func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 		// the check is here because "unreachable" is a claim about code in another
 		// file and this file is what a caller reads when it is wrong. A `200` with
 		// a null body would be the answer nobody wants to debug.
+		CaptureError(fmt.Errorf("principal: unexpected nil principal"), r)
 		writeProblem(w, r, Problem{
 			Status: http.StatusInternalServerError,
 			Code:   "internal_error",
@@ -92,6 +94,7 @@ func writePrincipal(w http.ResponseWriter, r *http.Request, principal *auth.Prin
 		// Only reachable if a claim carried a value `encoding/json` refuses, which
 		// cannot happen for a payload that parsed. A `500` with the v0 envelope is
 		// the honest answer for a body that could not be built.
+		CaptureError(fmt.Errorf("principal: render failed"), r)
 		writeRawJSON(w, r, http.StatusInternalServerError, `{"error":"internal_error","message":"unexpected server error"}`)
 		return
 	}
