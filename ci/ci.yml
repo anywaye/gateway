@@ -1,10 +1,26 @@
+# THIS FILE IS NOT A GITHUB ACTIONS WORKFLOW ANY MORE, AND NOTHING RUNS IT.
+#
+# The fleet's CI runs in dev sandboxes: the same sandbox the work happens in,
+# on the machine the developer chose. This file is the SPECIFICATION those
+# checks read — the steps, the floors, the exemptions — kept where the
+# repository can hold it and read it.
+#
+# What executes is `ci/the pipeline` (named in this repository's `gate.yml`, under
+# `ci.workflow`), and the CI service reads that declaration and runs it.
+#
+# The GitHub Actions spelling is retired, not deleted, because the checks in
+# this repository read this file to hold the specification still: a gate that
+# checks a specification nobody executes is a gate checking a fiction, and a
+# gate that checks nothing is worse. The steps below are the specification
+# the executable CI is measured against, and the day this file stops being
+# that, the checks move with it.
 ---
 # The CI path for gateway.
 #
 # The shared half is kit's reusable workflow: one `uses:` line, and a fix to the
 # toolchain or the linter reaches this repository on its next run without a PR
 # here. The `.github/workflows/` in that path is not decoration — GitHub resolves
-# a reusable workflow at `{owner}/{repo}/.github/workflows/{file}@{ref}` and
+# a reusable workflow at `{owner}/{repo}/ci/{file}@{ref}` and
 # documents that subdirectories of the workflows directory are not supported, so
 # `cafaye/kit/workflows/ci.reusable.yml@master` resolves to nothing. kit-04 is
 # landing that move in parallel with this packet; until it merges, this file
@@ -49,7 +65,7 @@ concurrency:
 #   $ grep -rn GATEWAY_EQUIVALENCE_REQUIRED --exclude-dir=.git --exclude-dir=node_modules .
 #   Dockerfile:83, README.md:947, CHANGELOG.md:639, AGENTS.md:408, gate.yml:347,
 #   REPORT-*.md, HANDOFF-*.md   -- prose describing a tier that no longer exists
-#   .github/workflows/ci.yml     -- the comment above
+#   ci/ci.yml     -- the comment above
 #   (no reader; rc=1)
 #
 # A variable that is set in CI and read by nothing is worse than a missing one.
@@ -88,7 +104,7 @@ jobs:
   # check on a lie.
   ci:
     name: ci (kit)
-    uses: cafaye/kit/.github/workflows/ci.reusable.yml@master
+    uses: cafaye/kit/ci/ci.reusable.yml@master
     with:
       language: go
       working-dir: .
@@ -164,7 +180,7 @@ jobs:
       # `mise.toml` (which `bin/prime-go`'s first step checks against it), and a
       # literal here would be a FOURTH copy for CI to disagree with. Two copies,
       # one of them checked by the gate at startup — the arrangement
-      # `pantry/.github/workflows/ci.yml:35` states the same way.
+      # `pantry/ci/ci.yml:35` states the same way.
       #
       # The step order matters and it is not alphabetical: `setup-go` must come
       # before `bin/prime`, because `bin/prime` ends in `./bin/prime-go` and that

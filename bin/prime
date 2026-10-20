@@ -19,7 +19,7 @@
 # IT IS STILL A SEPARATE FILE rather than a symlink to `bin/prime-go`, and that is
 # a decision rather than an accident. `gate.yml` declares `entrypoint: bin/prime`
 # and `ci.invokes: [bin/prime]`, and the checker reads both textually against
-# `.github/workflows/ci.yml` — so the name is a contract with the fleet, and
+# `ci/ci.yml` — so the name is a contract with the fleet, and
 # changing it would mean changing three other files this commit does not own.
 # A developer running `./bin/prime-go` directly still gets the tier; a developer
 # running `bin/prime` gets the tier plus the final line the gate's `ok` proof

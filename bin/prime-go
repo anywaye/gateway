@@ -144,7 +144,7 @@ step "the CI jobs install every tool this gate requires"
 # A hand-written list here would be the failure mode itself: the next tool added
 # to the gate would not be in it, and the check would stay green about it.
 # Reading the same source the gate reads means a new `command -v` guard turns
-# this step RED until `.github/workflows/ci.yml` installs the tool — which is the
+# this step RED until `ci/ci.yml` installs the tool — which is the
 # point of putting it in the gate instead of in a review checklist.
 #
 # THE TWO JOBS ARE CHECKED DIFFERENTLY, because they provide tools differently.
@@ -172,7 +172,7 @@ step "the CI jobs install every tool this gate requires"
 # without its install reds the job a developer runs, in the same commit, rather
 # than the job only CI runs.
 
-# Read one job's block out of `.github/workflows/ci.yml`, comments stripped.
+# Read one job's block out of `ci/ci.yml`, comments stripped.
 # `want` is the job's key at two-space indent; the block ends at the next key at
 # that indent.
 ci_job_block() { # <job-key>
@@ -180,7 +180,7 @@ ci_job_block() { # <job-key>
     $0 ~ "^  " want ":" { found = 1; next }
     found && /^  [A-Za-z0-9_.-]+:/ { exit }
     found { print }
-  ' .github/workflows/ci.yml | grep -vE '^[[:space:]]*#'
+  ' ci/ci.yml | grep -vE '^[[:space:]]*#'
 }
 
 # Does this block install <tool>? `install` and the tool must share a line, so a
@@ -192,8 +192,8 @@ ci_provides() { # <block> <tool>
   esac
 }
 
-if [ ! -f .github/workflows/ci.yml ]; then
-  echo "bin/prime-go: .github/workflows/ci.yml is not here, so the job that runs" >&2
+if [ ! -f ci/ci.yml ]; then
+  echo "bin/prime-go: ci/ci.yml is not here, so the job that runs" >&2
   echo "  this gate cannot be checked against the tools it needs. A check that" >&2
   echo "  cannot read its subject is not a check that passed." >&2
   exit 1
@@ -202,7 +202,7 @@ ci_job="$(ci_job_block ci)"
 prime_job="$(ci_job_block prime)"
 if [ -z "$ci_job" ] || [ -z "$prime_job" ]; then
   echo "bin/prime-go: read an empty 'ci' or 'prime' job out of" >&2
-  echo "  .github/workflows/ci.yml. A job that was renamed or deleted is a job" >&2
+  echo "  ci/ci.yml. A job that was renamed or deleted is a job" >&2
   echo "  this check can no longer see, and an empty block passes every test." >&2
   exit 1
 fi
@@ -222,7 +222,7 @@ for tool in $gate_tools; do
   if ! ci_provides "$prime_job" "$tool"; then
     echo "::error::the CI 'prime' job does not install '$tool', which bin/prime-go" >&2
     echo "  refuses to run without (it exits 127). Add the install to" >&2
-    echo "  .github/workflows/ci.yml's 'prime' job in the same commit as the" >&2
+    echo "  ci/ci.yml's 'prime' job in the same commit as the" >&2
     echo "  requirement — a green gate and a red CI are the same defect twice." >&2
     missing=1
   fi
@@ -253,7 +253,7 @@ step "the publish caller publishes the image and the chart"
 # `publish.reusable.yml` composes `image.reusable.yml` and
 # `chart.reusable.yml` behind one `push` input — and published a CALLER
 # TEMPLATE at `kit/templates/publish/publish.yml` whose header says "copy this
-# file to `.github/workflows/publish.yml` in the service repository, verbatim".
+# file to `ci/publish.yml` in the service repository, verbatim".
 # gateway did not copy it: `.github/workflows/` held only `ci.yml`, so the
 # chart the substrate's `Application` pulls and the image `config/deploy.yml`
 # deploys were published by nothing — the front door could not be deployed at
@@ -269,7 +269,7 @@ step "the publish caller publishes the image and the chart"
 # that dropped the permission from the `permissions:` block would still pass,
 # and the check would be asserting a comment rather than a grant. `^` and `$`
 # with leading whitespace allowed matches the YAML line and nothing else.
-caller=".github/workflows/publish.yml"
+caller="ci/publish.yml"
 if [ ! -f "$caller" ]; then
   echo "bin/prime-go: $caller does not exist, so a push to master publishes" >&2
   echo "  nothing. Copy kit's caller template (kit/templates/publish/publish.yml)" >&2
@@ -288,7 +288,7 @@ fi
 # own ci.yml.
 if ! grep -qE '^[[:space:]]*uses: cafaye/kit/\.github/workflows/publish\.reusable\.yml@master$' "$caller"; then
   echo "bin/prime-go: $caller does not call kit's composed publish workflow." >&2
-  echo "  Wanted: uses: cafaye/kit/.github/workflows/publish.reusable.yml@master" >&2
+  echo "  Wanted: uses: cafaye/kit/ci/publish.reusable.yml@master" >&2
   echo "  The composition lives in kit; a caller that inlines the steps has" >&2
   echo "  forked it, and a fork is a second copy that drifts." >&2
   exit 1

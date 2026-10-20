@@ -8,7 +8,7 @@
 # Actions used to hold, moved into the repository where it can be run by
 # hand, by a sandbox, or by a runner.
 #
-# WHERE THE FACTS COME FROM: `.github/workflows/ci.yml` IN THIS REPOSITORY.
+# WHERE THE FACTS COME FROM: `ci/ci.yml` IN THIS REPOSITORY.
 # Every fact this file uses about how the repository is built — the toolchain
 # pin in mise.toml, the gate entrypoint, and the PATH entry CI adds — is
 # visible in that workflow file, and THAT FILE IS THE SOURCE OF TRUTH. When
@@ -55,7 +55,7 @@ log() { printf '\n== %s\n' "$1"; }
 log "pipeline: $REPO_NAME at $REPO_DIR"
 
 # ===========================================================================
-# THE GATE. `bin/prime`, the entrypoint `.github/workflows/ci.yml`'s `prime`
+# THE GATE. `bin/prime`, the entrypoint `ci/ci.yml`'s `prime`
 # job names. A gate the workflow names and the pipeline does not is a
 # pipeline that is green while testing nothing — read the file, do not
 # assume.
@@ -64,7 +64,7 @@ GATE=(./bin/prime)
 
 # ===========================================================================
 # PATHS THIS REPOSITORY'S CI ADDS. The one `echo … >> $GITHUB_PATH` line in
-# `.github/workflows/ci.yml` (`golangci-lint, the version mise.toml pins`
+# `ci/ci.yml` (`golangci-lint, the version mise.toml pins`
 # installs into `$HOME/.local/bin`), in the order the workflow appends it.
 # Without it the gate fails for a reason that has nothing to do with the
 # tree — `bin/prime-go` exits 127 with no linter on PATH.
