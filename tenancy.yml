@@ -2,7 +2,7 @@
 #
 # Checked by cafaye/core's contract harness:
 #
-#     /Users/kaka/Code/any/moon/cafaye/core/harness/bin/tenancy-check .
+#     /Users/kaka/Code/any/cafaye/core/harness/bin/tenancy-check .
 #
 # GATEWAY HOLDS NO CUSTOMER ROWS. It has no database, no driver import and no
 # SQL anywhere in the tree: it verifies the bearer token, puts the principal on

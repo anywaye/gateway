@@ -25,8 +25,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GEN="$ROOT/local/.gen"
 BIN="$GEN/bin"
 LOG="$GEN/logs"
-IDIR="${L7_IDENTITY_DIR:-/Users/kaka/Code/any/moon/wt/roll-l7-identity}"
-STUBDIR="${L7_STUB_DIR:-/Users/kaka/Code/any/moon/wt/roll-l7-oauth-stub}"
+IDIR="${L7_IDENTITY_DIR:-/Users/kaka/Code/any/work/wt/roll-l7-identity}"
+STUBDIR="${L7_STUB_DIR:-/Users/kaka/Code/any/work/wt/roll-l7-oauth-stub}"
 DB="${L7_DATABASE_URL:-postgres://cafaye:cafaye@127.0.0.1:15500/identity?sslmode=disable}"
 
 EDGE_PORT=19443
