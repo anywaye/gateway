@@ -105,7 +105,7 @@ dependency versions follow npm's own rules.
   narrower than OPS-D2's row says the services are, and the two disagree; the
   parameter was implemented as written and the disagreement, with the one-line
   fix that would reconcile them, is recorded in
-  `REPORT-gateway-lic-bsl.md` for the manager to take across the fleet in one
+  `REPORT-gateway-lic-bsl` for the manager to take across the fleet in one
   pass. Widening the grant inside one repository would leave four licences
   that no longer differ only in the Licensed Work name, which is the one
   property this packet was asked to hold.
@@ -238,7 +238,7 @@ dependency versions follow npm's own rules.
 - **gateway has a deploy artifact: a hand-written Helm chart, and the Argo
   `Application` that pulls it.** `charts/gateway/` is what turns the image
   into a running service on the launch substrate — k3s + Traefik +
-  cert-manager + ArgoCD + CloudNativePG + Redis (`DEPLOYMENT.md`) — with a
+  cert-manager + ArgoCD + CloudNativePG + Redis (`cafaye/notes/deployment.md`) — with a
   hostname, a readiness gate and a rollback. Before this, gateway had a
   `Dockerfile` and nothing that deployed it: no `config/deploy.yml`, no
   chart, no `Application`. The chart renders a `Deployment`, a `Service`, a
@@ -248,7 +248,7 @@ dependency versions follow npm's own rules.
   box agree, hand edits self-heal, rollback is `git revert`.
 
   **What the chart is for:** the launch deploy artifact for the front
-  door. **What it is not:** not a second deploy path. `DEPLOYMENT.md` is
+  door. **What it is not:** not a second deploy path. `cafaye/notes/deployment.md` is
   explicit that there is no helm-from-CI template in kit and one may never
   be added, because a second deploy path beside Argo is a split brain —
   the chart is pulled by Argo, or it does not run. It is also not Kamal,
@@ -343,13 +343,13 @@ dependency versions follow npm's own rules.
   of one name in one namespace fight, and the later `kubectl apply` wins: a
   deploy whose target depends on apply order is not a deploy.
 
-  `DEPLOYMENT.md`, "Who owns the `Application`": the substrate owns it, one
+  `cafaye/notes/deployment.md`, "Who owns the `Application`": the substrate owns it, one
   per service, OCI-sourced, destination namespace = the service name, and a
   service repository commits none. The chart (`charts/gateway/`) is unchanged
   and still the deploy artifact — what changed is that the repository no
   longer competes with its own substrate for the right to apply it. Every
   reference to the deleted file (`README.md`, `charts/gateway/values.yaml`,
-  `REPORT-gateway-chart-01.md`) now names kit's manifest instead.
+  `REPORT-gateway-chart-01`) now names kit's manifest instead.
 
 ### Changed
 
@@ -395,7 +395,7 @@ dependency versions follow npm's own rules.
 
 - **`/v1/api-keys`' 60/min allowance is a deliberate tightening, checked, and left
   alone — and the reference's own suite would not have noticed it changing.**
-  `REPORT-gateway-api-keys-01.md` §1 settles the question the allowance-table packet
+  `REPORT-gateway-api-keys-01` §1 settles the question the allowance-table packet
   flagged. The Go side already matched `src/middleware/limits.ts` and was verified
   byte for byte across eight paths rather than read off a table, so **no number
   moved on either side**; `internal/ratelimit/limits.go` gained the argument as a
@@ -428,7 +428,7 @@ dependency versions follow npm's own rules.
   and it is a packet rather than something to change here.
 - **What porting API-key management to Go would take: a contract change, not a
   translation — and it obliges the TypeScript reference in the same commit.**
-  `REPORT-gateway-api-keys-01.md` §2 enumerates it. `openapi/v1.yaml` declares
+  `REPORT-gateway-api-keys-01` §2 enumerates it. `openapi/v1.yaml` declares
   seven operations and **zero** `api-keys` operations; the `apiKeyCredential`
   security scheme describes how a caller *presents* a key and is not coverage for
   managing one, and the document says so itself at lines 787-789. Three operations
@@ -490,7 +490,7 @@ dependency versions follow npm's own rules.
     against `find`, and a new step exports the shipped image's filesystem and
     fails if it carries any repository path. `gate.yml`'s exact test-file floor
     moves 25 -> 24 with the deletion named in place. A Go-side *local* half of the
-    same check is not written yet; `HANDOFF-cutover-01.md` carries it.
+    same check is not written yet; `HANDOFF-cutover-01` carries it.
   - **The toolchain pin the image is built on is still asserted.** `pins.test.ts`'s
     two Bun-image cases (`ARG BUN_VERSION`, compose's build arg) are false now that
     the image is not built on Bun, so they are retargeted at the Go toolchain
@@ -512,7 +512,7 @@ dependency versions follow npm's own rules.
 ### Added
 
 - **The recorded reason for the missing Go session store was CHECKED, and it is
-  CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01.md`
+  CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01`
   verifies both halves against `cafaye/identity` at source rather than inheriting
   them, because a claim in a document is a reader's premise:
 
@@ -546,7 +546,7 @@ dependency versions follow npm's own rules.
   resolver, so the table is reachable from the shipped binary.
 - **A session store the Go service can actually build, so `/auth/*` stops
   answering `404` on a configured deployment.** This was the code blocker from
-  `REPORT-gateway-go-port-audit-01.md`: `internal/session` declared the interface,
+  `REPORT-gateway-go-port-audit-01`: `internal/session` declared the interface,
   `internal/sessiontest` held a map-backed double whose guard proved no production
   file imports it, and `cmd/gateway` built no BFF at all — so the Go service could
   not serve the browser surface while the TypeScript reference serves it today.
@@ -997,7 +997,7 @@ dependency versions follow npm's own rules.
   (`handler_for` resolves `wrapper.X` to the generated wrapper and never reaches
   `internal/httpapi`), and a `true` row is a failure that cannot be cleared (chi
   mounts middleware with `r.Use(`, which `chain_gate` cannot match). Measured both
-  sides in `REPORT-gateway-account-scope-ratchet-01.md` §3.
+  sides in `REPORT-gateway-account-scope-ratchet-01` §3.
 
   `surface.minimum` stays **14**. It is not lowered to make a failure go away: it
   is why 14 registrations against 13 rows is a question somebody had to answer.
@@ -1056,7 +1056,7 @@ dependency versions follow npm's own rules.
   everything with.
 
   **Four properties, each refused rather than defaulted, each with a mutation
-  proof in `REPORT-mvp-guard-principal-01.md`:**
+  proof in `REPORT-mvp-guard-principal-01`:**
 
   1. **Never on a `public` entry** — that is what makes a route public. Refused at
      boot *and* refused again at the send site, and the send-site gate has its own
@@ -1148,7 +1148,7 @@ dependency versions follow npm's own rules.
   `src/routes/publicRoute.test.ts` holds the five cases this has to answer —
   it serves, a non-public entry still `401`s, it is still throttled, it still
   refuses a nonsense value, and it leaks no upstream credential — with the
-  mutation evidence in `REPORT-mvp-guard-public-route-01.md`.
+  mutation evidence in `REPORT-mvp-guard-public-route-01`.
 
 - **Routing: a configured path prefix is forwarded to the service that owns it.**
   This is the packet `gateway`'s README has been promising since v0: a route table
@@ -1259,7 +1259,7 @@ dependency versions follow npm's own rules.
   caller is entitled to.
 
   Two gateway-authored defects, both found by *running* the guards and written up
-  in `REPORT-guard-11-isolation.md`: a listing fixture built through
+  in `REPORT-guard-11-isolation`: a listing fixture built through
   `createApiKeyAuth.issue` was a silent no-op (it is idempotent on the hash, so
   the id collision the case needed never happened, and the test passed with the
   filter deleted), and a Redis-key assertion that recomputed `bucket()`'s digest
@@ -1811,7 +1811,7 @@ dependency versions follow npm's own rules.
   failed on the box. The front door's session cookie is `Secure`, so without it
   the browser surface cannot work at all. `values.yaml` gains
   `ingress.clusterIssuer: letsencrypt-prod` — the issuer the substrate's
-  install creates (`DEPLOYMENT.md`, "The ACME solver") — rendered as the
+  install creates (`cafaye/notes/deployment.md`, "The ACME solver") — rendered as the
   `cert-manager.io/cluster-issuer` annotation **only when non-empty**: empty
   means no cert-manager, a secret nothing writes (the generator's own rule,
   `cafe gen chart`). The operator's `ingress.annotations` map still renders
@@ -1821,7 +1821,7 @@ dependency versions follow npm's own rules.
   rule and `helm lint`; it was red before the fix, green after.
 
   **Divergences from `cafe gen chart` are reported, not chased** — full list in
-  `REPORT-gateway-w94-issuer-01.md`. The ones that matter: the values shape
+  `REPORT-gateway-w94-issuer-01`. The ones that matter: the values shape
   (`secrets:`/`secretName` vs the generated `secretName`, `replicaCount` vs
   `replicas`, `probes.*` vs `readinessProbe.*`, `ingress.tls.*` vs
   `ingress.tls: true`), the missing chart `README.md`, the missing

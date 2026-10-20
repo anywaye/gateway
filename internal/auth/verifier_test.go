@@ -259,7 +259,7 @@ func TestKeyRefreshIsSingleFlight(t *testing.T) {
 		//     if (!fetched && refreshSpentIn !== window) { … await load(false) … }
 		//     if (!publishes(set, header.kid)) return unauthorized("…unknown key");
 		//
-		// Reported in REPORT-gateway-go-auth-01.md rather than changed, because the
+		// Reported in REPORT-gateway-go-auth-01 rather than changed, because the
 		// packet rules that the TypeScript answer is the correct one and because it is
 		// not a security hole: only a token naming a kid the CACHED set does not carry
 		// reaches it, and such a token cannot verify while identity is down either

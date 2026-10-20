@@ -136,7 +136,7 @@
 #      the test count. `files` is `bun test`'s `Ran N tests across M files` line
 #      and it is gone. This is the real residue of the deletion of this tier:
 #      the structural detector is not migrated, only the counting one. See
-#      HANDOFF-test-ts.md.
+#      HANDOFF-test-ts.
 #   2. `delete scripts.typecheck from package.json` — proved that a silent
 #      skip-when-absent branch is a failure. `bin/prime` no longer has a
 #      `typecheck` branch to probe: it has no steps to probe. `bin/prime-go`
@@ -447,7 +447,7 @@ ci:
   # workflow's `run:` bodies and nothing else: the `redis`, `manifest` and
   # `image` jobs are outside what this block can see, and all three check things
   # `bin/prime` does not. That residue is the finding, and
-  # REPORT-guard-09-gate.md is where it was written down; a declaration that
+  # REPORT-guard-09-gate is where it was written down; a declaration that
   # implied CI and the local gate verify the same set would be the false green
   # this format exists to remove.
   #

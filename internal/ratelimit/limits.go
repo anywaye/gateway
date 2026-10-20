@@ -112,7 +112,7 @@ func DefaultLimitTable() LimitTable {
 			//
 			// A port that copies a table is how a wrong number survives a rewrite
 			// twice, so here is the record of the one that looks wrong.
-			// `REPORT-gateway-api-keys-01.md` §1 has the long form; the short form is
+			// `REPORT-gateway-api-keys-01` §1 has the long form; the short form is
 			// the shape of the table.
 			//
 			// **Every entry in this table that names a NEW bucket is strictly cheaper

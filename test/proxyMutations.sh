@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The mutation evidence for REPORT-gateway-go-proxy-01.md.
+# The mutation evidence for REPORT-gateway-go-proxy-01.
 #
 # ## WHAT THIS IS FOR
 #

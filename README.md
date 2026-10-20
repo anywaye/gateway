@@ -933,10 +933,10 @@ Argo `Application` — and there is exactly one: kit's,
 `templates/substrate/manifests/applications/gateway.yaml` (source
 `oci://ghcr.io/cafaye/charts`, chart `gateway`, targetRevision `0.1.0`,
 destination namespace `gateway`, `CreateNamespace=true`). On the launch
-substrate (k3s + Traefik + cert-manager + ArgoCD, per `DEPLOYMENT.md`) that is
+substrate (k3s + Traefik + cert-manager + ArgoCD, per `cafaye/notes/deployment.md`) that is
 the only deploy path: the chart is pulled by Argo, or it does not run. It is
 not a second deploy path and not a Kamal config — a split brain beside Argo
-is the one thing `DEPLOYMENT.md` forbids.
+is the one thing `cafaye/notes/deployment.md` forbids.
 
 **A push to master publishes both artifacts.** `.github/workflows/publish.yml`
 — kit's caller template, copied with one change (`chart-dir: charts/gateway/`;
@@ -966,7 +966,7 @@ It had the same `metadata.name` and `namespace` as kit's, a **git** source
 with a read-only pull secret, and a destination namespace (`cafaye`) no
 service uses. Two `Application`s of one name in one namespace fight, and the
 later `kubectl apply` wins — a deploy whose target depends on apply order is
-not a deploy. `DEPLOYMENT.md`, "Who owns the `Application`": the substrate
+not a deploy. `cafaye/notes/deployment.md`, "Who owns the `Application`": the substrate
 owns it, one per service, and **a service repository commits none**.
 
 The chart is hand-written as the reference `cafe gen chart` (packet L10) must
@@ -1066,7 +1066,7 @@ itself would pass it. It was correct when the tier ran three scenarios and was
 raised as packets landed, and it stopped being raised. The derived half of the
 list is protected independently — the cases are read out of the generated
 registrations — so the exposure is the hand-written remainder. Recorded as a
-finding in `HANDOFF-docs-corrections-01.md` §1.3; it is a one-line change in
+finding in `HANDOFF-docs-corrections-01` §1.3; it is a one-line change in
 `.github/workflows/ci.yml`, which a live worker owns.
 
 **There is no `prime-go` CI job, and that is deliberate.** Two jobs running two
@@ -1462,7 +1462,7 @@ document's `properties` map — so every problem document differed from the refe
 at byte 2, plus three more findings in the new surface itself (`writeRawJSON`
 overwriting the problem content type, a BFF auto-registering a probe the reference
 does not, and a doubled `Sec-Fetch-Site` being refused where the reference serves
-it). All five are in `REPORT-gateway-go-bff-01.md`.
+it). All five are in `REPORT-gateway-go-bff-01`.
 
 The generalisable shape is the one the second finding teaches: **an envelope nothing
 reaches is an envelope nothing has compared.** The substrate packet ported

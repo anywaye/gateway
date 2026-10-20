@@ -17,7 +17,7 @@ type: application
 # is what the pod pulls, and it is the one that changes per build — the tag
 # is overwritten on every master push, so a chart pinned by tag rendered an
 # unchanged Deployment after every build and Argo never rolled the box
-# (measured: the two-digest gap REPORT-roll-c5-image-digest.md records).
+# (measured: the two-digest gap REPORT-roll-c5-image-digest records).
 # `chart.reusable.yml` writes the digest into values.yaml before `helm push`,
 # so the pushed chart names the image just built; the chart VERSION is
 # unchanged, so the substrate Application's targetRevision still resolves.

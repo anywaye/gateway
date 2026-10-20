@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Measure each of the five findings in REPORT-gateway-go-bff-01.md §3 — before and
+# Measure each of the five findings in REPORT-gateway-go-bff-01 §3 — before and
 # after — with the equivalence check as the instrument.
 #
 #   ./measure-findings.sh

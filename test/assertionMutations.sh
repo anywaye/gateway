@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The mutation evidence for REPORT-mvp-guard-principal-01.md.
+# The mutation evidence for REPORT-mvp-guard-principal-01.
 #
 # ## WHAT THIS IS FOR
 #

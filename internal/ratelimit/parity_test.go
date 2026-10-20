@@ -151,7 +151,7 @@ type parityCase struct {
 // Not from `count()`, and not from this package. Every one was read off the
 // REFERENCE — `memoryRateLimitStore` from `src/middleware/rateLimitStore.ts` (removed at cutover), driven
 // by these rows' instants and printed — and the transcript is in
-// `REPORT-gateway-go-auth-01.md`. A table derived from the implementation under test
+// `REPORT-gateway-go-auth-01`. A table derived from the implementation under test
 // is a test that cannot fail; a table read off the implementation being ported is the
 // specification this port is measured against.
 //

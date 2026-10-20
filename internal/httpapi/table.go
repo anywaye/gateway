@@ -573,7 +573,7 @@ func redactUserinfo(value string) string {
 // parser's dot-segment removal, and not a `%2e%2e` that arrives intact. A future
 // reader who believes the comment will not look for the encoded-separator case,
 // which is the one that is actually reachable. Reported in
-// `REPORT-gateway-go-proxy-01.md`; the reference is not changed here, because it is
+// `REPORT-gateway-go-proxy-01`; the reference is not changed here, because it is
 // the implementation this port is measured against.
 //
 // ## THE ALGORITHM, AND WHY IT IS NOT `path.Clean`

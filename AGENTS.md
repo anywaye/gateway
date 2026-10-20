@@ -411,7 +411,7 @@ and fails under 72. **That number is the gate's weakest number and it is not min
 to raise**: a run on this tree prints `51 cases across 13 scenarios = 912
 comparisons`, so the floor is under 8% of what it is a floor on, and a hand-written
 case list that lost nine tenths of itself would pass. Recorded in
-`HANDOFF-docs-corrections-01.md` §1.3. The rule this paragraph exists to teach —
+`HANDOFF-docs-corrections-01` §1.3. The rule this paragraph exists to teach —
 *a tier that can pass by not running is a green about nothing* — is why the skip is
 caught; the floor is a second, weaker mechanism against a different failure, and it
 is the one that drifted.
@@ -461,7 +461,7 @@ are the ones that were wrong in its first draft:
 
 **A guard has to be shown to fail.** Five divergences were planted and reverted for
 the isolation packet, each caught by the named test; the transcript is in
-`REPORT-guard-11-isolation.md`. **Any new guard here gets a planted divergence
+`REPORT-guard-11-isolation`. **Any new guard here gets a planted divergence
 before it is believed**, and if it hangs or passes on a broken source that is a
 finding about the gateway, not about the source.
 
@@ -527,3 +527,11 @@ Do not pick a side silently, and do not describe the route gateway ought to have
 
 ## Secrets
 - No `.env` files with values. Use `cafe secret set/get/list` (dev) and `cafe dev` (injects). See `docs/secrets.md`.
+
+## Packet identifiers
+
+`REPORT-x`, `HANDOFF-x` and `MEASUREMENTS-x` name **work packets, not
+files**. The written reports were removed on 2026-10-20: duplicated across
+repositories, owned by nobody, rotting faster than they were read. What
+survives of a packet is its entry in `CHANGELOG.md` and, where a decision was
+made, in `DECISIONS.md`. A citation to a packet id points at that entry.

@@ -3,7 +3,7 @@
 // # WHY THIS EXISTS, AND WHY IT IS NOT A REUSE
 //
 // `internal/session` records why the store could not be identity's, and that
-// record was checked rather than inherited — see `REPORT-gateway-session-store-01.md`
+// record was checked rather than inherited — see `REPORT-gateway-session-store-01`
 // and `CHANGELOG.md`. Both halves hold: identity's `sessions` table has no column
 // for the presented value (it is keyed on `token_digest`, `ByToken` is its only
 // read and takes a token), and Go's `internal/` rule forbids the import. So the

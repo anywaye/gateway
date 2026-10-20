@@ -77,7 +77,7 @@
 // # THE REASON ABOVE WAS CHECKED, NOT INHERITED
 //
 // It arrived as a claim in a document, and it is a claim about another
-// repository's schema. `REPORT-gateway-session-store-01.md` verifies it: identity's
+// repository's schema. `REPORT-gateway-session-store-01` verifies it: identity's
 // `sessions` table has no column for the presented value, `ByToken` is its only
 // read and takes a token, and `/v1/session` carries `post` and `delete` with no
 // inverse lookup. Go's `internal/` rule was answered by the compiler rather than by
