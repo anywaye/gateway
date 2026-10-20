@@ -46,7 +46,7 @@ coverage.*
 # tautologies on it. The property it held is asserted where the image can be seen:
 # the CI `image` job diffs the `*_test.go` files the built image holds against
 # `find`. A Go-side local half — this file, read the way `dockerStage.test.ts` read
-# the Dockerfile — is not written yet, and `HANDOFF-cutover-01.md` says so.
+# the Dockerfile — is not written yet, and `HANDOFF-cutover-01` says so.
 #
 # `src/` and `test/` are deliberately NOT here, and the reason has changed since
 # the lines above them were written. They used to be kept because

@@ -6,7 +6,7 @@
 #                      carries the cert-manager issuer annotation
 #
 # WHAT IT IS: the bounded chart check W67 recorded by hand in
-# REPORT-gateway-chart-01.md ("The render, recorded exactly") and this packet
+# REPORT-gateway-chart-01 ("The render, recorded exactly") and this packet
 # makes continuous. It is deliberately NOT wired into bin/prime: the gate is
 # static Go with a port-probe test, and a chart test needs `helm` on the
 # machine — the manager owns the gate and W67's report ruled the render "a
@@ -37,7 +37,7 @@
 #      master push, so the rendered string was identical before and after a
 #      build, Argo reported `Synced` with no rollout, and
 #      `imagePullPolicy: IfNotPresent` kept the node on the six-hour-old image
-#      (REPORT-roll-c5-image-digest.md carries the two digests). A MALFORMED
+#      (REPORT-roll-c5-image-digest carries the two digests). A MALFORMED
 #      digest — non-empty, not `sha256:<64 lowercase hex>` — is REFUSED: the
 #      render fails and names `image.digest`, the same shape kit's pin step
 #      refuses before it writes the field and `bin/prime-go` refuses
