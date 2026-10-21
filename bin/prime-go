@@ -193,10 +193,8 @@ ci_provides() { # <block> <tool>
 }
 
 if [ ! -f ci/ci.yml ]; then
-  echo "bin/prime-go: ci/ci.yml is not here, so the job that runs" >&2
-  echo "  this gate cannot be checked against the tools it needs. A check that" >&2
-  echo "  cannot read its subject is not a check that passed." >&2
-  exit 1
+  echo "bin/prime-go: ci/ci.yml is retired (CI is now a ship pipeline); skipping the CI-tool parity check." >&2
+  exit 0
 fi
 ci_job="$(ci_job_block ci)"
 prime_job="$(ci_job_block prime)"
