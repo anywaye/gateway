@@ -22,18 +22,18 @@ func TestABadVHostTableIsARefusalToConstructTheGateway(t *testing.T) {
 		want     string
 	}{
 		{"empty object routes nothing", `{}`, "at least one hostname"},
-		{"not JSON at all", `auth.cafaye.test`, "VHOST_TABLE must be a JSON object"},
-		{"not an object", `["auth.cafaye.test"]`, "VHOST_TABLE must be a JSON object"},
-		{"entry not an object", `{"auth.cafaye.test": "http://x"}`, "must be an object with a baseUrl"},
-		{"scheme is not a hostname", `{"https://auth.cafaye.test": {"baseUrl": "http://127.0.0.1:9"}}`, "bare hostname"},
-		{"port is not a hostname", `{"auth.cafaye.test:443": {"baseUrl": "http://127.0.0.1:9"}}`, "bare hostname"},
-		{"uppercase is not said plainly", `{"Auth.cafaye.test": {"baseUrl": "http://127.0.0.1:9"}}`, "lowercase"},
-		{"wildcard is a second matching language", `{"*.cafaye.test": {"baseUrl": "http://127.0.0.1:9"}}`, "bare hostname"},
-		{"empty base", `{"auth.cafaye.test": {"baseUrl": ""}}`, "baseUrl must be a non-empty string"},
-		{"base with a path swallows the call", `{"auth.cafaye.test": {"baseUrl": "http://127.0.0.1:9/oidc"}}`, "no path"},
-		{"base with credentials logs a password", `{"auth.cafaye.test": {"baseUrl": "http://user:pass@127.0.0.1:9"}}`, "must not carry credentials"},
-		{"empty token is not no token", `{"auth.cafaye.test": {"baseUrl": "http://127.0.0.1:9", "token": ""}}`, "non-empty string"},
-		{"token with a newline is header injection", "{\"auth.cafaye.test\": {\"baseUrl\": \"http://127.0.0.1:9\", \"token\": \"a\\nb\"}}", "whitespace or control"},
+		{"not JSON at all", `auth.anywaye.test`, "VHOST_TABLE must be a JSON object"},
+		{"not an object", `["auth.anywaye.test"]`, "VHOST_TABLE must be a JSON object"},
+		{"entry not an object", `{"auth.anywaye.test": "http://x"}`, "must be an object with a baseUrl"},
+		{"scheme is not a hostname", `{"https://auth.anywaye.test": {"baseUrl": "http://127.0.0.1:9"}}`, "bare hostname"},
+		{"port is not a hostname", `{"auth.anywaye.test:443": {"baseUrl": "http://127.0.0.1:9"}}`, "bare hostname"},
+		{"uppercase is not said plainly", `{"Auth.anywaye.test": {"baseUrl": "http://127.0.0.1:9"}}`, "lowercase"},
+		{"wildcard is a second matching language", `{"*.anywaye.test": {"baseUrl": "http://127.0.0.1:9"}}`, "bare hostname"},
+		{"empty base", `{"auth.anywaye.test": {"baseUrl": ""}}`, "baseUrl must be a non-empty string"},
+		{"base with a path swallows the call", `{"auth.anywaye.test": {"baseUrl": "http://127.0.0.1:9/oidc"}}`, "no path"},
+		{"base with credentials logs a password", `{"auth.anywaye.test": {"baseUrl": "http://user:pass@127.0.0.1:9"}}`, "must not carry credentials"},
+		{"empty token is not no token", `{"auth.anywaye.test": {"baseUrl": "http://127.0.0.1:9", "token": ""}}`, "non-empty string"},
+		{"token with a newline is header injection", "{\"auth.anywaye.test\": {\"baseUrl\": \"http://127.0.0.1:9\", \"token\": \"a\\nb\"}}", "whitespace or control"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -45,7 +45,7 @@ func TestABadVHostTableIsARefusalToConstructTheGateway(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("ParseVHostTable(%q) error = %q, want it to name %q", tc.document, err, tc.want)
 			}
-			if _, err := New(Options{VHosts: VHostTable{"auth.cafaye.test": {BaseURL: "http://127.0.0.1:9\n"}}}); err == nil {
+			if _, err := New(Options{VHosts: VHostTable{"auth.anywaye.test": {BaseURL: "http://127.0.0.1:9\n"}}}); err == nil {
 				t.Fatal("New with an unvalidatable vhost table constructed a gateway; validation must refuse before assembly")
 			}
 		})
@@ -73,17 +73,17 @@ func TestAnUnsetVHostTableIsThePathTableAlone(t *testing.T) {
 }
 
 // The Host header is matched case-insensitively with any port stripped, because
-// that is what a browser sends: `Auth.cafaye.test:443` is the same name as
-// `auth.cafaye.test`, and a split that missed it would route TLS traffic by no
+// that is what a browser sends: `Auth.anywaye.test:443` is the same name as
+// `auth.anywaye.test`, and a split that missed it would route TLS traffic by no
 // rule a reader could find.
 func TestEffectiveHostIsCaseInsensitiveAndPortless(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ host, want string }{
-		{"auth.cafaye.test", "auth.cafaye.test"},
-		{"Auth.Cafaye.Test", "auth.cafaye.test"},
-		{"auth.cafaye.test:443", "auth.cafaye.test"},
-		{"AUTH.CAFAYE.TEST:19090", "auth.cafaye.test"},
+		{"auth.anywaye.test", "auth.anywaye.test"},
+		{"Auth.Anywaye.Test", "auth.anywaye.test"},
+		{"auth.anywaye.test:443", "auth.anywaye.test"},
+		{"AUTH.ANYWAYE.TEST:19090", "auth.anywaye.test"},
 		{"127.0.0.1:19090", "127.0.0.1"},
 	} {
 		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://ignored/.well-known/openid-configuration", nil)
@@ -95,14 +95,14 @@ func TestEffectiveHostIsCaseInsensitiveAndPortless(t *testing.T) {
 }
 
 // Gateway's own paths are never proxied away, whatever Host arrived: the probes
-// stay answerable through `api.cafaye.test` (readyz green on the API name is one
+// stay answerable through `api.anywaye.test` (readyz green on the API name is one
 // of the loop's proofs), and the browser surface and gateway's own routes are
 // answered here for the reason routeProxy.handle names its exclusion.
 func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 	t.Parallel()
 
 	backend := newUpstream(t, nil)
-	handler, err := New(Options{VHosts: VHostTable{"api.cafaye.test": {BaseURL: backend.Origin()}}})
+	handler, err := New(Options{VHosts: VHostTable{"api.anywaye.test": {BaseURL: backend.Origin()}}})
 	if err != nil {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
@@ -110,11 +110,11 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 	// The probes answer 200 from gateway itself.
 	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
-		req.Host = "api.cafaye.test"
+		req.Host = "api.anywaye.test"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Errorf("GET %s through api.cafaye.test = %d, want 200 from gateway itself", path, rec.Code)
+			t.Errorf("GET %s through api.anywaye.test = %d, want 200 from gateway itself", path, rec.Code)
 		}
 	}
 
@@ -122,11 +122,11 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 	// the router's 404 rather than 200, and the assertion that matters is the
 	// same — the backend never sees it.
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
-	req.Host = "api.cafaye.test"
+	req.Host = "api.anywaye.test"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("GET /v1/me through api.cafaye.test = %d, want the router's 404 (no verifier configured)", rec.Code)
+		t.Errorf("GET /v1/me through api.anywaye.test = %d, want the router's 404 (no verifier configured)", rec.Code)
 	}
 
 	backend.mu.Lock()
@@ -144,13 +144,13 @@ func TestAnUnknownHostnameFallsThroughToTheRouter(t *testing.T) {
 	t.Parallel()
 
 	backend := newUpstream(t, nil)
-	handler, err := New(Options{VHosts: VHostTable{"auth.cafaye.test": {BaseURL: backend.Origin()}}})
+	handler, err := New(Options{VHosts: VHostTable{"auth.anywaye.test": {BaseURL: backend.Origin()}}})
 	if err != nil {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/.well-known/openid-configuration", nil)
-	req.Host = "unknown.cafaye.test"
+	req.Host = "unknown.anywaye.test"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -166,24 +166,24 @@ func TestANamedHostnameProxiesTheWholePathToItsBackend(t *testing.T) {
 
 	backend := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"issuer":"https://auth.cafaye.test"}`)
+		io.WriteString(w, `{"issuer":"https://auth.anywaye.test"}`)
 	})
-	handler, err := New(Options{VHosts: VHostTable{"auth.cafaye.test": {BaseURL: backend.Origin(), Token: "service-token"}}})
+	handler, err := New(Options{VHosts: VHostTable{"auth.anywaye.test": {BaseURL: backend.Origin(), Token: "service-token"}}})
 	if err != nil {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/.well-known/openid-configuration?pretty=true", nil)
-	req.Host = "auth.cafaye.test"
+	req.Host = "auth.anywaye.test"
 	req.Header.Set("Authorization", "Bearer caller-credential")
 	req.Header.Set("Cookie", "session=caller-cookie")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET discovery through auth.cafaye.test = %d, want 200", rec.Code)
+		t.Fatalf("GET discovery through auth.anywaye.test = %d, want 200", rec.Code)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "https://auth.cafaye.test") {
+	if body := rec.Body.String(); !strings.Contains(body, "https://auth.anywaye.test") {
 		t.Fatalf("discovery body = %q, want the backend's answer to cross", body)
 	}
 
@@ -200,7 +200,7 @@ func TestANamedHostnameProxiesTheWholePathToItsBackend(t *testing.T) {
 	if cookie := got.Header.Get("Cookie"); cookie != "" {
 		t.Errorf("backend Cookie = %q, want nothing: the caller's cookie never crosses", cookie)
 	}
-	if host := got.Header.Get("Host"); strings.Contains(host, "cafaye.test") {
+	if host := got.Header.Get("Host"); strings.Contains(host, "anywaye.test") {
 		t.Errorf("backend Host = %q, want the backend's own: the caller's Host never crosses", host)
 	}
 }
@@ -215,17 +215,17 @@ func TestATraversalThroughANamedHostnameReachesNoBackend(t *testing.T) {
 	t.Parallel()
 
 	backend := newUpstream(t, nil)
-	handler, err := New(Options{VHosts: VHostTable{"auth.cafaye.test": {BaseURL: backend.Origin()}}})
+	handler, err := New(Options{VHosts: VHostTable{"auth.anywaye.test": {BaseURL: backend.Origin()}}})
 	if err != nil {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/a%2f..%2f..%2fsecret", nil)
-	req.Host = "auth.cafaye.test"
+	req.Host = "auth.anywaye.test"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("GET /a%%2f..%%2f..%%2fsecret through auth.cafaye.test = %d, want 404", rec.Code)
+		t.Fatalf("GET /a%%2f..%%2f..%%2fsecret through auth.anywaye.test = %d, want 404", rec.Code)
 	}
 
 	backend.mu.Lock()
@@ -250,8 +250,8 @@ func TestTheVhostSplitLeavesThePathTableAlone(t *testing.T) {
 	handler, err := New(Options{
 		Routes: RouteTable{"/v1": {BaseURL: api.Origin()}},
 		VHosts: VHostTable{
-			"api.cafaye.test":  {BaseURL: api.Origin()},
-			"auth.cafaye.test": {BaseURL: auth.Origin()},
+			"api.anywaye.test":  {BaseURL: api.Origin()},
+			"auth.anywaye.test": {BaseURL: auth.Origin()},
 		},
 	})
 	if err != nil {
@@ -259,18 +259,18 @@ func TestTheVhostSplitLeavesThePathTableAlone(t *testing.T) {
 	}
 
 	apiReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/pantry/items", nil)
-	apiReq.Host = "api.cafaye.test"
+	apiReq.Host = "api.anywaye.test"
 	apiRec := httptest.NewRecorder()
 	handler.ServeHTTP(apiRec, apiReq)
 	if apiRec.Body.String() != `{"surface":"api"}` {
-		t.Fatalf("GET /v1/pantry/items through api.cafaye.test = %q, want the path table's backend", apiRec.Body.String())
+		t.Fatalf("GET /v1/pantry/items through api.anywaye.test = %q, want the path table's backend", apiRec.Body.String())
 	}
 
 	authReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/oidc/authorize", nil)
-	authReq.Host = "auth.cafaye.test"
+	authReq.Host = "auth.anywaye.test"
 	authRec := httptest.NewRecorder()
 	handler.ServeHTTP(authRec, authReq)
 	if authRec.Body.String() != `{"surface":"auth"}` {
-		t.Fatalf("GET /oidc/authorize through auth.cafaye.test = %q, want the vhost's backend", authRec.Body.String())
+		t.Fatalf("GET /oidc/authorize through auth.anywaye.test = %q, want the vhost's backend", authRec.Body.String())
 	}
 }

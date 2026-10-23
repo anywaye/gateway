@@ -1,14 +1,14 @@
 # AGENTS.md
 
-Conventions for `gateway`, the cafaye public gateway. Read this before changing
-anything; the house rules apply on top of it — SSH remotes for the repositories cafaye owns, and tests first: write the test, watch it fail, then implement.
+Conventions for `gateway`, the anywaye public gateway. Read this before changing
+anything; the house rules apply on top of it — SSH remotes for the repositories anywaye owns, and tests first: write the test, watch it fail, then implement.
 
 ## What this repository is
 
 `gateway`, one HTTP process, **mid-rewrite into Go**. It is the only door into a
-cafaye deployment: it authenticates callers, limits what they can ask for, and
+anywaye deployment: it authenticates callers, limits what they can ask for, and
 (forwards requests) to the service that owns the work. The contracts are owned by
-`cafaye/core`; the manifest in `cafaye.yml` is how the other tools find this
+`anywaye/core`; the manifest in `anywaye.yml` is how the other tools find this
 service.
 
 **TWO IMPLEMENTATIONS ARE LIVE AND BOTH ARE CURRENT.** `src/` is TypeScript on
@@ -306,7 +306,7 @@ not a package: SHA-256 for an API key and for a bucket digest, and
 **Comments say why.** Explain the decision and the constraint, not the
 mechanism. A comment restating the line below it is noise.
 
-**`cafaye.yml` follows core's frozen schema.** It is `additionalProperties:
+**`anywaye.yml` follows core's frozen schema.** It is `additionalProperties:
 false`, so a field core does not define is a validation failure, not a comment.
 `exposes` is missing on purpose and the reason is a `DECISION NEEDED` callout in
 the file: filling it in needs an OpenAPI document, and specs are manager-owned.
@@ -348,7 +348,7 @@ refused.
 series and not the patch, which is what `pantry` does with its `RUST_VERSION` —
 and the pin itself, 1.26.1, is what `pantry` and `identity` say.
 `bin/prime-go` compares mise.toml against go.mod **before it runs anything**, and
-compares both against the running toolchain, because the cafaye-rb lesson is that
+compares both against the running toolchain, because the anywaye-rb lesson is that
 a developer on a newer compiler silently produces a binary CI never built and
 reads the difference as a defect in the code under test.
 

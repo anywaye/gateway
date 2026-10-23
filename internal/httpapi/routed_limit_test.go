@@ -40,7 +40,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
 // The frozen instant both tests below read, and the allowance they spend.

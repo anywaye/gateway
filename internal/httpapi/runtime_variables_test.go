@@ -23,8 +23,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
-	"github.com/cafaye/gateway/internal/testkeys"
+	"github.com/anywaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/testkeys"
 )
 
 // runtimeVariables is every variable `RuntimeOptions` reads, and the assertion is

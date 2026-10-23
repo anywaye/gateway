@@ -49,8 +49,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
-	"github.com/cafaye/gateway/internal/session"
+	"github.com/anywaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/session"
 )
 
 // namespace is gateway's own session prefix.

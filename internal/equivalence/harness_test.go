@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/httpapi"
+	"github.com/anywaye/gateway/internal/httpapi"
 )
 
 // How long one request gets to answer. Bounded rather than retried: an unbounded

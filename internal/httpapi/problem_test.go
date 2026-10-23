@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/api"
 )
 
 // This file holds core's error envelope — the one every rejection in gateway
@@ -52,7 +52,7 @@ func TestAProblemIsTheDocumentedEnvelope(t *testing.T) {
 	decode(t, rec, &body)
 
 	want := map[string]any{
-		"type":     "https://docs.cafaye.com/errors/unauthorized",
+		"type":     "https://docs.anywaye.com/errors/unauthorized",
 		"title":    "Unauthorized",
 		"status":   float64(401),
 		"detail":   "bearer token is not acceptable",

@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // request is a request with a socket peer and any headers a test wants.

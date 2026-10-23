@@ -29,7 +29,7 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 # and the Dockerfile's ARG GO_VERSION), and nothing makes the go command
 # enforce either. Without the check a developer on a newer Go silently produces a
 # binary CI never built, and reads the difference as a defect in the code under
-# test — the cafaye-rb lesson, in a second language.
+# test — the anywaye-rb lesson, in a second language.
 if ! command -v go >/dev/null 2>&1; then
   echo "bin/prime-go: go is not on PATH — run 'mise install' in this worktree" >&2
   exit 127
@@ -282,11 +282,11 @@ fi
 # `publish.reusable.yml`. A caller that inlines the steps has forked the
 # composition: a second copy of the publish path that drifts, which is the
 # drift kit exists to prevent. The ref is `@master` because that is how every
-# cafaye service calls kit's workflows — see the `ci` job in this repository's
+# anywaye service calls kit's workflows — see the `ci` job in this repository's
 # own ci.yml.
-if ! grep -qE '^[[:space:]]*uses: cafaye/kit/\.github/workflows/publish\.reusable\.yml@master$' "$caller"; then
+if ! grep -qE '^[[:space:]]*uses: anywaye/kit/\.github/workflows/publish\.reusable\.yml@master$' "$caller"; then
   echo "bin/prime-go: $caller does not call kit's composed publish workflow." >&2
-  echo "  Wanted: uses: cafaye/kit/ci/publish.reusable.yml@master" >&2
+  echo "  Wanted: uses: anywaye/kit/ci/publish.reusable.yml@master" >&2
   echo "  The composition lives in kit; a caller that inlines the steps has" >&2
   echo "  forked it, and a fork is a second copy that drifts." >&2
   exit 1
@@ -368,20 +368,20 @@ step "the chart names the image the publish loop pushes"
 # exists because the two disagreed in one value and nothing read it.
 #
 # WHAT WAS MEASURED, on a Contabo box: `charts/gateway/values.yaml` said
-# `repository: cafaye/gateway`, with no registry host. The Deployment renders
+# `repository: anywaye/gateway`, with no registry host. The Deployment renders
 # `"{{ .Values.image.repository }}:{{ .Values.image.tag }}"`, so containerd
 # resolved the hostless value against Docker Hub and the pod reached image-pull
 # and failed forever:
 #
-#     Failed to pull image "cafaye/gateway:0.1.0": ... pull access denied,
+#     Failed to pull image "anywaye/gateway:0.1.0": ... pull access denied,
 #     repository does not exist or may require authorization
 #
 # The chart was the only place the published name appeared without its host.
-# `docker-compose.yml`'s `cafaye/gateway:dev` and the `Dockerfile`'s
-# `docker build -t cafaye/gateway:dev` are LOCAL tags — `docker compose build`
+# `docker-compose.yml`'s `anywaye/gateway:dev` and the `Dockerfile`'s
+# `docker build -t anywaye/gateway:dev` are LOCAL tags — `docker compose build`
 # writes the former, and neither is ever pulled — so they are correctly bare and
 # are deliberately not asserted here. Every sibling chart names the host
-# (`ghcr.io/cafaye/identity`, …).
+# (`ghcr.io/anywaye/identity`, …).
 #
 # WHY THE EXPECTED VALUE IS DERIVED AND NOT TYPED. kit's image workflow pushes
 # to `ghcr.io/<github.repository>`, lowercased, and takes no input for the name:
@@ -393,7 +393,7 @@ step "the chart names the image the publish loop pushes"
 #
 # THE HOST TEST IS A HOST TEST, NOT A CHARSET. A repository value is
 # `<host>/<path>`; containerd reads a first segment with no `.` and no `:` as a
-# Docker Hub namespace, so `cafaye/gateway` IS `docker.io/cafaye/gateway`. The
+# Docker Hub namespace, so `anywaye/gateway` IS `docker.io/anywaye/gateway`. The
 # equality below catches the drift; this test is what makes the failure message
 # name Docker Hub instead of printing two strings that differ at character one.
 values="charts/gateway/values.yaml"
@@ -452,8 +452,8 @@ echo "chart image: $values sets image.repository to $published, the image the pu
 # repository check above names the image; this one names the BUILD, and the
 # two digests in the brief are the whole argument:
 #
-#     registry: ghcr.io/cafaye/gateway:0.1.0 → sha256:c264…37165
-#     node:     ghcr.io/cafaye/gateway:0.1.0 → sha256:8e60…e79b
+#     registry: ghcr.io/anywaye/gateway:0.1.0 → sha256:c264…37165
+#     node:     ghcr.io/anywaye/gateway:0.1.0 → sha256:8e60…e79b
 #
 # The Deployment rendered `repository:tag`, `image.tag` is a hardcoded
 # constant here, and the publish loop OVERWRITES that tag on every master
@@ -474,7 +474,7 @@ if [ -z "$image_digest" ]; then
   echo "bin/prime-go: $values sets no image.digest, and the Deployment renders" >&2
   echo "  its container image from exactly that value — the digest is the only" >&2
   echo "  name for an image that cannot move. The measured failure is two" >&2
-  echo "  digests for one tag: the registry's ghcr.io/cafaye/gateway:0.1.0 held" >&2
+  echo "  digests for one tag: the registry's ghcr.io/anywaye/gateway:0.1.0 held" >&2
   echo "  sha256:c264…37165 while the node ran sha256:8e60…e79b, six hours" >&2
   echo "  behind, because a chart pinned by tag renders an UNCHANGED Deployment" >&2
   echo "  and Argo never rolls it. Publish writes the digest" >&2

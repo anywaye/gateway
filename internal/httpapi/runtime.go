@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cafaye/gateway/internal/auth"
-	"github.com/cafaye/gateway/internal/ratelimit"
-	"github.com/cafaye/gateway/internal/sessionredis"
+	"github.com/anywaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/sessionredis"
 )
 
 // Config is everything `cmd/gateway` needs to serve, as read from the
@@ -401,7 +401,7 @@ func routesFromEnv(env Env) (RouteTable, error) {
 // and a per-host variable per host would be N variables whose names encode a
 // routing decision the table states instead:
 //
-//	VHOST_TABLE={"auth.cafaye.test":{"baseUrl":"http://identity:8080"}}
+//	VHOST_TABLE={"auth.anywaye.test":{"baseUrl":"http://identity:8080"}}
 //
 // Unset or empty means no split at all, which is the honest default for a
 // deployment that has not decided names mean different backends: routing is the

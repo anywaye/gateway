@@ -4,14 +4,14 @@
 # every value that belongs in a manifest is here, and nothing in the templates
 # is a hand-typed constant a generator could not emit.
 #
-# WHAT THIS CHART IS: the deploy artifact for the cafaye front door, pulled by
+# WHAT THIS CHART IS: the deploy artifact for the anywaye front door, pulled by
 # Argo from the OCI chart repository. The one Application is kit's —
 # `templates/substrate/manifests/applications/gateway.yaml` (source
-# `oci://ghcr.io/cafaye/charts`, chart `gateway`, targetRevision 0.1.0,
+# `oci://ghcr.io/anywaye/charts`, chart `gateway`, targetRevision 0.1.0,
 # destination namespace `gateway`, CreateNamespace=true). This repository's own
 # copy (`deploy/argocd/gateway-application.yaml`) was deleted in packet
 # gateway-w87: it collided with kit's by name and namespace, used a git source
-# the OCI design rejects, and targeted a `cafaye` namespace no service uses.
+# the OCI design rejects, and targeted a `anywaye` namespace no service uses.
 # It is NOT a second deploy path: DEPLOYMENT.md is explicit that there is no
 # helm-from-CI template in kit and one may never be added, because a second
 # deploy path beside Argo is a split brain. The chart is pulled by Argo, or it
@@ -23,25 +23,25 @@
 image:
   # WITH the registry host, and the host is not decoration. A repository value
   # with no host is resolved by containerd against Docker Hub, so a bare
-  # `cafaye/gateway` asks for `docker.io/cafaye/gateway` — not ours — and the
+  # `anywaye/gateway` asks for `docker.io/anywaye/gateway` — not ours — and the
   # pod reaches image-pull and fails forever:
   #
-  #     Failed to pull image "cafaye/gateway:0.1.0": ... pull access denied,
+  #     Failed to pull image "anywaye/gateway:0.1.0": ... pull access denied,
   #     repository does not exist or may require authorization
   #
   # The fleet's images live at `ghcr.io/<github.repository>` — kit's image
   # workflow derives the name from the repository and takes no input for it, so
   # this value is that derivation, not an independent choice — and every other
-  # service's chart names it with the host (`ghcr.io/cafaye/identity`, …).
+  # service's chart names it with the host (`ghcr.io/anywaye/identity`, …).
   # `bin/prime` fails the build if this value loses the host or stops naming the
   # published path; the check is at the publish step, beside the caller that
   # pushes the image.
-  repository: ghcr.io/cafaye/gateway
+  repository: ghcr.io/anywaye/gateway
   # THE REFERENCE, AND IT IS IMMUTABLE ON PURPOSE — the defect this field
   # exists to close was MEASURED, on the live box:
   #
-  #     registry: ghcr.io/cafaye/gateway:0.1.0 → sha256:c2647050487…37165
-  #     node:     ghcr.io/cafaye/gateway:0.1.0 → sha256:8e6059b012…e79b
+  #     registry: ghcr.io/anywaye/gateway:0.1.0 → sha256:c2647050487…37165
+  #     node:     ghcr.io/anywaye/gateway:0.1.0 → sha256:8e6059b012…e79b
   #
   # Two different digests, six hours after the Redis AUTH fix was merged,
   # published and READY IN THE REGISTRY. Nothing closed the gap, and both
@@ -60,7 +60,7 @@ image:
   # WHO WRITES THIS FIELD: `chart.reusable.yml`, in the publish run, from the
   # digest of the image it just built (`publish.reusable.yml` hands it the
   # image job's build output) — so the OCI chart that lands in
-  # `oci://ghcr.io/cafaye/charts/gateway:0.1.0` names the image the registry
+  # `oci://ghcr.io/anywaye/charts/gateway:0.1.0` names the image the registry
   # holds beside it. The value committed here is the LAST PUBLISHED image,
   # which is what a `push: false` run packages and what `helm template` on a
   # fresh clone renders. `bin/prime-go` refuses this file with an empty or
@@ -69,7 +69,7 @@ image:
   # pod in image-pull failure with nothing naming this field.
   #
   # THE COMMITTED VALUE, AND HOW FAST IT AGES. It is the digest
-  # `ghcr.io/cafaye/gateway:0.1.0` held when this packet was written, read
+  # `ghcr.io/anywaye/gateway:0.1.0` held when this packet was written, read
   # from the registry with `docker buildx imagetools inspect` and quoted in
   # the brief. The value committed by the previous packet
   # (`roll-c5-image-digest`) was `sha256:9edaa9ce…` (master `f8a5caa`) — so
@@ -91,7 +91,7 @@ image:
   # `kubectl get deploy -o jsonpath`, and the digest above is the half that
   # cannot move. The publish path still pushes this tag; the Deployment just
   # no longer pulls by it. Until a release exists, `docker-compose.yml`'s
-  # `cafaye/gateway:dev` is the LOCAL image, built by `docker compose build`
+  # `anywaye/gateway:dev` is the LOCAL image, built by `docker compose build`
   # and never pulled.
   tag: "0.1.0"
   pullPolicy: IfNotPresent
@@ -115,9 +115,9 @@ ingress:
   # Traefik is k3s's default ingress controller (DEPLOYMENT.md), so the
   # Ingress is a plain `networking.k8s.io/v1` resource with this class.
   className: traefik
-  # The platform's front-door name: `api.cafaye.com`, the plan's public door
+  # The platform's front-door name: `api.anywaye.com`, the plan's public door
   # (PLAN-names-urls-rollout.md §1). Per-tenant deployments override it.
-  host: api.cafaye.com
+  host: api.anywaye.com
   # The cert-manager ClusterIssuer that fills `ingress.tls.secretName`:
   # `letsencrypt-prod`, the issuer the substrate's install creates
   # (DEPLOYMENT.md, "The ACME solver"). The chart NAMES the issuer and never
@@ -152,9 +152,9 @@ env:
   # Where tokens are VERIFIED: the issuer-only base URL; gateway appends
   # `/.well-known/jwks.json` itself. Must match the `iss` identity mints and be
   # fetchable by this pod for the key set: the plan's OIDC issuer,
-  # `auth.cafaye.com` (PLAN-names-urls-rollout.md §1). An https origin in every
+  # `auth.anywaye.com` (PLAN-names-urls-rollout.md §1). An https origin in every
   # environment, including this one.
-  IDENTITY_ISSUER: "https://auth.cafaye.com"
+  IDENTITY_ISSUER: "https://auth.anywaye.com"
   # Where a session is REQUESTED: identity's in-cluster Service. The two
   # variables for one service on purpose — the issuer is an https origin, the
   # address this dials is a service name, and inside a cluster `localhost` is
@@ -199,7 +199,7 @@ env:
   #     `principal: ["sub"]` — sub only — so gateway mints its short-lived
   #     RS256 assertion (`aud` = pantry's origin) on every proxied write.
   #     `POST /v1/pantry-writes/projects` reaches pantry as `POST /projects`
-  #     with `x-cafaye-principal` attached. `github_id` stays out: pantry
+  #     with `x-anywaye-principal` attached. `github_id` stays out: pantry
   #     treats it as optional metadata, and a second claim is a second
   #     credential surface nobody asked for.
   #
@@ -211,23 +211,23 @@ env:
   # to the secret below is a one-line change when a packet wants it.
   # THE ORIGIN IS THE OPERATED REGISTRY, AND IT IS NOT IN THIS CLUSTER.
   # `http://pantry:8080` was an in-cluster name for a service a customer's box
-  # must never run: pantry is Cafaye-proprietary and its licence says it "runs on
-  # Cafaye infrastructure … the box pattern applies: closed code, public HTTPS
+  # must never run: pantry is Anywaye-proprietary and its licence says it "runs on
+  # Anywaye infrastructure … the box pattern applies: closed code, public HTTPS
   # endpoint". The live consequence was a public 503 —
   #
-  #   GET https://api.cafaye.com/v1/pantry = 503 "the service this request needs
+  #   GET https://api.anywaye.com/v1/pantry = 503 "the service this request needs
   #   could not be reached"
   #
   # — because gateway published two routes to a service the substrate does not
-  # (and must not) deploy. `cafaye/cafe` already names the right origin:
+  # (and must not) deploy. `anywaye/cafe` already names the right origin:
   # `internal/resolve/pantry.go:94` and `internal/publish/publish.go:461` both
-  # read "BaseURL is pantry's origin, e.g. https://pantry.cafaye.com", and
+  # read "BaseURL is pantry's origin, e.g. https://pantry.anywaye.com", and
   # `CAF_PANTRY_URL` is the environment variable a `caf` caller sets. This value
   # is that same origin, in the one place gateway reads it.
   #
   # It is also the `aud` the assertion is minted with, so pantry's own
   # `PANTRY_AUDIENCE` must equal it — the pairing the note further down states.
-  ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"https://pantry.cafaye.com","public":true},"/v1/pantry-writes":{"baseUrl":"https://pantry.cafaye.com","principal":["sub"]}}'
+  ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"https://pantry.anywaye.com","public":true},"/v1/pantry-writes":{"baseUrl":"https://pantry.anywaye.com","principal":["sub"]}}'
   # How long a minted principal assertion is good for, in milliseconds.
   # 120000 is the mechanism's default, restated here so the launch value sits
   # next to the table that requires it. Refused above 600000 — pantry's own
@@ -283,7 +283,7 @@ secrets:
   # The key inside it holding the PKCS#8 PEM. `openssl genpkey -algorithm RSA
   # -pkeyopt rsa_keygen_bits:2048` writes one; the public half goes to pantry
   # out of band as its verifier key, and PANTRY_AUDIENCE there must equal the
-  # origin ROUTE_TABLE above names (`https://pantry.cafaye.com`) — pantry
+  # origin ROUTE_TABLE above names (`https://pantry.anywaye.com`) — pantry
   # refuses any other `aud`.
   assertionKeySecretKey: ASSERTION_SIGNING_KEY
 

@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cafaye/gateway/internal/api"
-	"github.com/cafaye/gateway/internal/session"
+	"github.com/anywaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/session"
 )
 
 // The browser-facing half of the gateway: a BFF.

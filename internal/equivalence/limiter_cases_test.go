@@ -40,7 +40,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
 // generatedRegistration matches every route the generated document registers, so

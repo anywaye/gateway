@@ -12,9 +12,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/gateway/internal/api"
-	"github.com/cafaye/gateway/internal/auth"
-	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
 // Options is the whole configuration of a gateway, and it is an argument to

@@ -25,7 +25,7 @@ spec:
           #
           # `repository@digest` is the arm a PUBLISHED chart takes, and the
           # defect it closes was measured on the live box: the registry's
-          # `ghcr.io/cafaye/gateway:0.1.0` held sha256:c264…37165 (the Redis
+          # `ghcr.io/anywaye/gateway:0.1.0` held sha256:c264…37165 (the Redis
           # AUTH fix) while the node ran sha256:8e60…e79b, six hours older.
           # `repository:tag` renders a string IDENTICAL before and after a new
           # build — the tag is overwritten on every master push — so Argo's

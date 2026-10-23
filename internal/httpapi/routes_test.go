@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/api"
 )
 
 // This file holds the ROUTER to the DOCUMENT, in both directions.

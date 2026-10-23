@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/cafaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/api"
 )
 
 // What a readiness probe reports for one dependency. It is the generated type,

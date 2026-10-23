@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // The principal assertion, and MD19's four properties.
@@ -89,7 +89,7 @@ func decodeAssertion(t *testing.T, compact string) decodedAssertion {
 }
 
 // verify checks the signature the way any independent service would: with the
-// published key, `net/http`'s own standard library, and no cafaye-specific code.
+// published key, `net/http`'s own standard library, and no anywaye-specific code.
 func (d decodedAssertion) verify(t *testing.T, key *rsa.PublicKey) {
 	t.Helper()
 
@@ -278,8 +278,8 @@ func TestTheAssertionVerifiesAgainstThePublishedJWK(t *testing.T) {
 //
 // `aud` is the upstream's **origin**, which `ValidateRouteTable` has already
 // reduced it to, so a leaked assertion is worth nothing on any other upstream — and
-// the check is one any JWT verifier that has never heard of cafaye can make, with
-// no cafaye-specific claim to understand first.
+// the check is one any JWT verifier that has never heard of anywaye can make, with
+// no anywaye-specific claim to understand first.
 //
 // The lifetime is the second half and it is a *ceiling*, not a default: a lifetime
 // nobody may exceed cannot be configured into something that is no longer

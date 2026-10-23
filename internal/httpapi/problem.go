@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cafaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/api"
 )
 
 // core's error envelope, ported from `src/problem.ts` (removed at cutover): RFC 9457 problem+json
-// with cafaye's extensions (`core/docs/openapi-conventions.md`, "Error
+// with anywaye's extensions (`core/docs/openapi-conventions.md`, "Error
 // envelope"). No service invents its own error body, and this is the one every
 // rejection in gateway goes through.
 //
@@ -29,12 +29,12 @@ import (
 // reserved list. They are the slugs identity already answers with
 // (`identity/internal/httpapi/problem.go`), and one vocabulary across the
 // platform beats a gateway-private synonym for the same failure. Recorded as a
-// DECISION NEEDED in cafaye.yml, and carried over unchanged.
+// DECISION NEEDED in anywaye.yml, and carried over unchanged.
 
 // problemTypeBase is where every problem's `type` lives. The document pins it:
 // the type is a stable URI and the `code` is the slug under it, so a client can
 // switch on one and print the other.
-const problemTypeBase = "https://docs.cafaye.com/errors/"
+const problemTypeBase = "https://docs.anywaye.com/errors/"
 
 // titles is the fixed human-readable summary per code, and it is exhaustive over
 // the document's enum rather than a lookup with a fallback. `src/problem.ts` (removed at cutover)

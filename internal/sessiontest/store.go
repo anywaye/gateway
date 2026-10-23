@@ -51,7 +51,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cafaye/gateway/internal/session"
+	"github.com/anywaye/gateway/internal/session"
 )
 
 // New is a map-backed `SessionStore`, per process, expired records dropped on the

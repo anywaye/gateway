@@ -139,7 +139,7 @@ type Shutdown func(context.Context) error
 // request, still computes attributes nobody reads, and still costs a goroutine
 // and a batch timer for the life of the process. Core's otel-endpoint schema asks
 // for a no-op that allocates nothing, and `noop.NewTracerProvider()` is the SDK's
-// own answer rather than a cafaye reimplementation of "disabled".
+// own answer rather than a anywaye reimplementation of "disabled".
 //
 // # THE PROPAGATOR IS NAMED, NOT INHERITED
 //
@@ -284,7 +284,7 @@ var _ Exporter = (*otlptrace.Exporter)(nil)
 func StartServer(ctx context.Context, header http.Header, name string) (context.Context, trace.Span) {
 	ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(header))
 	// The instrumentation scope is the SERVICE name, not the package path, because
-	// a trace view groups by it and `github.com/cafaye/gateway/internal/telemetry`
+	// a trace view groups by it and `github.com/anywaye/gateway/internal/telemetry`
 	// is not a service anyone operates.
 	tracer := otel.Tracer(ServiceName)
 	return tracer.Start(ctx, name, trace.WithSpanKind(trace.SpanKindServer))

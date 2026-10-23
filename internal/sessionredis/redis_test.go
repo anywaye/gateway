@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
-	"github.com/cafaye/gateway/internal/session"
+	"github.com/anywaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/session"
 )
 
 // The store, over a fake Redis.

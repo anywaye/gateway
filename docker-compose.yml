@@ -10,7 +10,7 @@
 #
 #   stop, keep the data   the same two -f flags, and `down` instead of `up -d`
 #
-# `<kit>` is a clone of https://github.com/cafaye/kit at the commit named in
+# `<kit>` is a clone of https://github.com/anywaye/kit at the commit named in
 # `kit.ref`, which is the file at this repository's root. That one line is the
 # whole of what this repository declares about kit: WHICH BYTES of it a machine
 # runs, reviewable, identical on every clone.
@@ -54,7 +54,7 @@
 #   $ docker compose --project-directory . -f <kit>/… -f ./docker-compose.yml config
 #       source: /Users/…/wt-m39-courier-27/postgres/initdb        <- courier's tree
 #   $ KIT_COMPOSE_DIR=<kit>/templates/compose docker compose … config
-#       source: /Users/kaka/.cache/cafaye/kit/f6d3b74…/templates/compose/postgres/initdb
+#       source: /Users/kaka/.cache/anywaye/kit/f6d3b74…/templates/compose/postgres/initdb
 #
 # `docker compose config` printing that `source:` is the check for this, and it
 # needs neither a container nor a volume.
@@ -91,7 +91,7 @@
 #   this script and isolates nothing.
 #
 # On this machine that message does not appear: `postgres-data` is one named
-# volume under one project name (`${KIT_STACK_NAME:-cafaye}`), created by
+# volume under one project name (`${KIT_STACK_NAME:-anywaye}`), created by
 # whichever service came first, and `docker-entrypoint-initdb.d` runs once per
 # volume — so the cluster is already provisioned and the service that would have
 # named a tenant is never asked. On a FRESH volume — a new laptop, a CI runner —
@@ -194,7 +194,7 @@ services:
       context: .
       args:
         GO_VERSION: "1.26"
-    image: cafaye/gateway:dev
+    image: anywaye/gateway:dev
 
     # ON KIT'S `platform` NETWORK, and this line is not optional tidiness.
     #
@@ -322,7 +322,7 @@ services:
       # pantry's reads and writes share paths (`GET` and `POST /v1/projects`
       # differ by method, which no prefix can see): `POST
       # /v1/pantry-writes/projects` reaches pantry as `POST /projects` with
-      # `x-cafaye-principal` attached. Unset stays the default until then, and
+      # `x-anywaye-principal` attached. Unset stays the default until then, and
       # uncommenting the table requires the two variables below it: a
       # principal entry with no signing key mints nothing, which is a silent
       # 401 at pantry's second hop rather than a refusal to boot.
@@ -361,7 +361,7 @@ services:
     # anything else on the machine.
     #
     # `tag` is the process identity the collector promotes to `service.name` when a
-    # record has none — see `transform/cafaye_logs`. It has to match the service
+    # record has none — see `transform/anywaye_logs`. It has to match the service
     # name or a crash is filed against `unknown`.
     #
     # And it is why this file cannot be run on its own any more: the driver
@@ -392,7 +392,7 @@ services:
     # container network where the embedded DNS answers. Same receiver, same
     # bytes, no dependency on the daemon's resolver.
     #
-    # `tag: "gateway"` had one job: the collector's `transform/cafaye_logs`
+    # `tag: "gateway"` had one job: the collector's `transform/anywaye_logs`
     # promotes it to `service.name` when a record carries none. OTLP log records
     # carry `service.name` from the SDK's resource attributes instead.
     #

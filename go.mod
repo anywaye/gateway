@@ -1,4 +1,4 @@
-module github.com/cafaye/gateway
+module github.com/anywaye/gateway
 
 // The SAME number `pantry/go.mod` and `identity/go.mod` already state, and the
 // gate asserts all three copies against each other — see `bin/prime-go`. Nothing

@@ -23,7 +23,7 @@
 // header on the 429 whose absence changes what a client does next.
 package equivalence
 
-import "github.com/cafaye/gateway/internal/ratelimit"
+import "github.com/anywaye/gateway/internal/ratelimit"
 
 // headerValuesComparedByValue is the rate-limit family compared as VALUES rather
 // than as presence, plus `Retry-After`.

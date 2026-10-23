@@ -1,4 +1,4 @@
-// Command gateway serves the cafaye public gateway.
+// Command gateway serves the anywaye public gateway.
 //
 // The one thing in this file that matters is what it does NOT do: it does not
 // read a configuration value, decide a limit, verify a token or name an
@@ -27,8 +27,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cafaye/gateway/internal/httpapi"
-	"github.com/cafaye/gateway/internal/telemetry"
+	"github.com/anywaye/gateway/internal/httpapi"
+	"github.com/anywaye/gateway/internal/telemetry"
 )
 
 // healthcheckTimeout bounds the probe. Short, because a compose healthcheck that

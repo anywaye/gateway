@@ -46,9 +46,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cafaye/gateway/internal/httpapi"
-	"github.com/cafaye/gateway/internal/session"
-	"github.com/cafaye/gateway/internal/sessiontest"
+	"github.com/anywaye/gateway/internal/httpapi"
+	"github.com/anywaye/gateway/internal/session"
+	"github.com/anywaye/gateway/internal/sessiontest"
 )
 
 // Scenario names.
@@ -450,7 +450,7 @@ func (u *upstream) serve(w http.ResponseWriter, r *http.Request) {
 		// comparison can prove none of it reaches the caller or the problem body.
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusInternalServerError)
-		recorder(w, `<html>dial tcp 10.0.3.7:8080: token=cafaye_equivalence_secret</html>`)
+		recorder(w, `<html>dial tcp 10.0.3.7:8080: token=anywaye_equivalence_secret</html>`)
 
 	case strings.HasSuffix(r.URL.EscapedPath(), "/redirect"):
 		w.Header().Set("Location", "/ok")

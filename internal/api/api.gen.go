@@ -308,7 +308,7 @@ type Principal struct {
 	Sub string `json:"sub"`
 }
 
-// Problem The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Problem The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -340,7 +340,7 @@ type Problem struct {
 	// TraceID Always present, and always equal to the `X-Trace-Id` response header.
 	TraceID string `json:"trace_id"`
 
-	// Type A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.
+	// Type A stable `https://docs.anywaye.com/errors/<code>` URI — the machine-readable contract.
 	Type string `json:"type"`
 }
 
@@ -416,7 +416,7 @@ type Origin = string
 // SecFetchSite defines model for SecFetchSite.
 type SecFetchSite string
 
-// AccountLocked The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// AccountLocked The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -427,7 +427,7 @@ type SecFetchSite string
 // the caller.
 type AccountLocked = Problem
 
-// BodyTooLarge The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// BodyTooLarge The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -438,7 +438,7 @@ type AccountLocked = Problem
 // the caller.
 type BodyTooLarge = Problem
 
-// Conflict The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Conflict The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -458,7 +458,7 @@ type Conflict = Problem
 // `Content-Type`, not on the shape of the body.
 type InternalError = V0Error
 
-// MalformedBody The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// MalformedBody The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -469,7 +469,7 @@ type InternalError = V0Error
 // the caller.
 type MalformedBody = Problem
 
-// NotSameOrigin The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// NotSameOrigin The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -480,7 +480,7 @@ type MalformedBody = Problem
 // the caller.
 type NotSameOrigin = Problem
 
-// Throttled The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Throttled The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -491,7 +491,7 @@ type NotSameOrigin = Problem
 // the caller.
 type Throttled = Problem
 
-// Unauthenticated The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Unauthenticated The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -502,7 +502,7 @@ type Throttled = Problem
 // the caller.
 type Unauthenticated = Problem
 
-// Unavailable The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Unavailable The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.
@@ -513,7 +513,7 @@ type Unauthenticated = Problem
 // the caller.
 type Unavailable = Problem
 
-// ValidationFailed The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// ValidationFailed The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every rejection on this surface is this shape — **except** the `404` and
 // the `500`, which are `V0Error` with `application/json`. Read the
 // `Content-Type` to tell them apart; nothing else does.

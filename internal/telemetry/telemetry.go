@@ -8,8 +8,8 @@
 // which half of it is an instruction from core is an instruction from whoever
 // last touched the generator.
 //
-// Derived, read out of the cafaye core telemetry contract vendored at
-// cafaye/internal/contract/schemas/telemetry/ and pinned there by sha256:
+// Derived, read out of the anywaye core telemetry contract vendored at
+// anywaye/internal/contract/schemas/telemetry/ and pinned there by sha256:
 // the three per-signal attribute allowlists and their value vocabularies, the
 // names core refuses as a measurement attribute, the resource attributes, the
 // error.type vocabulary, the span-name grammar, the OTEL_SDK_DISABLED switch, the three per-signal switches, and the four negative
@@ -20,12 +20,12 @@
 //
 // Written down here, and not derived from anything, because core's schemas
 // constrain the shape of these values and do not state them: the namespace
-// every cafaye service groups under ("cafaye"), and the address of the
+// every anywaye service groups under ("anywaye"), and the address of the
 // collector that ships with the local stack ("http://otel-collector:4317"). core's docs/observability.md and its
 // examples/valid/telemetry/otel-endpoint.json agree on both; they are the
 // fleet's documented values, not this generator's invention.
 //
-// To change any of it, change cafaye.yml or change core, and run
+// To change any of it, change anywaye.yml or change core, and run
 // `caf gen telemetry -force` again. The test beside this file is
 // the thing that notices you did not.
 
@@ -60,9 +60,9 @@ const ServiceName = "gateway"
 
 // Namespace is what this service groups under in a backend. It is what lets one
 // collector show the fleet as one thing rather than as six unrelated services,
-// and it is a Stable OpenTelemetry resource attribute rather than a cafaye
+// and it is a Stable OpenTelemetry resource attribute rather than a anywaye
 // invention.
-const Namespace = "cafaye"
+const Namespace = "anywaye"
 
 // ---------------------------------------------------------------------------
 // the endpoint contract, and the no-op path
@@ -87,7 +87,7 @@ const (
 
 // The switches, and what turning each of them off means. The global one is the
 // OpenTelemetry specification's own kill switch, and it is what the no-op path
-// is implemented with rather than a cafaye reimplementation of "disabled": six
+// is implemented with rather than a anywaye reimplementation of "disabled": six
 // languages re-implementing one word is how six services acquire six different
 // definitions of it, and the difference between them is somebody's production
 // incident.

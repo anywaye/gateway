@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/gateway/internal/testkeys"
+	"github.com/anywaye/gateway/internal/testkeys"
 )
 
 // limitPolicy is the `RateLimit-Policy` value as a gateway builds it: the policy

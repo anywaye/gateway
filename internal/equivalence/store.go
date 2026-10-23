@@ -32,8 +32,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/cafaye/gateway/internal/httpapi"
-	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/httpapi"
+	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
 // The instant this package's limiter reads. 2026-01-01T00:00:00Z, whole seconds

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/auth"
-	"github.com/cafaye/gateway/internal/ratelimit"
-	"github.com/cafaye/gateway/internal/testkeys"
+	"github.com/anywaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/testkeys"
 )
 
 // newJWKSFixture is a served key set and a token that verifies against it.

@@ -60,8 +60,8 @@
 //     that performs that direction, and adding one would give identity a
 //     token-minting endpoint aimed at somebody else's cookie.
 //   - Go's `internal/` rule forbids the import outright:
-//     `github.com/cafaye/identity/internal/sessions` is importable only from
-//     `github.com/cafaye/identity/...`. `gateway` is a different module, so even
+//     `github.com/anywaye/identity/internal/sessions` is importable only from
+//     `github.com/anywaye/identity/...`. `gateway` is a different module, so even
 //     with the direction right the compiler would refuse it. Reaching it would
 //     mean identity publishing that package outside `internal/`, which is a change
 //     to identity's public surface and not this repository's to make.

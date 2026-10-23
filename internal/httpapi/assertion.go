@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // The principal assertion: gateway's own signature over who the caller is, sent to
@@ -90,7 +90,7 @@ import (
 // header to carry two answers to two questions is how a service ends up reading
 // the wrong one. The name is namespaced because it is not a standard header and
 // no proxy in the fleet should have an opinion about it.
-const AssertionHeader = "x-cafaye-principal"
+const AssertionHeader = "x-anywaye-principal"
 
 // DefaultAssertionIssuer is what gateway asserts when nothing is configured: an
 // origin, like identity's.

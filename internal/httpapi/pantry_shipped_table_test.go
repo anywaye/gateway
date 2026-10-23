@@ -185,12 +185,12 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			// one proves the entry names a service that EXISTS, which is the
 			// property the shipped table got wrong:
 			//
-			//   GET https://api.cafaye.com/v1/pantry = 503 "the service this
+			//   GET https://api.anywaye.com/v1/pantry = 503 "the service this
 			//   request needs could not be reached"
 			//
 			// because `http://pantry:8080` was an in-cluster name for a service
 			// the substrate does not — and must not — deploy: pantry is
-			// Cafaye-proprietary and runs on Cafaye infrastructure. The check is
+			// Anywaye-proprietary and runs on Anywaye infrastructure. The check is
 			// the SHAPE (an https origin with a public host), not the literal
 			// string, so a second copy of the origin cannot drift here the way
 			// this one did.
@@ -201,8 +201,8 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			//     the same compose network — `http://pantry:8080` is where it
 			//     is, and naming anything else would be wrong there.
 			//   * `charts/gateway/values.yaml` is what a BOX deploys, and a
-			//     box must never run pantry: it is Cafaye-proprietary and "runs
-			//     on Cafaye infrastructure … the box pattern applies: closed
+			//     box must never run pantry: it is Anywaye-proprietary and "runs
+			//     on Anywaye infrastructure … the box pattern applies: closed
 			//     code, public HTTPS endpoint". An in-cluster name in the chart
 			//     is a route to a service that does not exist, which is the live
 			//     503 this check was written from.
@@ -214,7 +214,7 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			if strings.Contains(file, "charts/") {
 				aud, _ := decoded.Claims["aud"].(string)
 				if !strings.HasPrefix(aud, "https://") || strings.Contains(aud, ".svc.cluster.local") || !strings.Contains(aud, ".") {
-					t.Errorf("the DEPLOYED chart mints aud=%q, which is not a public https origin — a box reaches the operated registry over HTTPS, so an in-cluster name here is a route to a service that does not exist (the live 503: GET https://api.cafaye.com/v1/pantry)", aud)
+					t.Errorf("the DEPLOYED chart mints aud=%q, which is not a public https origin — a box reaches the operated registry over HTTPS, so an in-cluster name here is a route to a service that does not exist (the live 503: GET https://api.anywaye.com/v1/pantry)", aud)
 				}
 			}
 

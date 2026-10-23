@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/api"
-	"github.com/cafaye/gateway/internal/auth"
-	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
 // The pass-through, and the security properties it exists to hold.
@@ -630,7 +630,7 @@ func TestTheLogNamesTheShapeOfAnAnswerAndNeverItsBody(t *testing.T) {
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusInternalServerError)
-		io.WriteString(w, `<html>failed to reach pantry: token cafaye_secretvalue</html>`)
+		io.WriteString(w, `<html>failed to reach pantry: token anywaye_secretvalue</html>`)
 	})
 
 	rec := ask(t, Options{Routes: RouteTable{"/v1/pantry": {BaseURL: service.Origin()}}},
@@ -644,7 +644,7 @@ func TestTheLogNamesTheShapeOfAnAnswerAndNeverItsBody(t *testing.T) {
 			t.Errorf("the log does not say %q, so an operator cannot tell a broken service from a down one:\n%s", want, logged.String())
 		}
 	}
-	if strings.Contains(logged.String(), "cafaye_secretvalue") {
+	if strings.Contains(logged.String(), "anywaye_secretvalue") {
 		t.Errorf("the credential from the upstream's body reached the log:\n%s", logged.String())
 	}
 }

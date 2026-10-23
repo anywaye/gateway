@@ -1,6 +1,6 @@
 # identity-public.txt — identity's public /v1 surface, as gateway enforces it.
 #
-# SOURCE: cafaye/identity, openapi/v1.yaml, every operation under /v1/* that
+# SOURCE: anywaye/identity, openapi/v1.yaml, every operation under /v1/* that
 # declares `security: []`. Identity is the authority; gateway never invents an
 # entry here. Do not hand-edit the list below: re-run the extraction and replace
 # the whole body.

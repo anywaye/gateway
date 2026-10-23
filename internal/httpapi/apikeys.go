@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/gateway/internal/api"
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // The three API-key management routes, on the API surface behind the auth gates.

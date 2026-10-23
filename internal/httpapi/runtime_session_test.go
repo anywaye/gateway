@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
 // The wiring, end to end: a gateway built by `RuntimeOptions` from an ENVIRONMENT,

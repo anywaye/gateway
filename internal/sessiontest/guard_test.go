@@ -47,7 +47,7 @@ import (
 // directory whose every file is a program's front door, and derived by walking the
 // directory rather than from a list of names.
 func TestNoProductionFileImportsTheSessionDouble(t *testing.T) {
-	const forbidden = `"github.com/cafaye/gateway/internal/sessiontest"`
+	const forbidden = `"github.com/anywaye/gateway/internal/sessiontest"`
 
 	module, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

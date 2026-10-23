@@ -1,8 +1,8 @@
 ---
-# cafaye.yml — the cafaye project manifest for gateway.
+# anywaye.yml — the anywaye project manifest for gateway.
 #
 # Conforms to core's frozen schema
-# (cafaye/core: schemas/cafaye.manifest.schema.json). Specs are manager-owned:
+# (anywaye/core: schemas/anywaye.manifest.schema.json). Specs are manager-owned:
 # a worker records the shape it is being built against and marks what it cannot
 # decide. See AGENTS.md.
 #
@@ -30,7 +30,7 @@
 # > is infrastructure, not contract). `/healthz` and `/readyz` stay exactly as
 # > they are — recorded here, not resolved here.
 name: gateway
-description: The cafaye public gateway — the only door in, terminating auth and rate limits in front of every service.
+description: The anywaye public gateway — the only door in, terminating auth and rate limits in front of every service.
 # `go`, and it said `typescript` until the otel packet. `src/` was deleted at
 # cutover (f87c891) and `bin/prime` is the Go gate, so `typescript` described an
 # implementation that is not in this repository any more — and it had a cost
@@ -75,7 +75,7 @@ consumes: []
 # >     `scope`. One constant (`SCOPE_CLAIM`) is the whole difference, but until
 # >     it is settled no service can be sure which name to mint.
 # >  3. The default issuer. core documents
-# >     `https://identity.cafaye.com/.well-known/jwks.json`; the packet fixes
+# >     `https://identity.anywaye.com/.well-known/jwks.json`; the packet fixes
 # >     `https://identity.localhost/.well-known/jwks.json` for the compose
 # >     stack. `IDENTITY_ISSUER` overrides it, and the JWKS path is appended to
 # >     the issuer by gateway, not written into the variable.
@@ -109,14 +109,14 @@ consumes: []
 # > unless `REDIS_URL` names a shared store, and this manifest cannot say where
 # > that store is supposed to come from.
 # >
-# >  6. Redis is infrastructure, not a cafaye service, so it is not in
+# >  6. Redis is infrastructure, not a anywaye service, so it is not in
 # >     `dependencies` — the list is for services with a version, and Redis has
 # >     none of the platform's. But a deployment that forgets `REDIS_URL` gets an
 # >     N× limit across N replicas and a counter that resets on every deploy, and
 # >     nothing in the platform would notice. Three questions, none of which a
 # >     worker can answer:
 # >
-# >    a. Is there a managed Redis a cafaye deployment points at — a `pantry`
+# >    a. Is there a managed Redis a anywaye deployment points at — a `pantry`
 # >       service, an operator's own, or something compose brings up? If it is a
 # >       platform service it probably belongs in `dependencies` and in compose.
 # >    b. Should `REDIS_URL` be **required** rather than optional, so a
@@ -159,7 +159,7 @@ consumes: []
 # >
 # >     Reversal cost, stated: one field in one file, or nothing at all if the
 # >     second ruling is taken. The cost of NOT ruling is that the next reader of
-# >     `cafaye.yml` learns nothing about the rewrite from it.
+# >     `anywaye.yml` learns nothing about the rewrite from it.
 # >
 # > Also unverified and worth a ruling: the GCRA Lua in
 # > `src/middleware/rateLimitRedis.ts` is now executed against a real
@@ -171,7 +171,7 @@ consumes: []
 # > rather than a repository one.
 dependencies:
   - name: identity
-    # Provisional: no cafaye service has tagged a release yet, so this is the
+    # Provisional: no anywaye service has tagged a release yet, so this is the
     # platform's initial core range rather than a version identity has shipped.
     version: ^0.1.0
     required: true
@@ -196,10 +196,10 @@ repository:
   # The GitHub repository was renamed guard -> gateway, so this URL is no
   # longer "deliberately stale": the old one redirects, and this one is where
   # the bytes actually live. `cafe dev` and `pantry` read this field.
-  url: git@github.com:cafaye/gateway.git
+  url: git@github.com:anywaye/gateway.git
   defaultBranch: master
   visibility: private
 
 owner:
   team: gateway
-  contact: gateway@cafaye.com
+  contact: gateway@anywaye.com

@@ -13,7 +13,7 @@
 # file. The pattern came from a Rust gate that had the same hole: three files
 # naming a toolchain and a gate that checked none of them, so a developer on a
 # newer compiler read the difference as a defect in the code under test (the
-# cafaye-rb lesson, and it cost a debugging session).
+# anywaye-rb lesson, and it cost a debugging session).
 #
 # The Go pin is TWO files and the gate checks both. 1.26.1 is the toolchain the
 # build and the tests run on, and it is the SAME number `pantry/go.mod` and
@@ -30,7 +30,7 @@
 # for a reader to wonder whether somebody forgot to remove the first one.
 # golangci-lint is the fleet's Go linter. Pinned here so `bin/prime-go` and CI
 # agree on the version that decides whether the tree is lint-clean. The pin
-# lives in one more place: `cafaye/kit/ci/ci.reusable.yml`'s
+# lives in one more place: `anywaye/kit/ci/ci.reusable.yml`'s
 # `golangci/golangci-lint-action` step, which pins the same version via its
 # `version:` input. A bump touches both, in the same commit — otherwise local
 # and CI disagree, which is the defect this packet exists to close.

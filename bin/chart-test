@@ -194,9 +194,9 @@ assert_absent "the committed digest is gone from the changed render" \
 # The control: a hostless repository renders Docker Hub-shaped, which is what
 # the box measured, and the published path is absent — so the assertion above
 # is about the value and not about a string that happens to appear.
-doc=$(deployment_doc --set image.repository=cafaye/gateway)
+doc=$(deployment_doc --set image.repository=anywaye/gateway)
 assert "the control renders a hostless repository at the digest" \
-  "image: \"cafaye/gateway@$image_digest\"" "$doc"
+  "image: \"anywaye/gateway@$image_digest\"" "$doc"
 assert_absent "the control does not render the published path" \
   "image: \"$published@" "$doc"
 

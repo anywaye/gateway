@@ -14,8 +14,8 @@ import (
 // The routing table in `table.go` is PATH-PREFIX based and has no host awareness:
 // `{"baseUrl": …}` under `/v1/pantry` answers the same backend whatever `Host` the
 // caller sent. That is the API surface, and it stays that way. This file is the
-// layer the plan's `api`/`auth` vhost split needs: `api.cafaye.test` is the API
-// route table, `auth.cafaye.test` is identity's OIDC face, `cafaye.test` is the
+// layer the plan's `api`/`auth` vhost split needs: `api.anywaye.test` is the API
+// route table, `auth.anywaye.test` is identity's OIDC face, `anywaye.test` is the
 // BFF/app upstream — three names, three backends, one gateway.
 //
 // ## WHY A SECOND TABLE AND NOT HOST FIELDS ON THE ENTRIES
@@ -37,7 +37,7 @@ import (
 // already the only scope table (`accountRouteScopes`'s argument, one file over in
 // spirit). A vhost entry declares transport — "this name is this backend" — and
 // authentication stays where it was: the path table's gates for `/v1/*`, the
-// backend's own for everything else. An `auth.cafaye.test` entry carrying a scope
+// backend's own for everything else. An `auth.anywaye.test` entry carrying a scope
 // would be a scope no path-table walk reads and no matrix row holds, which is how
 // a route gets gated in exactly one of the two places a reader looks.
 
@@ -126,7 +126,7 @@ type rawVHost struct {
 
 // ParseVHostTable reads the table an operator wrote and validates it.
 //
-// `VHOST_TABLE={"auth.cafaye.test":{"baseUrl":"http://127.0.0.1:19080"}}`.
+// `VHOST_TABLE={"auth.anywaye.test":{"baseUrl":"http://127.0.0.1:19080"}}`.
 // Empty or whitespace-only is no table, the same rule `routesFromEnv` applies to
 // `ROUTE_TABLE`: an unset split is a gateway whose routing is the path table
 // alone, not a refusal. `"token": ""` is refused for the reason `rawTargetOf`
@@ -181,7 +181,7 @@ func effectiveHost(r *http.Request) string {
 // isGatewayPath reports whether a path is gateway's own and must never be
 // vhost-proxied, whatever `Host` arrived.
 //
-// The probes (`/healthz`, `/readyz`) answer even through `api.cafaye.test` —
+// The probes (`/healthz`, `/readyz`) answer even through `api.anywaye.test` —
 // readyz staying green on the API name is one of the loop's proofs — and the
 // browser surface (`/auth/*`), `/v1/me` and the `/v1/api-keys` management routes
 // are answered here for the same reason `routeProxy.handle` names its exclusion:

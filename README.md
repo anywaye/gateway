@@ -1,8 +1,8 @@
 # gateway
 
-**Current direction (2026-10-19):** Ship is the product. The cafaye stack is internal infrastructure; we are not selling or supporting it as a standalone product as of this date. We continue to develop and improve it, treating the founder as the primary customer and keeping "build once, run everywhere" true, with the expectation that it may be offered again later.
+**Current direction (2026-10-19):** Ship is the product. The anywaye stack is internal infrastructure; we are not selling or supporting it as a standalone product as of this date. We continue to develop and improve it, treating the founder as the primary customer and keeping "build once, run everywhere" true, with the expectation that it may be offered again later.
 
-The cafaye public gateway. It is the only door into a cafaye deployment:
+The anywaye public gateway. It is the only door into a anywaye deployment:
 `gateway` authenticates callers, limits what they can ask for, and forwards
 requests to the service that owns the work.
 
@@ -76,7 +76,7 @@ It is what a generated client is built from, so it is held to the router by
 document and Hono's own `app.routes` and fails if either describes an operation
 the other does not.
 
-Since packet `gateway-w87`, `cafaye.yml` declares it (`exposes.api:
+Since packet `gateway-w87`, `anywaye.yml` declares it (`exposes.api:
 openapi/v1.yaml`), so core's contract harness reads it too — and reports the
 departures its header already records: 17 findings in three rule classes
 (`openapi.paths-are-versioned` on the six unversioned paths, `openapi.errors-
@@ -112,7 +112,7 @@ proof.
 The document's header records **seven departures from
 [`core/docs/openapi-conventions.md`](../core/docs/openapi-conventions.md)** as
 open decisions rather than resolving them locally. The most consequential was that
-`cafaye.yml` had no `exposes` block: the document the omission was waiting for
+`anywaye.yml` had no `exposes` block: the document the omission was waiting for
 existed the whole time, and pointing the platform's `cafe gen` at it is the
 manager's call. Packet `gateway-w87` closed that — `exposes.api` now names this
 document — and the consequence is that core's harness reads it for the first time
@@ -256,7 +256,7 @@ value is a refusal to boot, for the reason `REDIS_URL=redis//redis` is:
 
 A route entry may declare **which claims its upstream needs**, and gateway then
 sends that upstream a short-lived signed assertion of the caller in a header of
-its own, `X-Cafaye-Principal`:
+its own, `X-Anywaye-Principal`:
 
 ```sh
 ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
@@ -414,7 +414,7 @@ nothing else. identity's token never reaches the page. See
 - **Algorithm: RS256, and nothing else.** The algorithm is gateway's decision, not
   the token's, and it is checked before any key is fetched — so an `alg: none` or
   HS256 token cannot make gateway call identity. core's conventions also allow
-  ES256; see the DECISION NEEDED in [cafaye.yml](cafaye.yml).
+  ES256; see the DECISION NEEDED in [anywaye.yml](anywaye.yml).
 - **Keys:** `{IDENTITY_ISSUER}/.well-known/jwks.json`. `IDENTITY_ISSUER` is the
   **issuer-only base URL** (e.g. `https://identity.localhost`); gateway appends the
   fixed well-known path itself. The path is not part of the variable, and a
@@ -573,8 +573,8 @@ part of `hono`.
 
 ```sh
 # The flow, by hand. Every mutating call needs to state its origin.
-curl -i -X POST localhost:8080/auth/login -H 'origin: https://api.cafaye.com' \
-  -H 'content-type: application/json' -d '{"email":"ada@cafaye.com","password":"…"}'
+curl -i -X POST localhost:8080/auth/login -H 'origin: https://api.anywaye.com' \
+  -H 'content-type: application/json' -d '{"email":"ada@anywaye.com","password":"…"}'
 
 curl -i localhost:8080/auth/me --cookie '__Host-bff-session=<the uuid from Set-Cookie>'
 ```
@@ -680,7 +680,7 @@ are present, which is the order they are meant to be read in.
 A 429 is core's error envelope like every other rejection:
 
 ```json
-{ "type": "https://docs.cafaye.com/errors/rate_limited", "title": "Too many requests",
+{ "type": "https://docs.anywaye.com/errors/rate_limited", "title": "Too many requests",
   "status": 429, "detail": "too many requests for this window",
   "instance": "/v1/me", "code": "rate_limited", "trace_id": "…" }
 ```
@@ -746,7 +746,7 @@ open; CI proves the script, not that a given deployment sets `REDIS_URL`.
 ## Errors
 
 Auth failures use **core's error envelope** — RFC 9457 `problem+json` with
-cafaye's extensions, as fixed in `core/docs/openapi-conventions.md`:
+anywaye's extensions, as fixed in `core/docs/openapi-conventions.md`:
 `type`, `title`, `status`, `detail`, `instance`, `code` and a `trace_id` that
 matches the `X-Trace-Id` response header. `code` is one of core's reserved codes
 where one exists — `unauthorized`, `forbidden`, `unavailable`, `conflict`,
@@ -754,7 +754,7 @@ where one exists — `unauthorized`, `forbidden`, `unavailable`, `conflict`,
 `payload_too_large` (413), which are the slugs identity already answers with and
 which core does not name. One vocabulary across the platform beats a
 gateway-private synonym for the same failure; recorded as a DECISION NEEDED in
-[cafaye.yml](cafaye.yml). `errors[]` appears on a `422` and nowhere else, as core
+[anywaye.yml](anywaye.yml). `errors[]` appears on a `422` and nowhere else, as core
 scopes it.
 
 The `/auth` routes map each identity refusal onto that envelope: a `401` login is
@@ -780,7 +780,7 @@ references it — so a client generated from the document gets the envelope rath
 than a copy of it, and this section and the document cannot describe two
 different things without the reader noticing one of them is out of date. That
 document's `Problem.code` enum is the list above and the two extra slugs
-`cafaye.yml` records; it deliberately does **not** list `not_found` or
+`anywaye.yml` records; it deliberately does **not** list `not_found` or
 `internal`, because gateway produces neither.
 
 ## Configuration
@@ -893,7 +893,7 @@ Postgres cluster, NATS, Redis, the OTel collector and the four observability
 backends all come from kit, at the commit named in `kit.ref`:
 
 ```sh
-git clone https://github.com/cafaye/kit.git /tmp/kit    # at the ref in kit.ref
+git clone https://github.com/anywaye/kit.git /tmp/kit    # at the ref in kit.ref
 KIT_COMPOSE_DIR=/tmp/kit/templates/compose \
 docker compose --project-directory . \
   -f /tmp/kit/templates/compose/docker-compose.yml \
@@ -931,21 +931,21 @@ that number and nothing makes the go command enforce any of them.
 gateway's deploy artifact is a **Helm chart**, `charts/gateway/`, pulled by an
 Argo `Application` — and there is exactly one: kit's,
 `templates/substrate/manifests/applications/gateway.yaml` (source
-`oci://ghcr.io/cafaye/charts`, chart `gateway`, targetRevision `0.1.0`,
+`oci://ghcr.io/anywaye/charts`, chart `gateway`, targetRevision `0.1.0`,
 destination namespace `gateway`, `CreateNamespace=true`). On the launch
-substrate (k3s + Traefik + cert-manager + ArgoCD, per `cafaye/notes/deployment.md`) that is
+substrate (k3s + Traefik + cert-manager + ArgoCD, per `anywaye/notes/deployment.md`) that is
 the only deploy path: the chart is pulled by Argo, or it does not run. It is
 not a second deploy path and not a Kamal config — a split brain beside Argo
-is the one thing `cafaye/notes/deployment.md` forbids.
+is the one thing `anywaye/notes/deployment.md` forbids.
 
 **A push to master publishes both artifacts.** `.github/workflows/publish.yml`
 — kit's caller template, copied with one change (`chart-dir: charts/gateway/`;
 gateway's chart is not at the template's default `chart/`) — calls kit's
 composed `publish.reusable.yml`: the image lands at
-`ghcr.io/cafaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest` on
+`ghcr.io/anywaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest` on
 the default branch) and the chart at
-`oci://ghcr.io/cafaye/charts/gateway:<chart version>`. The chart's
-`image.repository` is that same path (`ghcr.io/cafaye/gateway`) — a repository
+`oci://ghcr.io/anywaye/charts/gateway:<chart version>`. The chart's
+`image.repository` is that same path (`ghcr.io/anywaye/gateway`) — a repository
 with no registry host is resolved by containerd against Docker Hub, which is
 where a pod once sat in a permanent image-pull failure — and `bin/prime` derives
 the published path from `go.mod` and fails if the two stop agreeing. The chart's
@@ -961,12 +961,12 @@ caller and fails again if the caller stops calling the composition, drops
 This repository committed a second `Application` at
 `deploy/argocd/gateway-application.yaml` until packet `gateway-w87` deleted it.
 It had the same `metadata.name` and `namespace` as kit's, a **git** source
-(`https://github.com/cafaye/gateway.git`, `path: charts/gateway`,
+(`https://github.com/anywaye/gateway.git`, `path: charts/gateway`,
 `targetRevision: master`) where the OCI design requires a chart repository
-with a read-only pull secret, and a destination namespace (`cafaye`) no
+with a read-only pull secret, and a destination namespace (`anywaye`) no
 service uses. Two `Application`s of one name in one namespace fight, and the
 later `kubectl apply` wins — a deploy whose target depends on apply order is
-not a deploy. `cafaye/notes/deployment.md`, "Who owns the `Application`": the substrate
+not a deploy. `anywaye/notes/deployment.md`, "Who owns the `Application`": the substrate
 owns it, one per service, and **a service repository commits none**.
 
 The chart is hand-written as the reference `cafe gen chart` (packet L10) must
@@ -983,7 +983,7 @@ generator must read, is in [CHANGELOG.md](CHANGELOG.md).
 its own:
 
 ```yaml
-uses: cafaye/kit/.github/workflows/ci.reusable.yml@master
+uses: anywaye/kit/.github/workflows/ci.reusable.yml@master
 with:
   language: bun
   working-dir: .
@@ -995,7 +995,7 @@ with:
 | `ci`         | kit's `bun` job: frozen install, typecheck, test                   | — it *is* the shared half |
 | `prime`      | runs `bin/prime` itself — which ends in `bin/prime-go`, so the Go tier runs here — then `git diff --exit-code` on `bun.lock`, `go.mod` and `go.sum`, then reads the equivalence comparison count and fails under 72 | the gate is gateway's command, and the lockfile checks need an install to have run |
 | `redis`      | the live Redis tier, against a real `redis:7.4.1-alpine`            | gateway's counter store is gateway's dependency |
-| `manifest`   | `cafaye.yml` against core's fetched manifest schema                 | it reaches into `cafaye/core` |
+| `manifest`   | `anywaye.yml` against core's fetched manifest schema                 | it reaches into `anywaye/core` |
 | `image`      | hadolint, `docker build --target test`, the test files it ran, `docker compose build` | kit's lint tier does not cover Dockerfiles |
 
 ### The image runs the same tests you do
@@ -1165,7 +1165,7 @@ $ curl -s localhost:8099/readyz
 $ curl -s -o /dev/null -w '%{http_code}\n' localhost:8099/v1/me
 401                                             # not 404: the gate runs
 $ curl -s -H 'Authorization: Bearer not.a.token' localhost:8099/v1/me
-{"type":"https://docs.cafaye.com/errors/unauthorized",…,"detail":"token is malformed",…}
+{"type":"https://docs.anywaye.com/errors/unauthorized",…,"detail":"token is malformed",…}
 ```
 
 and the allowance table, which is the row a grep cannot settle because the wiring
@@ -1174,7 +1174,7 @@ is two files and a resolver:
 ```
 $ for i in $(seq 1 11); do curl -s -D- -o /dev/null -X POST -d '{}' localhost:8099/auth/login; done
 1..10  404  RateLimit-Limit: 10  RateLimit-Policy: "gateway-auth-login";q=10;w=60
-11     429  {"type":"https://docs.cafaye.com/errors/rate_limited",…,"detail":"too many requests for this window",…}
+11     429  {"type":"https://docs.anywaye.com/errors/rate_limited",…,"detail":"too many requests for this window",…}
 ```
 
 The `404`s are correct and are not the row above: `IDENTITY_URL` is unset, so
@@ -1264,7 +1264,7 @@ the old justification turned out to be facts about *another repository's schema*
   only, so there is no HTTP route either.
 - Go's `internal/` rule forbids the import, **answered by the compiler rather than
   by reading**: a scratch module with a `replace` onto the identity checkout fails
-  with `use of internal package github.com/cafaye/identity/internal/sessions not
+  with `use of internal package github.com/anywaye/identity/internal/sessions not
   allowed` — on its own line, *after* unrelated missing-`go.sum` errors rather than
   instead of them, which is what makes it easy to skim past as something else.
 
@@ -1562,8 +1562,8 @@ go run ./cmd/gateway            # http://localhost:8080
 curl localhost:8080/healthz     # {"status":"ok"}
 curl localhost:8080/readyz      # {"deps":{"identity":"unavailable"}} with no identity
                                  # running; "redis" joins it when REDIS_URL is set
-docker build -t cafaye/gateway:dev . # the image this repository ships
-docker run --rm -p 8080:8080 cafaye/gateway:dev   # then curl localhost:8080/healthz
+docker build -t anywaye/gateway:dev . # the image this repository ships
+docker run --rm -p 8080:8080 anywaye/gateway:dev   # then curl localhost:8080/healthz
 
 ROUTE_TABLE='{"/v1/pantry":{"baseUrl":"http://pantry:8080"}}' \
   go run ./cmd/gateway          # and now /v1/pantry/* goes there
@@ -1630,7 +1630,7 @@ the source with the packet that replaces them.
   *who*, from *this* route, signed by *this* gateway, *minutes* ago. It says
   nothing about what that caller is entitled to; authorising them remains the
   upstream's own database, which is where it belongs. **The verifying half is not
-  built anywhere**: no service in this repository reads `X-Cafaye-Principal`, so
+  built anywhere**: no service in this repository reads `X-Anywaye-Principal`, so
   an assertion configured today is minted, and dropped. MD19 asked for both halves
   at once and this is gateway's; the reader is `pantry`'s, and it is what
   `pantry.current_publisher_id()` needs before a publisher can write.
@@ -1722,7 +1722,7 @@ the source with the packet that replaces them.
   whether the edge enforces that or trusts identity to mint short-lived ones is
   a later decision.
 - **ES256.** RS256 only, per this packet's contract. See the DECISION NEEDED in
-  [cafaye.yml](cafaye.yml).
+  [anywaye.yml](anywaye.yml).
 - **One error shape.** `404` and `500` still answer `{ error, message }`; the
   `429` moved onto the envelope with the limiter that writes it. See
   [Errors](#errors).
@@ -1750,8 +1750,8 @@ the source with the packet that replaces them.
 - **SSE / streaming pass-through**, **contract tests against this document**
   (`cafe contract lint` validating real responses against `openapi/v1.yaml`), and
   **structured logging**. The OpenAPI document itself has shipped — see
-  [The HTTP contract](#the-http-contract) — and `cafaye.yml` now declares it, so
-  the `DECISION NEEDED` in [cafaye.yml](cafaye.yml) is down to the contract
+  [The HTTP contract](#the-http-contract) — and `anywaye.yml` now declares it, so
+  the `DECISION NEEDED` in [anywaye.yml](anywaye.yml) is down to the contract
   questions (algorithms, the scope claim, the error envelopes, Redis) and none of
   them are this packet's.
 
@@ -1831,7 +1831,7 @@ its parameters are:
 
 | Parameter | Value |
 |---|---|
-| Licensor | Cafaye |
+| Licensor | Anywaye |
 | Licensed Work | gateway |
 | Additional Use Grant | None |
 | Change Date | 2030-10-10 |
@@ -1840,7 +1840,7 @@ its parameters are:
 Until then — or until the fourth anniversary of a version's first publicly
 available distribution, whichever comes first — the rights the BSL grants are
 copying, modification, derivative works, redistribution and non-production use,
-and use beyond that is a commercial licence from Cafaye. On the Change Date
+and use beyond that is a commercial licence from Anywaye. On the Change Date
 `gateway` becomes Apache-2.0. The BSL is not an Open Source licence and its own
 Notice says so; what it does grant is what OPS-D2's services' split describes.
 

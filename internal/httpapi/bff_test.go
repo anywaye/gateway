@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/sessiontest"
+	"github.com/anywaye/gateway/internal/sessiontest"
 )
 
 // The problem envelope is the REFERENCE's bytes, in the reference's field order.
@@ -44,7 +44,7 @@ func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
 	body := withoutTraceID(readBody(t, res))
 
-	want := `{"type":"https://docs.cafaye.com/errors/unauthorized","title":"Unauthorized","status":401,` +
+	want := `{"type":"https://docs.anywaye.com/errors/unauthorized","title":"Unauthorized","status":401,` +
 		`"detail":"email or password is not correct","instance":"/auth/login","code":"unauthorized","trace_id":"<id>"}`
 	if body != want {
 		t.Errorf("the problem document is\n  %s\nand it must be\n  %s\n\nThe field ORDER is part of the contract: `internal/equivalence` compared bodies byte for byte, and `api.Problem`'s generated order is alphabetical where `src/problem.ts` (removed at cutover) is not.", body, want)

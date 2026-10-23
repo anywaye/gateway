@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // KeySource is what is known about the caller by the time the limiter reads the

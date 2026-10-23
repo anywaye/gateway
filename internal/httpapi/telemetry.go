@@ -6,7 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/cafaye/gateway/internal/telemetry"
+	"github.com/anywaye/gateway/internal/telemetry"
 )
 
 // The span every inbound request produces, and the arguments for what goes in it.

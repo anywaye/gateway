@@ -354,7 +354,7 @@ func (key jwk) verifiable() bool {
 //
 // core's conventions also allow ES256. Widening this is a one-line change and
 // doing it without identity publishing ES256 keys would only widen the attack
-// surface — see the DECISION NEEDED in cafaye.yml and the README's "Not built
+// surface — see the DECISION NEEDED in anywaye.yml and the README's "Not built
 // yet".
 const algorithm = "RS256"
 

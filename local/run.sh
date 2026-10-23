@@ -1,5 +1,5 @@
 #!/bin/sh
-# THE LOCAL, PROD-SHAPED LOOP — identity + gateway + oauth-stub behind *.cafaye.test.
+# THE LOCAL, PROD-SHAPED LOOP — identity + gateway + oauth-stub behind *.anywaye.test.
 #
 #   local/run.sh keygen   generate the local CA, the server cert and the key
 #                         material (all under local/.gen/, gitignored)
@@ -27,7 +27,7 @@ BIN="$GEN/bin"
 LOG="$GEN/logs"
 IDIR="${L7_IDENTITY_DIR:-/Users/kaka/Code/any/work/wt/roll-l7-identity}"
 STUBDIR="${L7_STUB_DIR:-/Users/kaka/Code/any/work/wt/roll-l7-oauth-stub}"
-DB="${L7_DATABASE_URL:-postgres://cafaye:cafaye@127.0.0.1:15500/identity?sslmode=disable}"
+DB="${L7_DATABASE_URL:-postgres://anywaye:anywaye@127.0.0.1:15500/identity?sslmode=disable}"
 
 EDGE_PORT=19443
 GW_PORT=19090
@@ -36,7 +36,7 @@ STUB_GOOGLE_PORT=19081
 STUB_GITHUB_PORT=19082
 REDIS_PORT=19579
 
-names="cafaye.test api.cafaye.test auth.cafaye.test docs.cafaye.test localhost"
+names="anywaye.test api.anywaye.test auth.anywaye.test docs.anywaye.test localhost"
 
 cmd="${1:-help}"
 
@@ -50,9 +50,9 @@ subjectKeyIdentifier=hash
 authorityKeyIdentifier=keyid:always
 ' > "$GEN/ca.ext"
   openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-    -subj "/CN=cafaye-local-ca" -keyout "$GEN/ca.key" -out "$GEN/ca.pem" -extfile "$GEN/ca.ext" 2>/dev/null
+    -subj "/CN=anywaye-local-ca" -keyout "$GEN/ca.key" -out "$GEN/ca.pem" -extfile "$GEN/ca.ext" 2>/dev/null
   san="$(printf 'DNS:%s,' $names | sed 's/,$//')"
-  openssl req -newkey rsa:2048 -nodes -subj "/CN=cafaye.test" \
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=anywaye.test" \
     -keyout "$GEN/key.pem" -out "$GEN/req.csr" 2>/dev/null
   printf 'subjectAltName=%s\n' "$san" > "$GEN/san.ext"
   openssl x509 -req -days 825 -in "$GEN/req.csr" -CA "$GEN/ca.pem" -CAkey "$GEN/ca.key" \
@@ -99,24 +99,24 @@ start_one() { # name, binary, env-file, log
 }
 
 write_env() {
-  google_id="local-cafaye-google-client"; google_secret="local-cafaye-google-secret"
-  github_id="local-cafaye-github-client"; github_secret="local-cafaye-github-secret"
+  google_id="local-anywaye-google-client"; google_secret="local-anywaye-google-secret"
+  github_id="local-anywaye-github-client"; github_secret="local-anywaye-github-secret"
 
-  printf 'OAUTH_STUB_ADDR=127.0.0.1:%s\nOAUTH_STUB_CLIENT_ID=%s\nOAUTH_STUB_CLIENT_SECRET=%s\nOAUTH_STUB_EMAIL_DOMAIN=cafaye.test\n' \
+  printf 'OAUTH_STUB_ADDR=127.0.0.1:%s\nOAUTH_STUB_CLIENT_ID=%s\nOAUTH_STUB_CLIENT_SECRET=%s\nOAUTH_STUB_EMAIL_DOMAIN=anywaye.test\n' \
     "$STUB_GOOGLE_PORT" "$google_id" "$google_secret" > "$GEN/stub-google.env"
-  printf 'OAUTH_STUB_ADDR=127.0.0.1:%s\nOAUTH_STUB_CLIENT_ID=%s\nOAUTH_STUB_CLIENT_SECRET=%s\nOAUTH_STUB_EMAIL_DOMAIN=cafaye.test\n' \
+  printf 'OAUTH_STUB_ADDR=127.0.0.1:%s\nOAUTH_STUB_CLIENT_ID=%s\nOAUTH_STUB_CLIENT_SECRET=%s\nOAUTH_STUB_EMAIL_DOMAIN=anywaye.test\n' \
     "$STUB_GITHUB_PORT" "$github_id" "$github_secret" > "$GEN/stub-github.env"
 
   {
     echo "PORT=$ID_PORT"
     echo "LOG_LEVEL=info"
     echo "DATABASE_URL=$DB"
-    echo "OIDC_ISSUER=https://auth.cafaye.test"
-    echo "OIDC_SIGNING_KEY_ID=local-cafaye-test-1"
-    echo "OIDC_LOGIN_UI_URL=https://cafaye.test/login"
+    echo "OIDC_ISSUER=https://auth.anywaye.test"
+    echo "OIDC_SIGNING_KEY_ID=local-anywaye-test-1"
+    echo "OIDC_LOGIN_UI_URL=https://anywaye.test/login"
     echo "SIGNUP_SIGNING_KEY=$(cat "$GEN/signup.key")"
     echo "OAUTH_ENCRYPTION_KEY=$(cat "$GEN/oauth-enc.key")"
-    echo "OAUTH_REDIRECT_BASE_URL=https://auth.cafaye.test"
+    echo "OAUTH_REDIRECT_BASE_URL=https://auth.anywaye.test"
     echo "OAUTH_GOOGLE_CLIENT_ID=$google_id"
     echo "OAUTH_GOOGLE_CLIENT_SECRET=$google_secret"
     echo "OAUTH_GITHUB_CLIENT_ID=$github_id"
@@ -138,8 +138,8 @@ write_env() {
     echo "PORT=$GW_PORT"
     echo "LOG_LEVEL=info"
     printf '%s\n' "ROUTE_TABLE='{\"/v1/auth/oauth\":{\"baseUrl\":\"http://127.0.0.1:$ID_PORT\",\"public\":true},\"/v1\":{\"baseUrl\":\"http://127.0.0.1:$ID_PORT\"}}'"
-    printf '%s\n' "VHOST_TABLE='{\"auth.cafaye.test\":{\"baseUrl\":\"http://127.0.0.1:$ID_PORT\"}}'"
-    echo "IDENTITY_ISSUER=https://auth.cafaye.test"
+    printf '%s\n' "VHOST_TABLE='{\"auth.anywaye.test\":{\"baseUrl\":\"http://127.0.0.1:$ID_PORT\"}}'"
+    echo "IDENTITY_ISSUER=https://auth.anywaye.test"
     echo "IDENTITY_JWKS_URL=http://127.0.0.1:$ID_PORT/.well-known/jwks.json"
     echo "IDENTITY_URL=http://127.0.0.1:$ID_PORT"
     echo "REDIS_URL=redis://127.0.0.1:$REDIS_PORT"
@@ -178,8 +178,8 @@ up() {
 
 wait_for() {
   for i in $(seq 1 40); do
-    if curl -sk --resolve "auth.cafaye.test:$EDGE_PORT:127.0.0.1" \
-        "https://auth.cafaye.test:$EDGE_PORT/healthz" -o /dev/null 2>/dev/null; then
+    if curl -sk --resolve "auth.anywaye.test:$EDGE_PORT:127.0.0.1" \
+        "https://auth.anywaye.test:$EDGE_PORT/healthz" -o /dev/null 2>/dev/null; then
       echo "up: edge answers; gateway and identity behind it"
       return 0
     fi
@@ -193,17 +193,17 @@ resolve_flags() { # $1 = hostname → curl --resolve flags for this loop's edge 
 }
 
 proofs() {
-  echo "### (a) OIDC discovery through auth.cafaye.test"
+  echo "### (a) OIDC discovery through auth.anywaye.test"
   # shellcheck disable=SC2086
-  curl -s $(resolve_flags auth.cafaye.test) "https://auth.cafaye.test:$EDGE_PORT/.well-known/openid-configuration"
+  curl -s $(resolve_flags auth.anywaye.test) "https://auth.anywaye.test:$EDGE_PORT/.well-known/openid-configuration"
   echo; echo "### (b) JWKS"
   # shellcheck disable=SC2086
-  curl -s $(resolve_flags auth.cafaye.test) "https://auth.cafaye.test:$EDGE_PORT/.well-known/jwks.json"
-  echo; echo "### (c) gateway readyz through api.cafaye.test"
+  curl -s $(resolve_flags auth.anywaye.test) "https://auth.anywaye.test:$EDGE_PORT/.well-known/jwks.json"
+  echo; echo "### (c) gateway readyz through api.anywaye.test"
   # shellcheck disable=SC2086
-  curl -s -o /dev/null -w "HTTP %{http_code}\n" $(resolve_flags api.cafaye.test) "https://api.cafaye.test:$EDGE_PORT/readyz"
+  curl -s -o /dev/null -w "HTTP %{http_code}\n" $(resolve_flags api.anywaye.test) "https://api.anywaye.test:$EDGE_PORT/readyz"
   # shellcheck disable=SC2086
-  curl -s $(resolve_flags api.cafaye.test) "https://api.cafaye.test:$EDGE_PORT/readyz"; echo
+  curl -s $(resolve_flags api.anywaye.test) "https://api.anywaye.test:$EDGE_PORT/readyz"; echo
 }
 
 down() {

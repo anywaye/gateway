@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cafaye/gateway/internal/ratelimit"
-	"github.com/cafaye/gateway/internal/testkeys"
+	"github.com/anywaye/gateway/internal/ratelimit"
+	"github.com/anywaye/gateway/internal/testkeys"
 )
 
 // The scope gate: a route that declares what a caller must hold, and a caller

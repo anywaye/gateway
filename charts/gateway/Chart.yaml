@@ -1,7 +1,7 @@
 apiVersion: v2
 name: gateway
 description: >-
-  The cafaye public gateway — the only door into a cafaye deployment.
+  The anywaye public gateway — the only door into a anywaye deployment.
   Authenticates callers, limits what they can ask for, and forwards
   requests to the service that owns the work.
 type: application

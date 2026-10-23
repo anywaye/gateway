@@ -268,7 +268,7 @@ mutate \
 	}' \
   '	for name, values := range r.Header {
 		switch http.CanonicalHeaderKey(name) {
-		case "Authorization", "Cookie", "Proxy-Authorization", "X-Cafaye-Principal", "X-Forwarded-For", "X-Real-Ip", "X-Correlation-Id", "If-None-Match":
+		case "Authorization", "Cookie", "Proxy-Authorization", "X-Anywaye-Principal", "X-Forwarded-For", "X-Real-Ip", "X-Correlation-Id", "If-None-Match":
 		default:
 			headers[name] = values
 		}

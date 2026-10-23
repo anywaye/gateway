@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# gateway — the cafaye public gateway. Go, distroless, multi-stage.
+# gateway — the anywaye public gateway. Go, distroless, multi-stage.
 #
-#   docker build -t cafaye/gateway:dev .        # the runtime image
+#   docker build -t anywaye/gateway:dev .        # the runtime image
 #   docker build --target test .                # the gate: vet + test, in the image
 #   docker compose build                         # the runtime image, same Dockerfile
 #
@@ -153,7 +153,7 @@ FROM redis:7-bookworm AS redis-tool
 # rather than beside it only because `COPY --from` needs it to already exist, and
 # buildkit builds only the stages the requested target depends on — so `docker
 # build .` pulls no Redis and `docker build --target test .` does. Measured rather
-# than assumed: `docker history cafaye/gateway:dev` carries five layers above the
+# than assumed: `docker history anywaye/gateway:dev` carries five layers above the
 # distroless base — WORKDIR, COPY, USER, EXPOSE, ENTRYPOINT — and none of them is
 # this one.
 FROM source AS test

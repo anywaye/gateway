@@ -3,7 +3,7 @@
 All notable changes to `gateway` are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `core`'s
-mini-semver grammar (`^`, `~`, `>=`, exact) is what `cafaye.yml` uses; npm
+mini-semver grammar (`^`, `~`, `>=`, exact) is what `anywaye.yml` uses; npm
 dependency versions follow npm's own rules.
 
 ## [Unreleased]
@@ -32,7 +32,7 @@ dependency versions follow npm's own rules.
 
 - **The chart pins the image by DIGEST, not by tag — a new build is now a
   textual diff Argo rolls.** Measured on the live box: the registry's
-  `ghcr.io/cafaye/gateway:0.1.0` held `sha256:c264…37165` (the merged Redis
+  `ghcr.io/anywaye/gateway:0.1.0` held `sha256:c264…37165` (the merged Redis
   AUTH fix) while the node ran `sha256:8e60…e79b`, six hours older, and
   nothing closed the gap. Both reasons were structural: the `0.1.0` tag is
   overwritten on every master push (`publish.reusable.yml` reads `Chart.yaml`'s
@@ -90,7 +90,7 @@ dependency versions follow npm's own rules.
   that grant: MariaDB's published 1.1 text with the parameters substituted and
   nothing else altered, so the four repositories' licence files differ in the
   Licensed Work name and in nothing else. The parameters are the fleet's
-  rather than gateway's invention: Licensor `Cafaye`, Licensed Work
+  rather than gateway's invention: Licensor `Anywaye`, Licensed Work
   `gateway`, Additional Use Grant `None`, Change Date `2030-10-10` — four
   years from the day it landed — and Change Licence `Apache-2.0`.
   `openapi/v1.yaml`'s `info.license` and the README's `## License` section
@@ -101,7 +101,7 @@ dependency versions follow npm's own rules.
   base grant in a BSL's Terms is copying, modification, derivative works,
   redistribution and **non-production** use. With `Additional Use Grant: None`
   there is no production grant, so a self-hoster who needs `gateway` in
-  production under this licence buys a commercial licence from Cafaye. That is
+  production under this licence buys a commercial licence from Anywaye. That is
   narrower than OPS-D2's row says the services are, and the two disagree; the
   parameter was implemented as written and the disagreement, with the one-line
   fix that would reconcile them, is recorded in
@@ -111,7 +111,7 @@ dependency versions follow npm's own rules.
   property this packet was asked to hold.
 
   **Gateway has no manifest licence field to update, and cannot grow one.**
-  `cafaye.yml` conforms to `core`'s frozen schema, which is
+  `anywaye.yml` conforms to `core`'s frozen schema, which is
   `additionalProperties: false` — a licence key would be a validation failure
   rather than a comment — and `charts/gateway/Chart.yaml` and `go.mod` carry
   no licence declaration either. So the three surfaces named above are the
@@ -121,21 +121,21 @@ dependency versions follow npm's own rules.
 ### Fixed
 
 - **The chart's `image.repository` carries the registry host.** It said
-  `cafaye/gateway` with no host, and the Deployment renders
+  `anywaye/gateway` with no host, and the Deployment renders
   `"{{ .Values.image.repository }}:{{ .Values.image.tag }}"` — so containerd
   resolved the value against Docker Hub and the pod reached image-pull and
   failed forever:
 
   ```
-  Failed to pull image "cafaye/gateway:0.1.0": ... pull access denied,
+  Failed to pull image "anywaye/gateway:0.1.0": ... pull access denied,
   repository does not exist or may require authorization
   ```
 
-  Measured on a box. It is now `ghcr.io/cafaye/gateway`, which is where kit's
+  Measured on a box. It is now `ghcr.io/anywaye/gateway`, which is where kit's
   image workflow pushes (`ghcr.io/<github.repository>`, derived and never passed
-  in) and what every sibling chart names (`ghcr.io/cafaye/identity`, …). The
+  in) and what every sibling chart names (`ghcr.io/anywaye/identity`, …). The
   chart was the only place the published name appeared without its host;
-  `docker-compose.yml`'s `cafaye/gateway:dev` and the `Dockerfile`'s
+  `docker-compose.yml`'s `anywaye/gateway:dev` and the `Dockerfile`'s
   `docker build` example are LOCAL tags, built by `docker compose build` and
   never pulled, and are deliberately left bare. The image tag is unchanged.
 
@@ -158,7 +158,7 @@ dependency versions follow npm's own rules.
   two: reads stay on the existing public `/v1/pantry` prefix, and a non-public
   `/v1/pantry-writes` prefix declares `principal: ["sub"]` — sub only, no
   `github_id` — so every proxied write carries gateway's short-lived RS256
-  assertion (`aud` = pantry's origin, `x-cafaye-principal`). The split is by
+  assertion (`aud` = pantry's origin, `x-anywaye-principal`). The split is by
   path because the table matches on path prefixes and pantry's reads and
   writes share paths. The chart (the launch artifact) activates the table with
   `ASSERTION_TTL_MS: "120000"` and `ASSERTION_SIGNING_KEY_FILE` pointing at a
@@ -207,9 +207,9 @@ dependency versions follow npm's own rules.
   change (`chart-dir: charts/gateway/`, because gateway's chart is not at the
   template's default `chart/`) — calls kit's composed `publish.reusable.yml`
   on every push to master: the image workflow builds and pushes
-  `ghcr.io/cafaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest`
+  `ghcr.io/anywaye/gateway:sha-<full 40 chars>` (plus `<branch>`, plus `latest`
   on the default branch), and the chart workflow packages `charts/gateway/`
-  and pushes it to `oci://ghcr.io/cafaye/charts/gateway:<chart version>`.
+  and pushes it to `oci://ghcr.io/anywaye/charts/gateway:<chart version>`.
   Before this, both artifacts were published by nothing: the substrate's
   `gateway` `Application` points at a registry no workflow wrote to, and the
   front door could not be deployed at all.
@@ -238,7 +238,7 @@ dependency versions follow npm's own rules.
 - **gateway has a deploy artifact: a hand-written Helm chart, and the Argo
   `Application` that pulls it.** `charts/gateway/` is what turns the image
   into a running service on the launch substrate — k3s + Traefik +
-  cert-manager + ArgoCD + CloudNativePG + Redis (`cafaye/notes/deployment.md`) — with a
+  cert-manager + ArgoCD + CloudNativePG + Redis (`anywaye/notes/deployment.md`) — with a
   hostname, a readiness gate and a rollback. Before this, gateway had a
   `Dockerfile` and nothing that deployed it: no `config/deploy.yml`, no
   chart, no `Application`. The chart renders a `Deployment`, a `Service`, a
@@ -248,7 +248,7 @@ dependency versions follow npm's own rules.
   box agree, hand edits self-heal, rollback is `git revert`.
 
   **What the chart is for:** the launch deploy artifact for the front
-  door. **What it is not:** not a second deploy path. `cafaye/notes/deployment.md` is
+  door. **What it is not:** not a second deploy path. `anywaye/notes/deployment.md` is
   explicit that there is no helm-from-CI template in kit and one may never
   be added, because a second deploy path beside Argo is a split brain —
   the chart is pulled by Argo, or it does not run. It is also not Kamal,
@@ -322,7 +322,7 @@ dependency versions follow npm's own rules.
   no-op: core's contract makes the shipped collector the default, so a developer with
   nothing configured gets traces.
 
-  `cafaye.yml`'s `language` said `typescript`, an implementation deleted at cutover,
+  `anywaye.yml`'s `language` said `typescript`, an implementation deleted at cutover,
   and `cafe gen telemetry` refuses any language it does not emit for — so the field
   had to agree with the tree before the fleet's own generator could be used. That
   does not resolve DECISION NEEDED item 7, which is about which implementation the
@@ -336,14 +336,14 @@ dependency versions follow npm's own rules.
   service repository committing an `Application`, and its copy collided with
   kit's `templates/substrate/manifests/applications/gateway.yaml`: same
   `metadata.name: gateway`, same `namespace: argocd`, a **git** source
-  (`https://github.com/cafaye/gateway.git`, `path: charts/gateway`,
+  (`https://github.com/anywaye/gateway.git`, `path: charts/gateway`,
   `targetRevision: master`) where the OCI design requires a chart repository
-  with one read-only pull secret, and destination namespace `cafaye` — the
+  with one read-only pull secret, and destination namespace `anywaye` — the
   compose project's development name, not a cluster one. Two `Application`s
   of one name in one namespace fight, and the later `kubectl apply` wins: a
   deploy whose target depends on apply order is not a deploy.
 
-  `cafaye/notes/deployment.md`, "Who owns the `Application`": the substrate owns it, one
+  `anywaye/notes/deployment.md`, "Who owns the `Application`": the substrate owns it, one
   per service, OCI-sourced, destination namespace = the service name, and a
   service repository commits none. The chart (`charts/gateway/`) is unchanged
   and still the deploy artifact — what changed is that the repository no
@@ -353,7 +353,7 @@ dependency versions follow npm's own rules.
 
 ### Changed
 
-- **`cafaye.yml` declares gateway's HTTP surface: `exposes.api: openapi/v1.yaml`.**
+- **`anywaye.yml` declares gateway's HTTP surface: `exposes.api: openapi/v1.yaml`.**
   The manifest's `DECISION NEEDED` said `exposes` was absent and that filling it
   in "needs an OpenAPI 3.1 document for gateway's HTTP surface". That document
   existed the whole time — `openapi/v1.yaml`, complete, with the routed surface
@@ -513,7 +513,7 @@ dependency versions follow npm's own rules.
 
 - **The recorded reason for the missing Go session store was CHECKED, and it is
   CORRECT. The decision it implied is not.** `REPORT-gateway-session-store-01`
-  verifies both halves against `cafaye/identity` at source rather than inheriting
+  verifies both halves against `anywaye/identity` at source rather than inheriting
   them, because a claim in a document is a reader's premise:
 
   - identity's `sessions` table **has no column for the presented value**. It is
@@ -525,7 +525,7 @@ dependency versions follow npm's own rules.
     and `delete`, so there is no HTTP route either.
   - Go's `internal/` rule forbids the import, **answered by the compiler**: a
     scratch module with a `replace` onto the identity checkout fails with
-    `use of internal package github.com/cafaye/identity/internal/sessions not
+    `use of internal package github.com/anywaye/identity/internal/sessions not
     allowed`. That line arrives *after* unrelated missing-go.sum errors rather
     than instead of them, so it is the kind of failure a skimmed log reads as
     something else.
@@ -1029,7 +1029,7 @@ dependency versions follow npm's own rules.
 - **A private upstream now learns who the caller is.** A `ROUTE_TABLE` entry that
   declares `principal` causes gateway to send that upstream a short-lived signed
   assertion of the verified caller, in a header of its own
-  (`X-Cafaye-Principal`):
+  (`X-Anywaye-Principal`):
 
   ```sh
   ROUTE_TABLE='{"/v1/pantry/services":{"baseUrl":"http://pantry:8080",
@@ -1116,7 +1116,7 @@ dependency versions follow npm's own rules.
   any routed prefix: site's client claims gateway gates `/v1/*` on a `gateway-api`
   scope, `requireScope` is never called outside tests, `runtimeOptions` never sets
   `apiKeys`, gateway's key gate matches `/^apikey(?:\s|$)/i` while the SDK sends
-  `Authorization: Bearer cafaye_…`, and `gateway-api` is not a scope identity has.
+  `Authorization: Bearer anywaye_…`, and `gateway-api` is not a scope identity has.
   Closing that the way the comment imagines is four repositories in sequence;
   this is one field, in a table a human already reads.
 
@@ -1207,8 +1207,8 @@ dependency versions follow npm's own rules.
   downstream consumer.
 
   The copyright line matches the three repositories that already shipped a
-  licence (`cafaye-py`, `cafaye-rb`, `cafaye-ts`) exactly: `Copyright (c) 2026
-  cafaye`. All fifteen now hold byte-identical licence text.
+  licence (`anywaye-py`, `anywaye-rb`, `anywaye-ts`) exactly: `Copyright (c) 2026
+  anywaye`. All fifteen now hold byte-identical licence text.
 
 ### Fixed
 
@@ -1306,7 +1306,7 @@ dependency versions follow npm's own rules.
   ran the entire gate silently. The failure it produced was a red herring:
   `cannot find module 'hono'`, which names a *package*, points the reader at
   `package.json` and `bun.lock`, and says nothing about the runtime that caused
-  it. This is the cafaye-rb lesson, reproduced here on bun: that gate failed on a
+  it. This is the anywaye-rb lesson, reproduced here on bun: that gate failed on a
   Ruby that was on `PATH` and was not the one mise installed.
   - The gate now **names the pin and the version it found**, and exits **127** —
     the code it already used for an absent toolchain, because a wrong runtime is
@@ -1346,7 +1346,7 @@ dependency versions follow npm's own rules.
   anything — replacing `bin/prime` with a script whose whole body is `exit 0`
   would have left this repository green. The declaration states the command
   (`bin/prime`), the entrypoint, two numeric floors, and five lines the gate's
-  own output must contain. Written against `cafaye/core`'s
+  own output must contain. Written against `anywaye/core`'s
   `schemas/gate.schema.json` and checked by `harness/gate_check.py`, which now
   reports **0 failures, 2 warnings** here — both the expected
   `gate.requirement-unproven` for a bare command on PATH, which is the
@@ -1530,14 +1530,14 @@ dependency versions follow npm's own rules.
     fails `unexplained`. Both were reverted.
   - **Seven departures from `core/docs/openapi-conventions.md` are recorded in the
     document's header as open decisions**, not resolved locally: `exposes` is
-    still absent from `cafaye.yml` even though the document now exists; the
+    still absent from `anywaye.yml` even though the document now exists; the
     browser surface and the probes are not under `/v1`; an API key is not a bearer
     JWT; the browser surface has a same-origin gate and no CSRF token; `404` and
     `500` are still the v0 `{error, message}` shape and gateway therefore produces
     no `not_found` or `internal` problem code; `/readyz`'s `503` is
     `application/json` (the conflict `identity` also records, so the ruling wants
     to be fleet-wide); and `Idempotency-Key` is not honoured on
-    `POST /auth/register`. The two already open in `cafaye.yml` — RS256 only, the
+    `POST /auth/register`. The two already open in `anywaye.yml` — RS256 only, the
     `scope` claim, the default issuer, and the three extra error codes — are
     referenced rather than restated.
 - **`RATE_LIMIT_HEADERS` is exported from `middleware/rateLimit.ts`**, and
@@ -1555,10 +1555,10 @@ dependency versions follow npm's own rules.
 
 - **CI, calling kit's reusable workflow.**
   `.github/workflows/ci.yml` calls
-  `cafaye/kit/.github/workflows/ci.reusable.yml@master` with `language: bun`, and
+  `anywaye/kit/.github/workflows/ci.reusable.yml@master` with `language: bun`, and
   adds four jobs kit cannot own: `prime` (runs `bin/prime` itself and guards
   `bun.lock`), `redis` (a real `redis:7.4.1-alpine` for the live tier), `manifest`
-  (validates `cafaye.yml` against core's fetched schema) and `image` (hadolint,
+  (validates `anywaye.yml` against core's fetched schema) and `image` (hadolint,
   `docker build --target test`, `docker compose build`).
 - **The GCRA Lua is executed, in CI.** `rateLimitRedisLive.test.ts` runs the real
   script against a real `redis-server`; `bin/prime` still needs no server. The
@@ -1651,7 +1651,7 @@ dependency versions follow npm's own rules.
 - `Dockerfile` (oven/bun slim, multi-stage, tests gate the image),
   `docker-compose.yml` (the service only), `bin/prime`, `mise.toml`, `AGENTS.md`
   and this changelog.
-- `cafaye.yml` against `core`'s frozen manifest schema, with a
+- `anywaye.yml` against `core`'s frozen manifest schema, with a
   `DECISION NEEDED` for the `exposes` block that needs a manager-owned OpenAPI
   document.
 - `jose` as a dependency, and real JWT verification in place of the presence
@@ -1669,7 +1669,7 @@ dependency versions follow npm's own rules.
   An unknown `kid` buys exactly one forced refresh per cache window and is then
   refused, which is enough to follow a rotation and not enough to let a caller
   aim requests at identity. A failed fetch leaves the last good key set in place.
-- `src/problem.ts` — core's error envelope (RFC 9457 `problem+json` with cafaye's
+- `src/problem.ts` — core's error envelope (RFC 9457 `problem+json` with anywaye's
   extensions) and the single path every rejection takes. `401`, `403` and `503`
   carry `type`, `title`, `status`, `detail`, `instance`, `code`, and a `trace_id`
   that matches the `X-Trace-Id` response header. The underlying failure goes to
@@ -1754,7 +1754,7 @@ dependency versions follow npm's own rules.
   and `account_locked` (423) — and an optional `errors[]`, rendered on a 422 and
   nowhere else as core scopes it. `invalid_json`, `payload_too_large` and
   `account_locked` are identity's slugs for failures core does not name;
-  DECISION NEEDED in `cafaye.yml`.
+  DECISION NEEDED in `anywaye.yml`.
 - A request body is read through a 4 KiB cap instead of `request.text()`, so an
   anonymous caller cannot choose how much of the edge one request buffers. A
   `Content-Length` over the cap is refused without a read; a body that only
@@ -1784,7 +1784,7 @@ dependency versions follow npm's own rules.
   `X-Forwarded-For` is what makes it a real client key.
 - RS256 only, per this packet's contract, where core's conventions also allow
   ES256; and the space-separated `scope` claim, where core's conventions call it
-  `scopes`. DECISION NEEDED in `cafaye.yml`.
+  `scopes`. DECISION NEEDED in `anywaye.yml`.
 - No token lifetime ceiling. `exp` and `nbf` are checked; how long a token may
   live is not.
 - Sessions are per process and per restart: a browser signed in on a replica that
@@ -1811,7 +1811,7 @@ dependency versions follow npm's own rules.
   failed on the box. The front door's session cookie is `Secure`, so without it
   the browser surface cannot work at all. `values.yaml` gains
   `ingress.clusterIssuer: letsencrypt-prod` — the issuer the substrate's
-  install creates (`cafaye/notes/deployment.md`, "The ACME solver") — rendered as the
+  install creates (`anywaye/notes/deployment.md`, "The ACME solver") — rendered as the
   `cert-manager.io/cluster-issuer` annotation **only when non-empty**: empty
   means no cert-manager, a secret nothing writes (the generator's own rule,
   `cafe gen chart`). The operator's `ingress.annotations` map still renders
@@ -1827,10 +1827,10 @@ dependency versions follow npm's own rules.
   `ingress.tls: true`), the missing chart `README.md`, the missing
   `fail`-when-enabled-without-host guard, no `imagePullSecrets` with a
   Docker Hub-shaped `image.repository` where the generated chart names
-  `ghcr.io/cafaye/gateway`, and the tls block gated on `tls.enabled` alone
+  `ghcr.io/anywaye/gateway`, and the tls block gated on `tls.enabled` alone
   where the generator requires the issuer too. Recommendation: keep the
   hand-written chart as L10's reference and feed the list to the generator;
   cherry-pick the `fail` guard; decide the image repository and the README.
 
-[Unreleased]: https://github.com/cafaye/gateway/compare/v0.0.0...HEAD
-[v0.0.0]: https://github.com/cafaye/gateway/releases/tag/v0.0.0
+[Unreleased]: https://github.com/anywaye/gateway/compare/v0.0.0...HEAD
+[v0.0.0]: https://github.com/anywaye/gateway/releases/tag/v0.0.0

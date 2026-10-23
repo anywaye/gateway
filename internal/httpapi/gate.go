@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cafaye/gateway/internal/api"
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/api"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // The credential gate, and the one seam the pass-through needs from it.

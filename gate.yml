@@ -1,7 +1,7 @@
 # gate.yml — how gateway is gated, declared rather than guessed.
 #
-# WHY THIS FILE EXISTS. The cafaye standard for declaring a gate lives in
-# `cafaye/core`: `schemas/gate.schema.json` is the format,
+# WHY THIS FILE EXISTS. The anywaye standard for declaring a gate lives in
+# `anywaye/core`: `schemas/gate.schema.json` is the format,
 # `harness/gate_check.py` is the checker, and `docs/gate.md` is the reasoning.
 # gateway is adopting it, not inventing it. The short version: across fifteen
 # repositories "run the gate" had five different spellings, and every one of
@@ -47,7 +47,7 @@
 #           substrate's targetRevision 0.1.0
 #         ==> the chart names the image the publish loop pushes
 #         chart image: charts/gateway/values.yaml sets image.repository to
-#           ghcr.io/cafaye/gateway, the image the publish workflow pushes
+#           ghcr.io/anywaye/gateway, the image the publish workflow pushes
 #         ==> gofmt -l
 #         every file under ./cmd and ./internal is gofmt-clean
 #         ==> go build ./...
@@ -111,7 +111,7 @@
 #     chart-image —          —        NEW. The chart's `image.repository` must
 #                                    carry a registry host and equal the path
 #                                    the publish workflow pushes
-#                                    (`ghcr.io/cafaye/gateway`), derived from
+#                                    (`ghcr.io/anywaye/gateway`), derived from
 #                                    go.mod's module path. A hostless value is
 #                                    resolved by containerd against Docker Hub,
 #                                    which is the image-pull failure a box
@@ -262,7 +262,7 @@ gate:
     - id: chart-image
       # THE IMAGE THE DEPLOYMENT PULLS IS THE IMAGE THE LOOP PUSHES, and this is
       # the fact the loop was open at on the other end. `charts/gateway/
-      # values.yaml` named `image.repository: cafaye/gateway` with no registry
+      # values.yaml` named `image.repository: anywaye/gateway` with no registry
       # host, so containerd resolved it against Docker Hub and the pod reached
       # image-pull and failed forever ("pull access denied, repository does not
       # exist"). The step derives the published path from go.mod's module path
@@ -412,7 +412,7 @@ external:
   # NOT required, and named so nobody goes going for them:
   #
   #   * no credential, of any kind. The suite is hermetic by construction: the
-  #     tests mint their own keys (`internal/testkeys`), no cafaye service is
+  #     tests mint their own keys (`internal/testkeys`), no anywaye service is
   #     contacted, and nothing in this declaration's proof would print a token,
   #     a key or a JWT if it did. Measured, not read off the workflow:
   #     `bin/prime` was run to green with no environment variable of any kind

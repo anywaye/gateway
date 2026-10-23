@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cafaye/gateway/internal/httpapi"
+	"github.com/anywaye/gateway/internal/httpapi"
 )
 
 // The container health probe, tested rather than asserted.

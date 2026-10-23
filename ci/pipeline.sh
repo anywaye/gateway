@@ -138,13 +138,13 @@ log "kit's lint config, which bin/prime refuses without"
 # copied — kit's own header says why ("Not copied into a service repo") and a
 # copy is a second policy to drift. `bin/prime-go` resolves it from `.kit/`
 # or from kit beside the tree (`../kit`); on a sandbox the sibling checkout
-# may already sit at `$WORKSPACE/cafaye/kit`, so link it rather than cloning
+# may already sit at `$WORKSPACE/anywaye/kit`, so link it rather than cloning
 # a second copy. When neither exists the gate fails with the message it
 # already carries, rather than running the linter with no config (which exits
 # 0 on a file the config rejects).
-if [ ! -f .kit/lint/golangci.yml ] && [ -f "$WORKSPACE/cafaye/kit/lint/golangci.yml" ]; then
+if [ ! -f .kit/lint/golangci.yml ] && [ -f "$WORKSPACE/anywaye/kit/lint/golangci.yml" ]; then
   mkdir -p .kit/lint
-  ln -sfn "$WORKSPACE/cafaye/kit/lint/golangci.yml" .kit/lint/golangci.yml
+  ln -sfn "$WORKSPACE/anywaye/kit/lint/golangci.yml" .kit/lint/golangci.yml
   echo "pipeline: linked kit's lint config from the sibling checkout"
 fi
 

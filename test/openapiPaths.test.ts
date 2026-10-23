@@ -31,7 +31,7 @@ const DOCUMENT = [
   "openapi: 3.1.0",
   "",
   "info:",
-  "  title: cafaye gateway",
+  "  title: anywaye gateway",
   "  version: 1.0.0",
   "",
   "paths:",

@@ -65,7 +65,7 @@ README.md
 AGENTS.md
 CLAUDE.md
 CHANGELOG.md
-cafaye.yml
+anywaye.yml
 bin
 Dockerfile
 # docker-compose.yml is NOT on the list above, and the absence is the point

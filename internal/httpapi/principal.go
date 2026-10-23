@@ -39,7 +39,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // GetCurrentPrincipal answers what gateway proved about the caller.

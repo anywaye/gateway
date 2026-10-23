@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/gateway/internal/auth"
+	"github.com/anywaye/gateway/internal/auth"
 )
 
 // newTestStore is a memory store for a single test.

@@ -4,9 +4,9 @@ service: gateway
 # account_scope.yml — every entry point `gateway` mounts, and which of them can
 # reach another account's data.
 #
-# Checked by cafaye/core's contract harness:
+# Checked by anywaye/core's contract harness:
 #
-#     /Users/kaka/Code/any/cafaye/core/harness/bin/account-scope-check .
+#     /Users/kaka/Code/any/anywaye/core/harness/bin/account-scope-check .
 #
 # `gateway` holds NO customer rows: a sweep of every TypeScript service in the
 # fleet for a driver import, a driver declaration and a `.sql` file found none in
@@ -79,7 +79,7 @@ surface:
   # MEASURED, not chosen and not counted by hand — this is the count the checker
   # reads out of the one declared source, in the run at the bottom of this comment:
   #
-  #     $ /Users/kaka/Code/any/cafaye/core/harness/bin/account-scope-check .
+  #     $ /Users/kaka/Code/any/anywaye/core/harness/bin/account-scope-check .
   #     the declared sources register 7 entry point(s) and surface.minimum is 7
   #
   # and those seven are the seven `r.Get`/`r.Post` lines of

@@ -2,7 +2,7 @@
 # sha, or a v<semver> tag. NEVER a branch.
 # ON origin/master, NOT kit's local HEAD: a pin to a commit that
 # exists only on one laptop is a pin no other clone can fetch, and it
-# turns `git clone cafaye/gateway` into a broken checkout.
+# turns `git clone anywaye/gateway` into a broken checkout.
 # Move it with the stack diff in front of you: `bin/dev pin <ref>` is how,
 # and it prints the stack diff between the two refs before it writes this
 # file.

@@ -31,8 +31,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/cafaye/gateway/internal/httpapi"
-	"github.com/cafaye/gateway/internal/telemetry"
+	"github.com/anywaye/gateway/internal/httpapi"
+	"github.com/anywaye/gateway/internal/telemetry"
 )
 
 // recordingExporter collects spans in memory. A test seam, not a second
@@ -259,7 +259,7 @@ func TestTheProcessIdentityIsOnTheResourceAndNotOnTheSpan(t *testing.T) {
 
 	for name, want := range map[string]string{
 		"service.name":           "gateway",
-		"service.namespace":      "cafaye",
+		"service.namespace":      "anywaye",
 		"service.version":        "1.2.3",
 		"deployment.environment": "test",
 		"tenant_id":              "tenant-abc",
@@ -400,7 +400,7 @@ func TestAValidTraceparentIsContinuedAndAGarbageOneIsIgnored(t *testing.T) {
 				return
 			}
 			if got := spanContext.TraceID().String(); got != testCase.wantTraceID {
-				t.Errorf("trace id = %q, want the caller's %q. A request that enters one cafaye service and leaves it another has to read as ONE trace, and the continuation is this hop's span under the caller's trace id.", got, testCase.wantTraceID)
+				t.Errorf("trace id = %q, want the caller's %q. A request that enters one anywaye service and leaves it another has to read as ONE trace, and the continuation is this hop's span under the caller's trace id.", got, testCase.wantTraceID)
 			}
 			// The parent is where the caller's context lives: this hop's own span
 			// context is local by definition, so asserting on it would assert that

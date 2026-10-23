@@ -1,8 +1,8 @@
-# openapi/v1.yaml — the HTTP contract for gateway, the cafaye public gateway.
+# openapi/v1.yaml — the HTTP contract for gateway, the anywaye public gateway.
 #
-# gateway is the only door into a cafaye deployment. This document is what a
+# gateway is the only door into a anywaye deployment. This document is what a
 # generated client is built from, and it is written to
-# `cafaye/core: docs/openapi-conventions.md`. Where core and this file disagree,
+# `anywaye/core: docs/openapi-conventions.md`. Where core and this file disagree,
 # core is right and this file is the bug — and every such place is listed under
 # "Open decisions" in the header below rather than left for a consumer to
 # discover.
@@ -80,24 +80,24 @@
 # therefore treat a missing `RateLimit-Limit` as "this request was not counted"
 # and not as zero.
 #
-# ## Open decisions — departures from cafaye/core docs/openapi-conventions.md
+# ## Open decisions — departures from anywaye/core docs/openapi-conventions.md
 #
 # Each is a manager decision rather than a local choice, and each is recorded
 # here so a reviewer finds it rather than a consumer. The two already open in
-# `cafaye.yml` — RS256 only, the `scope` claim, the default issuer, and the three
+# `anywaye.yml` — RS256 only, the `scope` claim, the default issuer, and the three
 # extra error codes — are not repeated; this document describes what gateway *does*,
-# and `cafaye.yml` says where each departure from core still needs a ruling.
+# and `anywaye.yml` says where each departure from core still needs a ruling.
 #
-#  1. `exposes` was absent from `cafaye.yml` — CLOSED in packet gateway-w87.
+#  1. `exposes` was absent from `anywaye.yml` — CLOSED in packet gateway-w87.
 #
 #     core's manifest schema says a service that serves traffic must declare
 #     `exposes.api` or `exposes.events`, and this repository served traffic and
 #     declared neither. The document the omission was waiting for existed the
-#     whole time, and `cafaye.yml` carried a `DECISION NEEDED` saying why: specs
+#     whole time, and `anywaye.yml` carried a `DECISION NEEDED` saying why: specs
 #     are manager-owned, and pointing the whole platform's `caf gen` at a
 #     contract nobody has agreed to is the manager's call, not a worker's.
 #     Every other service in the fleet that publishes a document points
-#     `exposes.api` at it. `cafaye.yml` now names this file, and the gap is
+#     `exposes.api` at it. `anywaye.yml` now names this file, and the gap is
 #     closed.
 #
 #     The consequence, recorded rather than hidden: with the document declared,
@@ -189,7 +189,7 @@
 openapi: 3.1.0
 
 info:
-  title: cafaye gateway
+  title: anywaye gateway
   # This is a new document, so it starts at 1.0.0 and there is no compatibility
   # promise to keep. It is the document's own semantic version and it follows
   # gateway's release line, not the `/v1` prefix: the two answer different
@@ -198,9 +198,9 @@ info:
   # Non-breaking additions bump this and nothing else. A breaking change bumps the
   # `/v1` prefix and this in the same commit, and `/v1` is never mutated in place.
   version: 1.0.0
-  summary: The cafaye public gateway — authentication, rate limits, routing, and the browser sign-in surface.
+  summary: The anywaye public gateway — authentication, rate limits, routing, and the browser sign-in surface.
   description: |
-    `gateway` is the only door into a cafaye deployment. It authenticates callers,
+    `gateway` is the only door into a anywaye deployment. It authenticates callers,
     limits what they can ask for, and forwards requests under a configured path
     prefix to the service that owns the work. It holds no business data and
     publishes no events.
@@ -265,23 +265,23 @@ info:
     section and mounted (not served) on the `ALL /v1/*` pair above.
   contact:
     name: gateway
-    # The GitHub repository was renamed cafaye/guard -> cafaye/gateway after
+    # The GitHub repository was renamed anywaye/guard -> anywaye/gateway after
     # this document was written. The old URL still redirects, so this was never
     # broken -- but `contact.url` is what a generated client, a docs renderer
     # and a reader with a bug report each follow, and this is the last
     # occurrence of the old name in a file the fleet publishes. No search for
     # `guard` in the TypeScript or the Go source finds this one; it lives in
     # the contract, which is the one artifact whose every byte is outward-facing.
-    url: https://github.com/cafaye/gateway
+    url: https://github.com/anywaye/gateway
   license:
     # The services' grant, per OPS-D2: a Business Source Licence. `name` carries
     # it and `identifier` stays off, because a BSL is not an SPDX identifier in
     # the OpenAPI 3.1 sense a generated client can rely on — the grant of record
     # is the repository's own LICENSE file, which is what this names.
-    name: Business Source License 1.1. See LICENSE in the cafaye/gateway repository.
+    name: Business Source License 1.1. See LICENSE in the anywaye/gateway repository.
 
 servers:
-  - url: https://api.cafaye.com
+  - url: https://api.anywaye.com
     description: production
   - url: http://localhost:8080
     description: local development (docker compose up)
@@ -788,7 +788,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/unauthorized
+                type: https://docs.anywaye.com/errors/unauthorized
                 title: Unauthorized
                 status: 401
                 detail: email or password is not correct
@@ -951,7 +951,7 @@ components:
         Required claims: `iss` (the configured issuer), `aud` (gateway's own client
         id), `sub`, and `exp`. The capability claim is a space-separated `scope`
         string — not core's `scopes` — and an absent `scope` is an empty set,
-        never everything. Both are open in `cafaye.yml`.
+        never everything. Both are open in `anywaye.yml`.
     apiKeyCredential:
       type: apiKey
       in: header
@@ -1125,7 +1125,7 @@ components:
     Problem:
       type: object
       description: |
-        The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+        The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
         Every rejection on this surface is this shape — **except** the `404` and
         the `500`, which are `V0Error` with `application/json`. Read the
         `Content-Type` to tell them apart; nothing else does.
@@ -1139,8 +1139,8 @@ components:
         type:
           type: string
           format: uri
-          description: 'A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.'
-          example: https://docs.cafaye.com/errors/validation_failed
+          description: 'A stable `https://docs.anywaye.com/errors/<code>` URI — the machine-readable contract.'
+          example: https://docs.anywaye.com/errors/validation_failed
         title:
           type: string
           description: A fixed human-readable summary for the code. May be reworded without a version bump.
@@ -1454,7 +1454,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/unauthorized
+            type: https://docs.anywaye.com/errors/unauthorized
             title: Unauthorized
             status: 401
             detail: a bearer token is required
@@ -1478,7 +1478,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/forbidden
+            type: https://docs.anywaye.com/errors/forbidden
             title: Forbidden
             status: 403
             detail: this request is not from the same origin
@@ -1520,7 +1520,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/rate_limited
+            type: https://docs.anywaye.com/errors/rate_limited
             title: Too many requests
             status: 429
             detail: too many requests for this window
@@ -1545,7 +1545,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/unavailable
+            type: https://docs.anywaye.com/errors/unavailable
             title: Service unavailable
             status: 503
             detail: the signing keys could not be retrieved
@@ -1569,7 +1569,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/invalid_json
+            type: https://docs.anywaye.com/errors/invalid_json
             title: Invalid request
             status: 400
             detail: the request body must be a JSON object
@@ -1591,7 +1591,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/payload_too_large
+            type: https://docs.anywaye.com/errors/payload_too_large
             title: Payload too large
             status: 413
             detail: the request body is larger than 4096 bytes
@@ -1613,7 +1613,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/validation_failed
+            type: https://docs.anywaye.com/errors/validation_failed
             title: Validation failed
             status: 422
             detail: the request has an invalid field
@@ -1636,7 +1636,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/conflict
+            type: https://docs.anywaye.com/errors/conflict
             title: Conflict
             status: 409
             detail: an account already exists for that email address
@@ -1665,7 +1665,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/account_locked
+            type: https://docs.anywaye.com/errors/account_locked
             title: Account locked
             status: 423
             detail: too many failed sign-in attempts for this account
