@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# bin/deploy — publish the image+chart, then deploy.
+#
+# Usage: bin/deploy [--dry-run] [--no-restart] [publish flags...]
+#   Runs bin/publish first (build+push image+chart to GHCR/OCI), then:
+#     - on the dev box: restarts the local service so it picks up the new image
+#     - prod: Argo CD polls the registry and syncs within ~2 min (no action needed)
+#
+# Migrations and infra changes are NOT handled here — run bin/migrate by hand.
+set -euo pipefail
+
+SERVICE="$(basename "$(cd "$(dirname "$0")/.." && pwd)")"
+RESTART=1
+PUBLISH_ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --no-restart) RESTART=0 ;;
+    *) PUBLISH_ARGS+=("$a") ;;
+  esac
+done
+
+echo "deploy: publishing $SERVICE"
+./bin/publish "${PUBLISH_ARGS[@]}"
+
+if [ "$RESTART" -eq 1 ] && [ -d /data/workspace ]; then
+  echo "deploy: restarting $SERVICE on the box"
+  case "$SERVICE" in
+    ship)
+      pkill -f "/data/workspace/ship/ship" 2>/dev/null || true
+      sleep 1
+      cd /data/workspace/ship
+      SHIP_DATABASE_URL="postgres://ship:anywaye@localhost:15500/ship?sslmode=disable" \
+      SHIP_TOKEN="dev-token" SHIP_HTTP_ADDR=":8090" \
+      nohup /data/workspace/ship/ship > /tmp/ship.log 2>&1 &
+      echo "ship restarted (pid $!)"
+      ;;
+    gateway)
+      pkill -f "cmd/gateway" 2>/dev/null || true
+      sleep 1
+      cd /data/workspace/gateway
+      PORT=8081 IDENTITY_URL=http://localhost:8080 \
+      nohup go run ./cmd/gateway > /tmp/gateway.log 2>&1 &
+      echo "gateway restarted (pid $!)"
+      ;;
+    identity)
+      echo "identity: restart via bin/dev / identity compose (not auto-restarted here)"
+      ;;
+    website)
+      echo "website: vite dev server auto-reloads on source change; no restart needed"
+      ;;
+    ella)
+      echo "ella: restart uvicorn manually or via start-dev-services.sh"
+      ;;
+    *)
+      echo "$SERVICE: no auto-restart rule; restart manually"
+      ;;
+  esac
+fi
+
+echo "deploy: done — prod syncs via Argo (~2 min) for $SERVICE"
