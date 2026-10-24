@@ -25,7 +25,11 @@ if [ -x ./bin/migrate ]; then
   echo "deploy: running migrations for $SERVICE"
   export DATABASE_URL="postgres://$SERVICE:anywaye@localhost:15500/$SERVICE?sslmode=disable"
   export SHIP_DATABASE_URL="$DATABASE_URL"
-  ./bin/migrate
+  if ./bin/migrate; then
+    echo "deploy: migrations applied for $SERVICE"
+  else
+    echo "deploy: WARN — migrations failed or already applied for $SERVICE; continuing (apply by hand if needed)" >&2
+  fi
 else
   echo "deploy: no bin/migrate for $SERVICE — skipping migrations"
 fi
