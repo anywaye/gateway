@@ -243,6 +243,8 @@ env:
   # mints nothing, which would reopen the seam this table closes as a silent
   # 401 at pantry's second hop.
   ASSERTION_SIGNING_KEY_FILE: "/etc/gateway/assertion/signing.pem"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability:4318"
+  OTEL_SERVICE_NAME: "gateway"
 
 # The secret environment. `REDIS_URL` is a REFERENCE, never a value here: the
 # secret lives on the box and the chart names it, because DEPLOYMENT.md and the
