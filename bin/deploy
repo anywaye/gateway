@@ -23,6 +23,8 @@ done
 # image takes traffic. Services without bin/migrate (or no migrations) skip.
 if [ -x ./bin/migrate ]; then
   echo "deploy: running migrations for $SERVICE"
+  export DATABASE_URL="postgres://$SERVICE:anywaye@localhost:15500/$SERVICE?sslmode=disable"
+  export SHIP_DATABASE_URL="$DATABASE_URL"
   ./bin/migrate
 else
   echo "deploy: no bin/migrate for $SERVICE — skipping migrations"
