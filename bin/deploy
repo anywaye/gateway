@@ -19,6 +19,15 @@ for a in "$@"; do
   esac
 done
 
+# Migrations first (idempotent, re-runnable Up sections): apply before the new
+# image takes traffic. Services without bin/migrate (or no migrations) skip.
+if [ -x ./bin/migrate ]; then
+  echo "deploy: running migrations for $SERVICE"
+  ./bin/migrate
+else
+  echo "deploy: no bin/migrate for $SERVICE — skipping migrations"
+fi
+
 echo "deploy: publishing $SERVICE"
 ./bin/publish "${PUBLISH_ARGS[@]}"
 
