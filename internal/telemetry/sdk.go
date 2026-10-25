@@ -25,12 +25,15 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
@@ -167,6 +170,7 @@ func Install(ctx context.Context, options Options) (Shutdown, error) {
 
 	if options.Disabled {
 		otel.SetTracerProvider(noop.NewTracerProvider())
+		otel.SetMeterProvider(metricnoop.NewMeterProvider())
 		return func(context.Context) error { return nil }, nil
 	}
 
@@ -191,10 +195,28 @@ func Install(ctx context.Context, options Options) (Shutdown, error) {
 	)
 	otel.SetTracerProvider(provider)
 
+	// Metrics: OTLP over gRPC, same endpoint family as traces.
+	target, err := normaliseEndpoint(options.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("building the otlp metric exporter for %s: %w", redactEndpoint(options.Endpoint), err)
+	}
+	metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpointURL(target))
+	if err != nil {
+		return nil, fmt.Errorf("building the otlp metric exporter for %s: %w", redactEndpoint(options.Endpoint), err)
+	}
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter)),
+		sdkmetric.WithResource(Resource(options.LookupEnv)),
+	)
+	otel.SetMeterProvider(meterProvider)
+
 	return func(shutdownCtx context.Context) error {
 		flushCtx, cancel := context.WithTimeout(shutdownCtx, options.ShutdownWait)
 		defer cancel()
-		return provider.Shutdown(flushCtx)
+		err1 := provider.Shutdown(flushCtx)
+		err2 := meterProvider.Shutdown(flushCtx)
+		if err1 != nil { return err1 }
+		return err2
 	}, nil
 }
 

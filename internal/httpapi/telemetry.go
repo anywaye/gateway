@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/trace"
@@ -82,6 +83,7 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 		// Wrapped BEFORE anything can write, so the status is observed whichever
 		// layer commits the response.
 		tracked := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+	start := time.Now()
 
 		// The status is recorded EXACTLY ONCE, from this wrapper, on the way out.
 		// The OpenTelemetry SDK's `SetAttributes` REPLACES a key rather than
@@ -94,6 +96,7 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 				"http.route":                routeTemplate(r),
 			})
 			recordRequestFailure(span, tracked.status)
+			telemetry.RecordRequest(r.Context(), r.Method, routeTemplate(r), tracked.status, time.Since(start))
 			span.End()
 		}()
 
