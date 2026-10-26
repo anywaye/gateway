@@ -163,7 +163,7 @@ env:
   IDENTITY_URL: "http://identity:8080"
   # The `aud` every token must be addressed to — gateway's own client id.
   GATEWAY_CLIENT_ID: "gateway"
-  GATEWAY_ERROR_REPORTING_DSN: "http://da15bbe5-6b70-4b2f-92a5-ce8a8365fecf@glitchtip.default.svc.cluster.local:8095/2"
+  GATEWAY_ERROR_REPORTING_DSN: "http://c5342cbf-5a88-464e-9576-cc8b40d0730b@glitchtip.default.svc.cluster.local:8095/1"
   GATEWAY_RELEASE: "0.1.0"
   # How long a fetched key set is reused, in milliseconds. Also the
   # revocation window: a key identity withdraws keeps verifying until this
