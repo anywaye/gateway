@@ -72,7 +72,7 @@ const problemContentType = "application/problem+json"
 type Problem struct {
 	// The status this answers with. A plain `int`: the document declares
 	// `Problem.status` as `type: integer` with no enum — the fleet convention
-	// (`cafe contract lint` refuses numeric enums) — so there is no generated
+	// (`any contract lint` refuses numeric enums) — so there is no generated
 	// type to reach for, and the wire shape is unchanged either way.
 	Status int
 

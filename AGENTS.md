@@ -526,7 +526,7 @@ as a `> DECISION NEEDED (gateway-NN)` in the **document's header** and keep goin
 Do not pick a side silently, and do not describe the route gateway ought to have.
 
 ## Secrets
-- No `.env` files with values. Use `cafe secret set/get/list` (dev) and `cafe dev` (injects). See `docs/secrets.md`.
+- No `.env` files with values. Use `any secret set/get/list` (dev) and `any dev` (injects). See `docs/secrets.md`.
 
 ## Packet identifiers
 

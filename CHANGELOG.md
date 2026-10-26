@@ -75,7 +75,7 @@ dependency versions follow npm's own rules.
   are unchanged.
 
 - **`openapi/v1.yaml`'s `Problem.status` is a plain `type: integer`, with no
-  numeric `enum`.** `cafe contract lint` refuses numeric enums (the
+  numeric `enum`.** `any contract lint` refuses numeric enums (the
   Kubernetes API convention), and gateway was the one service in the fleet
   carrying one — `enum: [400, 401, 403, 409, 413, 422, 423, 429, 503]`, there
   since guard-06. Identity, pantry, courier and billing all declare the same
@@ -254,7 +254,7 @@ dependency versions follow npm's own rules.
   the chart is pulled by Argo, or it does not run. It is also not Kamal,
   not compose, and not a hosted platform.
 
-  **It is the reference `cafe gen chart` (packet L10) must reproduce**, and
+  **It is the reference `any gen chart` (packet L10) must reproduce**, and
   is written generated-shaped: every value that belongs in a manifest is in
   `values.yaml`, and nothing in the templates is a hand-typed constant a
   generator could not emit. The manifest fields it reads, so L10 has a
@@ -299,7 +299,7 @@ dependency versions follow npm's own rules.
   the box, where Traefik appends exactly one hop.
 
 - **gateway emits real telemetry: one server span per request, and the fleet's
-  collector can now see them.** `internal/telemetry/` is `cafe gen telemetry`
+  collector can now see them.** `internal/telemetry/` is `any gen telemetry`
   output — the per-signal attribute allowlists, the span-name grammar, the endpoint
   contract and the no-op path, all read out of core's vendored schemas — plus a
   hand-written SDK half (`sdk.go`) that consults that generated contract rather than
@@ -323,7 +323,7 @@ dependency versions follow npm's own rules.
   nothing configured gets traces.
 
   `anywaye.yml`'s `language` said `typescript`, an implementation deleted at cutover,
-  and `cafe gen telemetry` refuses any language it does not emit for — so the field
+  and `any gen telemetry` refuses any language it does not emit for — so the field
   had to agree with the tree before the fleet's own generator could be used. That
   does not resolve DECISION NEEDED item 7, which is about which implementation the
   manifest describes.
@@ -1814,13 +1814,13 @@ dependency versions follow npm's own rules.
   install creates (`anywaye/notes/deployment.md`, "The ACME solver") — rendered as the
   `cert-manager.io/cluster-issuer` annotation **only when non-empty**: empty
   means no cert-manager, a secret nothing writes (the generator's own rule,
-  `cafe gen chart`). The operator's `ingress.annotations` map still renders
+  `any gen chart`). The operator's `ingress.annotations` map still renders
   beside it, and an explicit operator `cert-manager.io/cluster-issuer` wins
   over the value — a duplicate annotation key is invalid YAML. `bin/chart-test`
   (new) asserts the committed render, the empty-issuer control, the collision
   rule and `helm lint`; it was red before the fix, green after.
 
-  **Divergences from `cafe gen chart` are reported, not chased** — full list in
+  **Divergences from `any gen chart` are reported, not chased** — full list in
   `REPORT-gateway-w94-issuer-01`. The ones that matter: the values shape
   (`secrets:`/`secretName` vs the generated `secretName`, `replicaCount` vs
   `replicas`, `probes.*` vs `readinessProbe.*`, `ingress.tls.*` vs

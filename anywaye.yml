@@ -195,7 +195,7 @@ env:
 repository:
   # The GitHub repository was renamed guard -> gateway, so this URL is no
   # longer "deliberately stale": the old one redirects, and this one is where
-  # the bytes actually live. `cafe dev` and `pantry` read this field.
+  # the bytes actually live. `any dev` and `pantry` read this field.
   url: git@github.com:anywaye/gateway.git
   defaultBranch: master
   visibility: private

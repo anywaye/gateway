@@ -113,7 +113,7 @@ The document's header records **seven departures from
 [`core/docs/openapi-conventions.md`](../core/docs/openapi-conventions.md)** as
 open decisions rather than resolving them locally. The most consequential was that
 `anywaye.yml` had no `exposes` block: the document the omission was waiting for
-existed the whole time, and pointing the platform's `cafe gen` at it is the
+existed the whole time, and pointing the platform's `any gen` at it is the
 manager's call. Packet `gateway-w87` closed that — `exposes.api` now names this
 document — and the consequence is that core's harness reads it for the first time
 and reports those departures as findings. They were always there; the harness
@@ -969,7 +969,7 @@ later `kubectl apply` wins — a deploy whose target depends on apply order is
 not a deploy. `anywaye/notes/deployment.md`, "Who owns the `Application`": the substrate
 owns it, one per service, and **a service repository commits none**.
 
-The chart is hand-written as the reference `cafe gen chart` (packet L10) must
+The chart is hand-written as the reference `any gen chart` (packet L10) must
 reproduce: every value that belongs in a manifest is in `values.yaml`, and
 nothing in the templates is a hand-typed constant a generator could not emit.
 The readiness probe is `/readyz` — the real, dependency-aware probe — and
@@ -1748,7 +1748,7 @@ the source with the packet that replaces them.
   where `TRUSTED_PROXIES` being wrong matters most, and a lockout at the edge is a
   later decision.
 - **SSE / streaming pass-through**, **contract tests against this document**
-  (`cafe contract lint` validating real responses against `openapi/v1.yaml`), and
+  (`any contract lint` validating real responses against `openapi/v1.yaml`), and
   **structured logging**. The OpenAPI document itself has shipped — see
   [The HTTP contract](#the-http-contract) — and `anywaye.yml` now declares it, so
   the `DECISION NEEDED` in [anywaye.yml](anywaye.yml) is down to the contract

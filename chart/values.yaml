@@ -83,7 +83,7 @@ image:
   # The chart VERSION does not move (Chart.yaml's `version` is the OCI tag
   # and the substrate's Application targetRevision), so the chart's content
   # changes under a fixed tag and the diff fires on refresh.
-  digest: "sha256:ecf8cd961dc09469d855361fec4ef99c0d81c74c70433d04c60433ebd7d5b4bf"
+  digest: "sha256:7249bd8b4ef6b85a21b7d6366fc509cfc37578ad99469e5dee07ad18583133ec"
   # A value, never `latest`: a floating tag is a deploy that changes when
   # somebody else pushes. Kept, and kept EQUAL to Chart.yaml's appVersion —
   # kit's publish seam asserts the pair — because the tag is the
@@ -163,7 +163,7 @@ env:
   IDENTITY_URL: "http://identity:8080"
   # The `aud` every token must be addressed to — gateway's own client id.
   GATEWAY_CLIENT_ID: "gateway"
-  GATEWAY_ERROR_REPORTING_DSN: "http://da15bbe5-6b70-4b2f-92a5-ce8a8365fecf@glitchtip.default:8095/2"
+  GATEWAY_ERROR_REPORTING_DSN: "http://da15bbe5-6b70-4b2f-92a5-ce8a8365fecf@glitchtip.default.svc.cluster.local:8095/2"
   GATEWAY_RELEASE: "0.1.0"
   # How long a fetched key set is reused, in milliseconds. Also the
   # revocation window: a key identity withdraws keeps verifying until this
