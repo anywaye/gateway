@@ -58,11 +58,6 @@ import (
 // already answers with for the same thing (`identity/internal/httpapi`), so it is
 // the one reused here rather than inventing a fourth.
 func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Trace-Id") == "glitchtip-probe" {
-		CaptureError(fmt.Errorf("glitchtip probe gateway"), r)
-		writeProblem(w, r, Problem{Status: http.StatusInternalServerError, Code: "internal_error", Detail: "unexpected server error"})
-		return
-	}
 	if s.verifier == nil {
 		writeV0NotFound(w, r)
 		return
