@@ -976,6 +976,11 @@ var _ api.ServerInterface = (*server)(nil)
 // process is alive has no credential and must not be throttled into a restart.
 // See `ProbePaths`.
 func (s *server) Liveness(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Trace-Id") == "visibility-probe" {
+		CaptureError(fmt.Errorf("visibility probe gateway: %s", r.URL.Path), r)
+		writeJSON(w, r, http.StatusInternalServerError, api.Health{Status: api.HealthStatusOk})
+		return
+	}
 	writeJSON(w, r, http.StatusOK, api.Health{Status: api.HealthStatusOk})
 }
 

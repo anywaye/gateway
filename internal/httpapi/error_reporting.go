@@ -31,12 +31,20 @@ func InitErrorReporting() {
 		Release:          release,
 		Environment:      environment,
 		AttachStacktrace: true,
+		// Mark gateway's own frames as in-app so GlitchTip shows the stack
+		// trace in its default (in-app) view instead of hiding every frame.
+		InAppInclude: []string{"github.com/anywaye/gateway", "github.com/anywaye/gateway/"},
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			for i := range event.Exception {
-				event.Exception[i].Value = ""
-			}
+			// Keep the exception message so errors are actionable. The message
+			// must not contain user input or secrets; identifiers belong in tags.
 			if event.Request != nil {
-				event.Request.URL = ""
+				// Keep the path for reproduction, but drop the query string,
+				// which is where tokens and PII most often leak.
+				if u := event.Request.URL; u != "" {
+					if i := strings.IndexByte(u, '?'); i >= 0 {
+						event.Request.URL = u[:i]
+					}
+				}
 				event.Request.QueryString = ""
 			}
 			return event
