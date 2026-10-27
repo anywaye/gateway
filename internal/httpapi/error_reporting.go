@@ -31,9 +31,6 @@ func InitErrorReporting() {
 		Release:          release,
 		Environment:      environment,
 		AttachStacktrace: true,
-		// Mark gateway's own frames as in-app so GlitchTip shows the stack
-		// trace in its default (in-app) view instead of hiding every frame.
-		InAppInclude: []string{"github.com/anywaye/gateway", "github.com/anywaye/gateway/"},
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			// Keep the exception message so errors are actionable. The message
 			// must not contain user input or secrets; identifiers belong in tags.
@@ -46,6 +43,19 @@ func InitErrorReporting() {
 					}
 				}
 				event.Request.QueryString = ""
+			}
+			// Mark gateway's own frames as in-app so GlitchTip shows the
+			// stack trace in its default (in-app) view instead of hiding
+			// every frame.
+			for i := range event.Exception {
+				if st := event.Exception[i].Stacktrace; st != nil {
+					for j := range st.Frames {
+						if strings.Contains(st.Frames[j].Module, "anywaye") ||
+							strings.Contains(st.Frames[j].Filename, "anywaye") {
+							st.Frames[j].InApp = true
+						}
+					}
+				}
 			}
 			return event
 		},
