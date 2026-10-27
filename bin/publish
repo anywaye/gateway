@@ -404,11 +404,33 @@ fi
 
 info "chart: $chart_name version $chart_version appVersion ${chart_app_version:-<none>}"
 
-# tag defaults to chart version (matching Applications' pinned targetRevision)
+# Bump the chart's patch version on every publish so Argo CD (which caches OCI
+# charts by targetRevision) re-fetches the new chart instead of serving the stale
+# cached one. Without this, a publish that only changes the image digest never
+# reaches prod: Argo keeps the old chart and selfHeals any manual rollout back.
+# The Argo Application's targetRevision must track this bumped version; publish
+# prints the kubectl patch command in the summary. (See anywaye-dev skill.)
 if [ -z "$TAG" ]; then
+  _old_version="$chart_version"
+  chart_version="$(printf '%s' "$chart_version" | awk -F. '{
+    if (NF >= 3) { $NF = $NF + 1 }
+    else if (NF == 2) { $2 = $2 + 1 }
+    else { $1 = $1 + 1 }
+    out = $1; for (i=2;i<=NF;i++) out = out "." $i; print out
+  }')"
+  if [ "$chart_version" != "$_old_version" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      info "dry-run: would bump chart version $_old_version -> $chart_version in $CHART_ABS/Chart.yaml"
+    else
+      _tmp="$(mktemp)"
+      awk -v v="$chart_version" 'BEGIN{done=0} /^version:[[:space:]]*/ && !done { print "version: " v; done=1; next } { print }' "$CHART_ABS/Chart.yaml" > "$_tmp"
+      mv "$_tmp" "$CHART_ABS/Chart.yaml"
+      info "chart: version bumped $_old_version -> $chart_version (Argo re-fetches on targetRevision change)"
+    fi
+  fi
   TAG="$chart_version"
 fi
-info "tag: $TAG (chart version; not bumped — Argo targetRevision pins this)"
+info "tag: $TAG (chart version; bumped per publish so Argo re-fetches)"
 
 # image defaults to ghcr.io/anywaye/<chart-name> (lowercased)
 if [ -z "$IMAGE" ]; then
@@ -698,6 +720,11 @@ publish: done
   Argo CD Application pulls:
     repoURL: $REGISTRY/$chart_name  chart: $chart_name  targetRevision: $chart_version
     image: $IMAGE:$TAG (and by digest $IMAGE_DIGEST)
+
+  Argo CD (prod) -- bump targetRevision to the new version so Argo re-fetches:
+    kubectl patch application $chart_name -n argocd --type merge \
+      -p '{"spec":{"source":{"targetRevision":"'"$chart_version"'"}}}'
+    (or run from the founder laptop: ssh anywaye-prod 'kubectl patch ...')
 
 EOF
 
