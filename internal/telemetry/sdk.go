@@ -73,7 +73,7 @@ const exportTimeout = 5 * time.Second
 // without a version.
 func Resource(lookup func(string) string) *resource.Resource {
 	attributes := []attribute.KeyValue{
-		semconv.ServiceName(ServiceName),\n		semconv.ServiceNamespace(Namespace),
+		semconv.ServiceName(ServiceName),
 
 	}
 	if version := lookup("OTEL_SERVICE_VERSION"); version != "" {
