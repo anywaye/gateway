@@ -4,7 +4,9 @@
 # Usage: bin/deploy [--dry-run] [--no-restart] [publish flags...]
 #   Runs bin/publish first (build+push image+chart to GHCR/OCI), then:
 #     - on the dev box: restarts the local service so it picks up the new image
-#     - prod: Argo CD polls the registry and syncs within ~2 min (no action needed)
+#     - prod: Argo CD polls the registry and syncs within ~2 min, then the
+#       pod is rolled so the new image is actually served (Argo syncs the spec
+#       but does not always roll pods — see issues #5710, #10099)
 #
 # Migrations and infra changes are NOT handled here — run bin/migrate by hand.
 set -euo pipefail
@@ -70,6 +72,26 @@ if [ "$RESTART" -eq 1 ] && [ -d /data/workspace ]; then
       echo "$SERVICE: no auto-restart rule; restart manually"
       ;;
   esac
+fi
+
+# Prod pod restart: Argo CD syncs the deployment spec (new image digest) but
+# does not always roll the pod — the running container can keep serving the
+# old image. Force a rollout so the new image is actually served. Applies to
+# every service. See: ArgoCD issues #5710, #10099.
+if [ "$RESTART" -eq 1 ]; then
+  echo "deploy: rolling prod pod for $SERVICE"
+  ssh anywaye-prod "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n $SERVICE rollout restart deployment/$SERVICE" 2>&1 || \
+    echo "deploy: WARN — prod rollout restart failed for $SERVICE (run manually)" >&2
+fi
+
+# Prod pod restart: Argo CD syncs the deployment spec (new image digest) but
+# does not always roll the pod — the running container can keep serving the
+# old image. Force a rollout so the new image is actually served. Applies to
+# every service. See: ArgoCD issues #5710, #10099.
+if [ "$RESTART" -eq 1 ]; then
+  echo "deploy: rolling prod pod for $SERVICE"
+  ssh anywaye-prod "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n $SERVICE rollout restart deployment/$SERVICE" 2>&1 || \
+    echo "deploy: WARN — prod rollout restart failed for $SERVICE (run manually)" >&2
 fi
 
 echo "deploy: done — prod syncs via Argo (~2 min) for $SERVICE"
