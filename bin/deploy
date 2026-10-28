@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# bin/deploy — publish the image+chart, then deploy.
+# bin/deploy — publish the image+chart, then signal deploy via Git commit.
 #
 # Usage: bin/deploy [--dry-run] [--no-restart] [publish flags...]
 #   Runs bin/publish first (build+push image+chart to GHCR/OCI), then:
+#     - commits the version bump to Git (this IS the deploy signal)
 #     - on the dev box: restarts the local service so it picks up the new image
-#     - prod: Argo CD polls the registry and syncs within ~2 min, then the
-#       pod is rolled so the new image is actually served (Argo syncs the spec
-#       but does not always roll pods — see issues #5710, #10099)
+#   Prod: Argo CD watches Git and syncs on push (no SSH, no kubectl, no polling).
 #
 # Migrations and infra changes are NOT handled here — run bin/migrate by hand.
 set -euo pipefail
@@ -38,6 +37,23 @@ fi
 
 echo "deploy: publishing $SERVICE"
 ./bin/publish "${PUBLISH_ARGS[@]}"
+
+# GitOps: bump targetRevision in the Argo Application manifest to match.
+VERSION="$(grep '^version:' chart/Chart.yaml | awk '{print $2}')"
+if [ -f deploy/argocd-application.yaml ]; then
+  sed -i "s/targetRevision:.*/targetRevision: $VERSION/" deploy/argocd-application.yaml
+  echo "deploy: bumped targetRevision to $VERSION in deploy/argocd-application.yaml"
+fi
+
+# GitOps: commit the version bump — this IS the deploy signal.
+# Argo CD watches Git and syncs on push. No SSH, no kubectl, no polling.
+if [ "$RESTART" -eq 1 ]; then
+  echo "deploy: committing version bump to Git"
+  git add -A 2>/dev/null || true
+  git commit -m "deploy: $SERVICE $VERSION" 2>/dev/null || echo "deploy: nothing to commit (already up to date)"
+  git push origin master 2>&1 | tail -3
+  echo "deploy: pushed to master — Argo CD will sync on webhook"
+fi
 
 if [ "$RESTART" -eq 1 ] && [ -d /data/workspace ]; then
   echo "deploy: restarting $SERVICE on the box"
@@ -74,24 +90,4 @@ if [ "$RESTART" -eq 1 ] && [ -d /data/workspace ]; then
   esac
 fi
 
-# Prod pod restart: Argo CD syncs the deployment spec (new image digest) but
-# does not always roll the pod — the running container can keep serving the
-# old image. Force a rollout so the new image is actually served. Applies to
-# every service. See: ArgoCD issues #5710, #10099.
-if [ "$RESTART" -eq 1 ]; then
-  echo "deploy: rolling prod pod for $SERVICE"
-  ssh anywaye-prod "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n $SERVICE rollout restart deployment/$SERVICE" 2>&1 || \
-    echo "deploy: WARN — prod rollout restart failed for $SERVICE (run manually)" >&2
-fi
-
-# Prod pod restart: Argo CD syncs the deployment spec (new image digest) but
-# does not always roll the pod — the running container can keep serving the
-# old image. Force a rollout so the new image is actually served. Applies to
-# every service. See: ArgoCD issues #5710, #10099.
-if [ "$RESTART" -eq 1 ]; then
-  echo "deploy: rolling prod pod for $SERVICE"
-  ssh anywaye-prod "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n $SERVICE rollout restart deployment/$SERVICE" 2>&1 || \
-    echo "deploy: WARN — prod rollout restart failed for $SERVICE (run manually)" >&2
-fi
-
-echo "deploy: done — prod syncs via Argo (~2 min) for $SERVICE"
+echo "deploy: done — Argo CD syncs on Git push for $SERVICE"
