@@ -1,56 +1,4 @@
 #!/usr/bin/env bash
-#
-# bin/prime — gateway's gate.
-#
-#   bin/prime          run the whole gate
-#   bin/prime --help   this header
-#
-# WHAT IT IS NOW. `./bin/prime-go`, and nothing in front of it. This script used
-# to be two tiers: `bun install --frozen-lockfile`, `tsc --noEmit`, `bun test`,
-# and then `./bin/prime-go` as the last step. The TypeScript tier is gone — `src/`
-# was deleted at cutover (f87c891, "Delete src/: the TypeScript reference is
-# gone"), after the equivalence harness answered the question it existed to ask:
-# 51 cases, 13 scenarios, 914 comparisons, 0 differences. What was left of that
-# tier was the build surface, and this commit is where it goes: package.json,
-# bun.lock, tsconfig.json, the `bun`/`node` pins in mise.toml, and every step
-# below. So the wrapper has no steps left to wrap, and what remains is a file
-# that runs the Go tier and says so.
-#
-# IT IS STILL A SEPARATE FILE rather than a symlink to `bin/prime-go`, and that is
-# a decision rather than an accident. `gate.yml` declares `entrypoint: bin/prime`
-# and `ci.invokes: [bin/prime]`, and the checker reads both textually against
-# `ci/ci.yml` — so the name is a contract with the fleet, and
-# changing it would mean changing three other files this commit does not own.
-# A developer running `./bin/prime-go` directly still gets the tier; a developer
-# running `bin/prime` gets the tier plus the final line the gate's `ok` proof
-# reads, and a gate that can finish without printing its own last line is a gate
-# whose completion nobody proved.
-#
-# WHAT IT PROMISES
-#   Exit 0: the Go tier is green — gofmt clean, `go build`, `go vet`,
-#   `go test -count=1 -v ./...` with every counted skip reported, and
-#   `internal/api/api.gen.go` byte-identical to what `openapi/v1.yaml` generates.
-#   Anything else: nonzero, with the failing step named. `bin/prime-go` is where
-#   the work is and where the failure messages live; this script adds none.
-#
-# WHAT WAS DROPPED AND WHY, because two flags are gone rather than renamed:
-#   * `--fast` (frozen install only) — every step it skipped was a TypeScript
-#     step. A flag whose whole body was skipped work has no body left.
-#   * `--no-go` (everything but the Go tier) — the escape hatch existed so a
-#     contributor with bun and no Go toolchain could still run the TypeScript
-#     tier. That is precisely the contributor this repository no longer has. The
-#     Go tier was always the required one, and now it is the only one, so the
-#     flag would have been a way to run zero of the gate. An unknown argument
-#     still exits 2 with a sentence, which is what `pins.test.ts` asserted and
-#     what this line preserves.
-#   * `require_pinned_bun` — it read the pin out of `package.json`'s
-#     `packageManager` field, so with the manifest gone it could only ever
-#     report "cannot read the Bun pin" and exit 127. The Go tier asserts its own
-#     toolchain against `mise.toml` AND `go.mod` as its first step
-#     (`bin/prime-go:39-57`), which is a strictly stronger check of a pin that
-#     still exists than this one was of a pin that no longer did.
-#
-#   `set -euo pipefail` is the whole mechanism — no error handling to forget.
 
 set -euo pipefail
 
@@ -73,9 +21,4 @@ cd "$(dirname "$0")/.."
 
 ./bin/prime-go
 
-# The gate's own last line, and it is `==` rather than prime-go's `==>` because
-# these are two scripts: prime-go's is the tier finishing, this one is the gate
-# finishing. gate.yml's `ok` proof reads this line, so a `bin/prime` whose last
-# line stopped being this one is a proof that cannot be satisfied — which is the
-# point of a presence proof, and the reason it is here rather than in prime-go.
 printf '\n== prime ok\n'

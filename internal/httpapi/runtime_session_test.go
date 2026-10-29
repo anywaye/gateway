@@ -14,39 +14,7 @@ import (
 	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
-// The wiring, end to end: a gateway built by `RuntimeOptions` from an ENVIRONMENT,
-// not from a hand-assembled `Options`.
-//
-// # WHY THIS FILE EXISTS AT ALL
-//
-// Every other test of the browser surface builds `Options{BFF: &bff}` with a
-// `sessiontest` double, which proves the port and nothing about the deployment.
-// The gap that let the Go service ship with no session store at all is exactly
-// this one: nothing ever went from "these two variables are set" to "the four
-// routes are served", so nobody could tell a store that was missing from a store
-// that was configured and unused. `internal/sessiontest`'s guard proves the FIXTURE
-// is not linked in; nothing proved a real store was.
-//
-// # A REAL REDIS, AND WHY IT IS NOT OPTIONAL HERE
-//
-// The store is exercised against a real `redis-server`, not a fake, because the
-// fake cannot be wrong in the ways Redis is: a `SET` that does not report `OK`, a
-// `GET` that answers `nil` where the fake answers `""`, a `PX` that Redis refuses.
-// A green here means the wire commands are right.
-//
-// It runs in-process by EXECUTING `redis-server` on a free port, so it needs no
-// environment variable and cannot be skipped — which is the property the
-// environment-gated tiers in this repository had to be given three mechanisms to
-// fake. There is no `GATEWAY_REDIS_URL` here and no skip: a developer with no
-// Redis gets a failing test saying so, not a green about nothing.
 
-// TestARuntimeGatewaySignsInAndReadsItsOwnSession is the packet's headline,
-// asserted: the Go binary serves the browser surface from its own build.
-//
-// It asserts the whole exchange rather than a status — login, the cookie, `/me`
-// with it, and a session that is gone after logout — because a store that accepted
-// a `Put` and silently failed to answer a `Get` would pass a 200-on-login test and
-// this is the assertion that catches it.
 func TestARuntimeGatewaySignsInAndReadsItsOwnSession(t *testing.T) {
 	identity := newIdentityStub(t)
 	redisURL := startRedis(t)
@@ -70,8 +38,6 @@ func TestARuntimeGatewaySignsInAndReadsItsOwnSession(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Login. Same-origin, because the origin gate is in front of the route and a
-	// cross-origin POST is refused before any of this matters.
 	login := send(t, handler, http.MethodPost, "/auth/login",
 		`{"email":"a@example.test","password":"pw"}`, sameOrigin())
 	if login.StatusCode != http.StatusOK {
@@ -86,9 +52,6 @@ func TestARuntimeGatewaySignsInAndReadsItsOwnSession(t *testing.T) {
 		t.Errorf("the login body carries the identity token, which is the whole thing the cookie exists to prevent: %s", readBody(t, login))
 	}
 
-	// `/me` with the cookie: the store is read, and the token is put in a Bearer
-	// for identity. If the stored value did not survive the round trip, `/me`
-	// answers 401 — which is why this is the assertion and not the login's 200.
 	me := send(t, handler, http.MethodGet, "/auth/me", "", map[string]string{"Cookie": cookie})
 	if me.StatusCode != http.StatusOK {
 		t.Fatalf("GET /auth/me with a fresh cookie answered %d, want 200. body: %s", me.StatusCode, readBody(t, me))
@@ -97,9 +60,6 @@ func TestARuntimeGatewaySignsInAndReadsItsOwnSession(t *testing.T) {
 		t.Errorf("/auth/me did not answer the signed-in account: %s", readBody(t, me))
 	}
 
-	// Logout, then the same cookie. A `Delete` that did nothing is the failure a
-	// sign-out test has to make loud, because the browser has already discarded its
-	// copy and the stale cookie is exactly what a stolen one looks like.
 	out := send(t, handler, http.MethodPost, "/auth/logout", "", map[string]string{
 		"Sec-Fetch-Site": "same-origin",
 		"Cookie":         cookie,
@@ -113,14 +73,6 @@ func TestARuntimeGatewaySignsInAndReadsItsOwnSession(t *testing.T) {
 	}
 }
 
-// TestASessionSurvivesTheProcessThatCreatedIt is the property the reference's
-// `Map` cannot have, and the reason this store exists at all.
-//
-// A SECOND gateway is built from the same environment — a second replica — and it
-// reads a session the FIRST one created. With a per-process store this is a 401,
-// and it is a 401 that looks like a login bug and is debugged as one. So the
-// assertion is made against a genuinely separate handler and a genuinely separate
-// store instance, not by calling `Get` twice on one object.
 func TestASessionSurvivesTheProcessThatCreatedIt(t *testing.T) {
 	identity := newIdentityStub(t)
 	redisURL := startRedis(t)
@@ -142,8 +94,6 @@ func TestASessionSurvivesTheProcessThatCreatedIt(t *testing.T) {
 	}
 	cookie := SessionCookie + "=" + sessionCookieValue(login)
 
-	// Replica two, built separately. Same environment, so it has its own handler,
-	// its own store and its own connection — and the same Redis, which is the point.
 	second, err := RuntimeOptions(mapEnv(vars))
 	if err != nil {
 		t.Fatalf("RuntimeOptions for the second replica: %v", err)
@@ -162,13 +112,6 @@ func TestASessionSurvivesTheProcessThatCreatedIt(t *testing.T) {
 	}
 }
 
-// TestANoStoreMeansNoBrowserSurfaceRatherThanADegradedOne.
-//
-// Three environments and one table. The middle one is the whole reason the row
-// exists: `IDENTITY_URL` set with no `REDIS_URL` is a deployment that LOOKS
-// configured and is not, and `README.md`'s own rule — "a variable an operator sets
-// that changes nothing is worse than one they cannot set, because it looks
-// configured and configures a 404" — is the one being obeyed here by declining.
 func TestANoStoreMeansNoBrowserSurfaceRatherThanADegradedOne(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -194,14 +137,7 @@ func TestANoStoreMeansNoBrowserSurfaceRatherThanADegradedOne(t *testing.T) {
 	}
 }
 
-// # THE TWO BELOW ARE THE SILENCE THAT WAS THE BUG
-//
-// "no silent 404 on a configured browser surface" is a claim about what an
-// OPERATOR SEES, and these two are the only places it can be checked: the routes
-// themselves.
 
-// TestAConfiguredBrowserSurfaceNeverDeclinesTheFourRoutes, at the routing layer,
-// with nothing configured at all.
 func TestAnUnconfiguredGatewayDeclinesTheFourRoutesAsTheReferenceDoes(t *testing.T) {
 	config, err := RuntimeOptions(mapEnv(map[string]string{"PORT": "9110"}))
 	if err != nil {
@@ -227,14 +163,6 @@ func TestAnUnconfiguredGatewayDeclinesTheFourRoutesAsTheReferenceDoes(t *testing
 	}
 }
 
-// TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem is the
-// direct statement of the headline, and it is deliberately in this file rather than
-// derived from the one above.
-//
-// The two look like the same assertion and are opposites: one says an UNCONFIGURED
-// gateway declines, this one says a CONFIGURED one does not. A gateway that
-// answered 404 to `/auth/login` while holding both variables is the exact defect
-// the packet was raised for, and the way to catch it is to configure one and look.
 func TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem(t *testing.T) {
 	identity := newIdentityStub(t)
 	redisURL := startRedis(t)
@@ -254,10 +182,6 @@ func TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem(t *
 		t.Fatalf("New: %v", err)
 	}
 
-	// Each route is asked for something it will REFUSE, and what matters is the
-	// status family: an origin gate answering 403, an unauthenticated read
-	// answering 401. A 404 in any of these four is a decline, and a decline here
-	// is a gateway that looks configured and is not.
 	for _, spec := range []struct {
 		name, method, path, body string
 		headers                  map[string]string
@@ -266,10 +190,6 @@ func TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem(t *
 		{"a cross-origin login is the gate's 403", http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`,
 			map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
 		{"an unauthenticated read is a 401", http.MethodGet, "/auth/me", "", nil, http.StatusUnauthorized},
-		// Same-origin, or the ORIGIN GATE answers 403 first and the 401 is never
-		// reached. The gate is in front of all four routes, which is why this case
-		// sends the header and the cross-origin case above does not — two refusals
-		// from one route, and they have to be asked for differently.
 		{"an unauthenticated logout is a 401", http.MethodPost, "/auth/logout", "", sameOrigin(), http.StatusUnauthorized},
 	} {
 		t.Run(spec.name, func(t *testing.T) {
@@ -283,9 +203,6 @@ func TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem(t *
 		})
 	}
 
-	// `/auth/register` has no unauthenticated refusal to ask for — it is the route
-	// that CREATES a session — so it is asked for cross-origin, which every browser
-	// route shares.
 	res := send(t, handler, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`,
 		map[string]string{"Sec-Fetch-Site": "cross-site"})
 	if res.StatusCode != http.StatusForbidden {
@@ -293,21 +210,6 @@ func TestAConfiguredBrowserSurfaceAnswersItsOwnRoutesRatherThanDecliningThem(t *
 	}
 }
 
-// TestAnUnusableIdentityURLIsARefusalToBoot, because `/auth/*` answering 404 under
-// a mistyped `IDENTITY_URL` looks like a routing bug and will be debugged as one.
-//
-// # IT ASSERTS THROUGH `New`, AND THAT IS THE POINT
-//
-// `RuntimeOptions` does NOT validate the URL — it hands it to `NewBff`, which does,
-// and this test asserts through `New` because **that is the path `cmd/gateway`
-// takes**: `RuntimeOptions` then `New`, and an error from either stops the process
-// before it listens. Asserting on `RuntimeOptions` alone would have passed on a
-// deployment that boots and then answers 404 on four routes, which is the failure
-// this test exists to rule out.
-//
-// One validator for one variable is the reason the check is not duplicated into
-// `runtime.go`: a second copy of the http(s)-and-no-path rule is a second sentence
-// to keep in step with the first.
 func TestAnUnusableIdentityURLIsARefusalToBoot(t *testing.T) {
 	for _, value := range []string{"identity.test", "ftp://identity.test", "http://identity.test/v1", "http://identity.test?a=1"} {
 		t.Run(value, func(t *testing.T) {
@@ -328,21 +230,6 @@ func TestAnUnusableIdentityURLIsARefusalToBoot(t *testing.T) {
 	}
 }
 
-// identityStub is identity's answers, served over a real socket rather than
-// injected as a `Doer`.
-//
-// Because `RuntimeOptions` builds its own `http.Client` and nothing in it is
-// replaceable from the environment, a test that handed the BFF a `Doer` would be
-// proving the test's own function rather than the configuration — and the
-// configuration is the thing under test. The HTTP client behind the code under test
-// is also the one thing a real deployment gets for free, so it is the one thing worth
-// not stubbing here.
-//
-// The `/v1/me` handler refuses any request that is not carrying the token it minted.
-// That is not decoration: a `/me` that answered 200 without the credential from the
-// store would pass every other assertion in this file while the store was never
-// read at all, and "the browser surface works" would be a claim about the handler
-// rather than about the store.
 type identityStubT struct {
 	url    string
 	token  string
@@ -360,11 +247,6 @@ func newIdentityStub(t *testing.T) *identityStubT {
 
 	mux := http.NewServeMux()
 
-	// The three routes the browser surface calls, and each one refuses a request
-	// that is not carrying what it should be. That refusal is the assertion: a
-	// `/me` that answered 200 without the credential out of Redis would pass every
-	// other check in this file while the store was never read, and "the browser
-	// surface works" would be a claim about the handler rather than about the store.
 	requiresToken := func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Header.Get("Authorization") == "Bearer "+stub.token {
 			return true
@@ -377,10 +259,6 @@ func newIdentityStub(t *testing.T) *identityStubT {
 	mux.HandleFunc("/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
-			// Login. The expiry is in the PAST relative to nothing — it is far
-			// future — because `login` refuses a session whose expiry has already
-			// passed, and a fixed far-future string keeps a failing assertion
-			// naming the same instant on both runs.
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"token":"`+stub.token+`","expires_at":"2031-03-04T05:06:07.000Z"}`)
 
@@ -415,8 +293,6 @@ func newIdentityStub(t *testing.T) *identityStubT {
 	return stub
 }
 
-// send is one request through a built handler, with the host the origin gate and
-// the cookie parser expect.
 func send(t *testing.T, handler http.Handler, method, path, body string, headers map[string]string) testResponse {
 	t.Helper()
 
@@ -434,23 +310,6 @@ func send(t *testing.T, handler http.Handler, method, path, body string, headers
 	return testResponse{rec.Result()}
 }
 
-// startRedis is a real `redis-server` on a free port, for this process only.
-//
-// It EXECUTES the binary rather than dialing a URL an operator set, which is the
-// whole reason this tier needs no `GATEWAY_REDIS_URL` and cannot be skipped: the
-// alternative is a green that says nothing about the wire commands whenever the
-// developer's Redis is not running, which is the class of bug this repository has
-// now been bitten by three times — the limiter's `TestMain` exiting 0 before
-// `m.Run`, the equivalence tier's skip into a void, and the codegen step's `||
-// true`.
-//
-// A developer with no `redis-server` on their PATH gets a FAILING test that says
-// so, which is a better outcome than a passing test that proved nothing: this is the
-// only tier in the Go tree that cannot lie about having run.
-//
-// The server is started with `--save ”` and `--appendonly no` so it writes
-// nothing to disk, and its directory is `t.TempDir()` so a crashed run cannot leave
-// a `dump.rdb` in the working tree.
 func startRedis(t *testing.T) string {
 	t.Helper()
 
@@ -487,9 +346,6 @@ func startRedis(t *testing.T) string {
 	url := "redis://" + addr
 	waitForRedis(t, url, server)
 	t.Cleanup(func() {
-		// Only this test's keys. `FLUSHDB` would empty whatever Redis the operator
-		// meant, and `GATEWAY_REDIS_URL` pointing at a shared server is the case
-		// that turns a convenience into an incident.
 		connection, err := ratelimit.Connect(ratelimit.RedisConnectionOptions{URL: url})
 		if err != nil {
 			return
@@ -500,22 +356,12 @@ func startRedis(t *testing.T) string {
 	return url
 }
 
-// dropSessionKeys removes this package's namespace and nothing else.
-//
-// `KEYS gateway:sess:*` rather than `FLUSHALL`: a test that empties a database to
-// clean up after itself is a test that can empty a developer's database, and the
-// namespace is the reason it does not need to.
 const dropSessionKeys = `
 local found = redis.call('KEYS', 'gateway:sess:*')
 for i = 1, #found do redis.call('DEL', found[i]) end
 return #found
 `
 
-// waitForRedis dials until the server answers, and FAILS rather than sleeping on.
-//
-// A `time.Sleep` here would be a fixed guess: too short on a loaded machine and the
-// test fails for a reason that is not the store's, too long and every run pays it.
-// Polling with a deadline is bounded on both sides.
 func waitForRedis(t *testing.T, url string, server *exec.Cmd) {
 	t.Helper()
 

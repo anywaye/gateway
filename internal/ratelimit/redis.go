@@ -1,39 +1,3 @@
-// The distributed half of the limiter.
-//
-// Two deployments exist and the operator picks: `MemoryStore` for one instance,
-// this for several. The counter lives in Redis, so every replica shares one
-// allowance and nothing is lost on restart — which is the whole reason this file
-// exists.
-//
-// Three deliberate constraints, in order of how much they cost to get wrong:
-//
-//  1. The count is ONE Lua script, not a GET followed by a SET. A read-then-write
-//     limiter admits N times the limit under a burst, and a burst is exactly what
-//     an edge receives.
-//  2. The script expires its own key (`PX`). A Redis that accumulates a bucket for
-//     every client that has ever connected is a memory leak with a
-//     business-sized keyspace.
-//  3. The transport is a port (`Commands`), not a socket baked in. That is what
-//     lets the parity test drive this store over a fake and assert it behaves
-//     identically to the in-memory one — with no server, no socket and no network
-//     anywhere in the default suite.
-//
-// # WHAT THE DEFAULT SUITE DOES NOT DO, AND WHAT DOES
-//
-// It does NOT execute the Lua. `redis_test.go` carries a line-for-line
-// transcription of the script and the parity table runs against the Redis path
-// through it, so the client-side code (key names, argument marshaling, reply
-// decoding) is executed and covered; the script body itself is covered by review.
-//
-// `live_test.go` runs THIS file's script against a real `redis-server`, and it
-// takes the same `GATEWAY_REDIS_REQUIRED` escalation
-// `rateLimitRedisLive.test.ts` keeps so it cannot pass by skipping. It found two
-// defects a transcription cannot: Redis truncates a returned Lua number toward
-// zero, and one `-ERR` reply used to wedge this connection permanently.
-//
-// `TODO(guard-06)` is the deploy half and is still open: run it against the Redis
-// a given deployment actually configures. CI proves the script; nothing yet proves
-// a deployment points `REDIS_URL` at a working store.
 package ratelimit
 
 import (
@@ -55,15 +19,8 @@ import (
 // Deliberately not a general client. Every method added here is a method the RESP
 // transport below has to grow and the fake in the tests has to implement.
 type Commands interface {
-	// Eval is `EVAL script numkeys key… arg…`.
-	//
-	// Returns whatever the script returns. The store checks the shape of that
-	// answer rather than trusting it: a Redis that answers `-ERR` (a Lua
-	// environment that cannot run the script, a renamed command) must surface as
-	// an error, not as an open bucket.
 	Eval(script string, keys []string, args []string) (Value, error)
 
-	// Ping, for the readiness probe.
 	Ping(ctx context.Context) (bool, error)
 }
 
@@ -102,12 +59,6 @@ local used = math.ceil((next - now) / interval)
 return {1, next, next - interval - window, math.max(0, limit - used)}
 `
 
-// namespace is gateway's own bucket prefix.
-//
-// A store's `Prefix` is ADDED to this rather than replacing it: a key outside
-// `gateway:rl` is a key nobody can find again with `KEYS`, and a bucket namespace
-// an operator can typo away is a bucket namespace that silently stops limiting.
-// Constrained to the base64url-ish alphabet because it ends up in a Redis key.
 const namespace = "gateway:rl"
 
 // RedisStore counts buckets in Redis.
@@ -169,20 +120,6 @@ func (s *RedisStore) Hit(key string, request Request) (Verdict, error) {
 	return verdictOf(reply)
 }
 
-// verdictOf is the script's answer, or an error.
-//
-// The shape check comes FIRST, before any numeric coercion: a table of the wrong
-// arity, or a nil, has told us nothing about whether the caller was admitted, and
-// inferring `allowed` from it is how a limiter opens without anybody noticing.
-//
-// # NUMBERS ARE READ AS `float64`, AND THAT IS THE TRUNCATION ANSWER
-//
-// A RESP2 integer reply arrives as an `int` here, and Redis already truncated any
-// Lua float to a whole number on the way out — which is why the script's `math.ceil`
-// matters and why the live test exists. A reply that is a bulk string of digits is
-// accepted too, because that is what a Redis-compatible server that chose bulk
-// strings for large integers sends, and refusing it would be refusing a working
-// store. Anything else is an error.
 func verdictOf(reply Value) (Verdict, error) {
 	items, ok := reply.([]Value)
 	if !ok || len(items) != 4 {
@@ -199,9 +136,6 @@ func verdictOf(reply Value) (Verdict, error) {
 	}
 
 	return Verdict{
-		// `allowed === 1`, not `allowed !== 0`. A script that returned `2` has
-		// said something this client does not understand, and treating that as
-		// "admitted" is the permissive direction on a value nobody has defined.
 		Allowed:   numbers[0] == 1,
 		ResetAt:   time.UnixMilli(int64(numbers[1])),
 		RetryAt:   time.UnixMilli(int64(numbers[2])),
@@ -222,8 +156,6 @@ func numberOf(value Value) (float64, error) {
 	}
 }
 
-// render is `JSON.stringify(reply)` for the error messages, and it exists because
-// "the script answered" followed by nothing is not a message anybody can act on.
 func render(value Value) string {
 	switch typed := value.(type) {
 	case nil:
@@ -247,10 +179,8 @@ func render(value Value) string {
 
 // RedisConnectionOptions is how to reach a Redis.
 type RedisConnectionOptions struct {
-	// `redis://host:port`, or `rediss://` for TLS. No path, no database number.
 	URL string
 
-	// How long one command may take before it is abandoned. Zero means 2s.
 	Timeout time.Duration
 }
 
@@ -293,10 +223,6 @@ func Connect(options RedisConnectionOptions) (*Connection, error) {
 	dialer := &net.Dialer{Timeout: timeout}
 	var socket net.Conn
 	if target.tls {
-		// DialContext rather than `tls.DialWithDialer`, because `Connect` has no
-		// caller context to thread and a context-less dial is what `noctx` refuses
-		// fleet-wide. The timeout that matters is already on `dialer`, and the
-		// deadline on every `Do` covers a socket that goes quiet after the dial.
 		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{}}
 		socket, err = tlsDialer.DialContext(context.Background(), "tcp", net.JoinHostPort(target.hostname, target.port))
 	} else {
@@ -308,11 +234,6 @@ func Connect(options RedisConnectionOptions) (*Connection, error) {
 
 	connection := &Connection{socket: socket, timeout: timeout}
 
-	// AUTH before the connection is handed out. A password-protected server
-	// answers everything with NOAUTH until this write, so a wrong password
-	// refused here is the operator's password being wrong — said in those
-	// terms, at connect time — rather than a readiness probe failing on its
-	// first PING with nothing pointing at the credential.
 	if target.needsAuth() {
 		if err := connection.authenticate(target, options.URL); err != nil {
 			_ = socket.Close()
@@ -323,14 +244,6 @@ func Connect(options RedisConnectionOptions) (*Connection, error) {
 	return connection, nil
 }
 
-// authenticate sends AUTH as the first command on a fresh connection and reads
-// its reply.
-//
-// The two shapes are the URL's, not a choice: an empty username is the legacy
-// `AUTH <password>` (the spelling kit writes), and a named one is the ACL
-// `AUTH <user> <password>`. The refusal names authentication and quotes only
-// the redacted URL — never the password — and the socket is closed by the
-// caller, because a connection that failed AUTH is not one anything should use.
 func (c *Connection) authenticate(target redisTarget, rawURL string) error {
 	command := []string{"AUTH", target.password}
 	if target.username != "" {
@@ -395,11 +308,6 @@ func (c *Connection) Do(ctx context.Context, args ...string) (Value, error) {
 		return nil, err
 	}
 
-	// BOTH HALVES OF THE BOUND, and the reason is `bff/auth.ts` in the reference:
-	// a write deadline stops a socket whose peer has stopped reading, and a read
-	// deadline stops a socket whose peer has stopped answering. Either alone leaves
-	// a connection that can never answer again, held by the limiter's mutex, for
-	// the life of the process.
 	deadline := time.Now().Add(c.timeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -416,9 +324,6 @@ func (c *Connection) Do(ctx context.Context, args ...string) (Value, error) {
 	if err != nil {
 		var reply *ReplyError
 		if errors.As(err, &reply) {
-			// A `-ERR` FAILS ONE COMMAND AND LEAVES THE CONNECTION ALIVE. Redis is
-			// in sync and the next command gets a real answer; this is the defect
-			// `rateLimitRedisLive.test.ts` found by running against a real server.
 			return nil, reply
 		}
 		return c.fail(err)
@@ -427,13 +332,6 @@ func (c *Connection) Do(ctx context.Context, args ...string) (Value, error) {
 	return value, nil
 }
 
-// readReply reads one complete reply, buffering across TCP reads.
-//
-// The loop is the whole design: a reply can arrive in one `Read` or in four, and
-// the buffer is only parsed once `ParseReply` stops saying "truncated". A reader
-// that treated a partial reply as an error would fail every command whose Lua
-// source is longer than one MTU, which is all of them — the script alone is over
-// 500 bytes.
 func (c *Connection) readReply() (Value, error) {
 	for {
 		if len(c.buffered) > 0 {
@@ -446,14 +344,9 @@ func (c *Connection) readReply() (Value, error) {
 			default:
 				var reply *ReplyError
 				if errors.As(err, &reply) {
-					// Consume the error reply's bytes so the next parse starts at the
-					// next reply, and return the failure. THIS is the line that keeps a
-					// `-ERR` from being re-parsed on every subsequent read and wedging
-					// the connection for the life of the process.
 					c.buffered = c.buffered[reply.Read:]
 					return nil, reply
 				}
-				// Anything else is "truncated": wait for the rest and try again.
 			}
 		}
 
@@ -468,18 +361,8 @@ func (c *Connection) readReply() (Value, error) {
 	}
 }
 
-// readChunkBytes is how much one socket read asks for.
-//
-// Larger than any reply this client parses, so a healthy connection is one read
-// and one parse per command. It is not sized to the script deliberately: a chunk
-// size that had to exceed the longest reply would be a coupling between the
-// transport and the Lua, and the loop above already handles a reply arriving in
-// pieces.
 const readChunkBytes = 8192
 
-// fail marks the connection broken. Once broken it stays broken: a socket whose
-// deadline expired mid-reply is out of sync and nothing can say where the next
-// reply starts.
 func (c *Connection) fail(err error) (Value, error) {
 	c.broken = err
 	return nil, err
@@ -593,45 +476,17 @@ func (l *LazyRedis) Close() error {
 	return err
 }
 
-// redisTarget is where a parsed `redis://` URL points.
 type redisTarget struct {
 	hostname string
 	port     string
 	tls      bool
 
-	// The URL's userinfo, when it carries any. `redis://:s3cret@host` is an
-	// EMPTY username with a password — the spelling kit writes — and it must
-	// stay exactly that: empty user authenticates as `AUTH <password>`, while a
-	// named user authenticates as `AUTH <user> <password>` (Redis 6+ ACL).
-	// Both arrive percent-decoded from `net/url`, so a `p%40ss` password is the
-	// `p@ss` the server expects.
 	username string
 	password string
 }
 
-// needsAuth reports whether the URL carried credentials at all. Both empty is
-// no AUTH write: an unauthenticated Redis stays a supported deployment, and a
-// gratuitous AUTH against one is a failure the operator did not cause.
 func (t redisTarget) needsAuth() bool { return t.username != "" || t.password != "" }
 
-// parseRedisURL is `redis://` or `rediss://`, host and port, no path.
-//
-// The userinfo is RETURNED, not discarded: a password-protected Redis answers
-// every command with NOAUTH until the client sends AUTH, so dropping it here is
-// a readiness probe that reports `redis: unavailable` for as long as the
-// deployment stands. The username distinguishes the two AUTH shapes — empty
-// user is `AUTH <password>`, named user is `AUTH <user> <password>` — and both
-// empty is no AUTH at all.
-//
-// The PATH IS REFUSED rather than ignored: the quietest way to lose every bucket
-// is to write to database 0 and read from database 1, and a URL that quietly
-// accepted `/1` would do exactly that. `net/url` is used rather than a hand
-// parser and its own errors are discarded, because a message naming a character
-// position in a string the operator never wrote is the thing this repository's
-// configuration checks exist to avoid.
-//
-// Every refusal quotes the REDACTED url: the raw one may carry a password, and
-// a startup error is a log line.
 func parseRedisURL(value string) (redisTarget, error) {
 	trimmed := strings.TrimSpace(value)
 
@@ -667,15 +522,6 @@ func parseRedisURL(value string) (redisTarget, error) {
 	return target, nil
 }
 
-// redactRedisURL removes the userinfo from a Redis URL before it appears in an
-// error message or a log line.
-//
-// This file had no redaction convention because no error here ever quoted a
-// credential — the URL carried none. Now that it does, every interpolation of
-// one goes through here: the shape follows `redactUserinfo` in
-// `internal/httpapi`, which refuses a credential for the same reason rather
-// than quoting it. A URL with no userinfo passes through unchanged, so refusal
-// messages stay readable.
 func redactRedisURL(value string) string {
 	if at := strings.LastIndex(value, "@"); at >= 0 {
 		if scheme := strings.Index(value, "://"); scheme >= 0 && scheme+3 < at {
@@ -685,6 +531,5 @@ func redactRedisURL(value string) string {
 	return value
 }
 
-// assert the transport is what the interface says it is, at build time.
 var _ Commands = (*Connection)(nil)
 var _ Commands = (*LazyRedis)(nil)

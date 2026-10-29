@@ -1,49 +1,3 @@
-// Command stripbaseurl removes the `options.BaseURL+` token from the route
-// registrations oapi-codegen emits, and is the reason `go generate` has two
-// lines in generate.go rather than one.
-//
-// # Why the token is removed at all
-//
-// `oapi-codegen` emits every route as
-//
-//	r.Get(options.BaseURL+"/v1/me", wrapper.GetCurrentPrincipal)
-//
-// and core's contract harness cannot read that line. `RECOGNISERS`' chi entry
-// requires a `/`-prefixed string literal as the FIRST term after `(`, and
-// concatenation is resolved only in the other direction — `"/v1/x/"+prefix+"/y"`
-// — because identity's own router writes paths that way. So every route in a
-// generated file is INVISIBLE to `account-scope-check`.
-//
-// The consequence is not a missed route. It is a number: `route_defs` is 0 over
-// a surface it saw none of, and 0 over nothing prints exactly like 0 over
-// everything. `surface.minimum` is the one field in `account_scope.yml` that
-// notices a route appearing where the recognisers cannot reach, so with the
-// token left in place gateway's only decrease-detector cannot be set above
-// zero — which is where pantry's sits, with a DECISION NEEDED attached.
-//
-// `REPORT-pantry-account-scope-01` §3 records the other half of this: on
-// pantry, deleting the token from four lines took the run from 1 failure and 5
-// warnings to 0 and 1, because `route_defs` went from 0 to 6 and every
-// declaration in that file became matchable. This command does it for the whole
-// generated tree instead of by hand, because `bin/prime-go` regenerates and
-// diffs: a hand edit would be a permanently red gate, and the honest way to
-// carry a mechanical post-processing step is to make it part of generation.
-//
-// # What it changes, and what it does not
-//
-// Only the token. `options.BaseURL` defaults to `/` when a caller leaves it
-// empty, so `options.BaseURL+"/v1/me"` and `"/v1/me"` are the same route — the
-// rewrite changes no behavior, and gateway serves at `/` and nowhere else
-// (`internal/httpapi/routes_test.go` holds the router to the document's paths).
-//
-// # It refuses rather than reporting success it did not achieve
-//
-// A generator that stops emitting the token — or emits it spelled differently —
-// leaves this command with nothing to rewrite. Exiting 0 there would be a green
-// that says "the registrations are readable" while the file still says
-// `options.BaseURL+`, which is the exact failure this exists to remove. So zero
-// rewrites is an error naming the file, and so is a token that is still present
-// after the rewrite.
 package main
 
 import (
@@ -53,17 +7,11 @@ import (
 )
 
 const (
-	// The file `go generate` is running over, relative to its working directory
-	// (`internal/api/`).
 	generated = "api.gen.go"
 
-	// The token, and what it is rewritten to.
 	token = "options.BaseURL+"
 	drop  = ""
 
-	// The header comment prepended to the file, so a reader who opens a file
-	// that says DO NOT EDIT and finds a line that is not the generator's has an
-	// answer on the first screen rather than in this comment.
 	note = `// POST-PROCESSED BY internal/api/stripbaseurl, run by the second //go:generate
 // line above. The route registrations below read ` + "`" + `r.Get("/healthz", …)` + "`" + ` rather
 // than the generator's ` + "`" + `r.Get(options.BaseURL+"/healthz", …)` + "`" + ` so that
@@ -98,10 +46,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The note goes ABOVE the generator's own header, which says `DO NOT EDIT` and
-	// names a version. Putting this under it reads as a second, competing claim on
-	// the file; putting it above means the first line a reader sees is the one
-	// that explains why the file is not byte-identical to the generator's output.
 	if !strings.HasPrefix(rewritten, "// POST-PROCESSED BY") {
 		rewritten = note + rewritten
 	}

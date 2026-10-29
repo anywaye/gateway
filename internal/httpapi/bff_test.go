@@ -16,26 +16,6 @@ import (
 	"github.com/anywaye/gateway/internal/sessiontest"
 )
 
-// The problem envelope is the REFERENCE's bytes, in the reference's field order.
-//
-// Every other test here asserts something about a refusal's status, its code or its
-// detail, and all three can be right while the DOCUMENT is wrong — which is exactly
-// what happened. `api.Problem` declares its fields alphabetically because
-// `oapi-codegen` emits a struct in the order it finds them in the document's
-// `properties` map, so marshaling it writes `code, detail, instance, status, title,
-// trace_id, type` where `src/problem.ts` (removed at cutover) writes `type, title, status, detail,
-// instance, code, trace_id`. Byte-identical content, different order, and
-// `internal/equivalence` reported 13 differences on it.
-//
-// It went unnoticed because the substrate packet PORTED the envelope for five
-// operations that all declined: an envelope nothing reaches is an envelope nothing
-// has compared. This is the test that would have caught it earlier, and it is here
-// rather than only in the equivalence check so the ordering is stated in the package
-// that owns it.
-//
-// `trace_id` is normalised and nothing else is, because it is the one field that is
-// required to differ — see `internal/equivalence`'s `normaliseTraceID` for why that
-// is safe rather than a hole.
 func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusUnauthorized, `{"error":"invalid_credentials"}`).Response, nil
@@ -50,8 +30,6 @@ func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 		t.Errorf("the problem document is\n  %s\nand it must be\n  %s\n\nThe field ORDER is part of the contract: `internal/equivalence` compared bodies byte for byte, and `api.Problem`'s generated order is alphabetical where `src/problem.ts` (removed at cutover) is not.", body, want)
 	}
 
-	// And the 422's `errors`, which is the one optional key: absent rather than
-	// empty on a status that has none.
 	created := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	}).do(t, http.MethodPost, "/auth/register", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
@@ -61,8 +39,6 @@ func TestTheProblemEnvelopeIsTheReferencesFieldOrder(t *testing.T) {
 	}
 }
 
-// The 422's `errors` array is rendered `field` before `code`, last, and only when
-// there is something in it.
 func TestAValidationFailureKeepsFieldBeforeCodeAndIsLast(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusUnprocessableEntity, `{"errors":[{"field":"email","code":"not_an_email"},{"field":"password","code":"too_short"}]}`).Response, nil
@@ -77,48 +53,17 @@ func TestAValidationFailureKeepsFieldBeforeCodeAndIsLast(t *testing.T) {
 	}
 }
 
-// The browser surface's properties, in the order `src/bff/auth.test.ts` (removed at cutover) states
-// them and in the order the packet lists them.
-//
-// # THE SESSION STORE IS A FIXTURE
-//
-// Every test here builds its store with `sessiontest`, and there is no other
-// implementation in this module — that is the deferral `internal/session`
-// records, and `TestNoProductionFileImportsTheSessionDouble` holds it. So a green
-// suite here is a statement about the PORT, not a statement that a deployment has
-// somewhere to put a session, and the report says the same thing in prose.
-//
-// # NOTHING IN THIS FILE OPENS A SOCKET
-//
-// `Doer` is the seam, and the identity below is a function. `TestNoFileInThisPackage
-// TalksToARealSocket` is what keeps that true by reading this package's sources,
-// because a test that quietly reached for `http.Get` would still pass and would
-// stop being a statement about the request gateway sends.
 
 const (
-	// A fixed, far-future expiry. Fixed rather than `time.Now().Add(...)` so a
-	// failing assertion names the same instant on both runs, and so the
-	// equivalence check can put the SAME `expires_at` in front of both
-	// implementations and compare the bytes.
 	futureExpiry = "2031-03-04T05:06:07.000Z"
 
-	// The identity token the fixture identity mints. Every leak assertion below
-	// searches for exactly this string, so a test fails on the credential rather
-	// than on a count.
 	identityToken = "identity-token-abcdef0123456789"
 )
 
-// doerFunc turns a function into a `Doer`.
 type doerFunc func(r *http.Request) (*http.Response, error)
 
 func (f doerFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 
-// harness is one built gateway plus the things a test needs to look at.
-//
-// The Doer is a FUNCTION so a test scripts identity's answer for one route and
-// records what was sent. `calls` is appended under no lock because these tests
-// drive one request at a time; `go test -race` is part of the gate and the
-// equivalence scenarios are the ones that go concurrent, and they build their own.
 type harness struct {
 	handler  http.Handler
 	sessions *sessiontest.Store
@@ -127,9 +72,6 @@ type harness struct {
 	now      time.Time
 }
 
-// build assembles a gateway with the browser surface mounted, and fails the test
-// if it cannot — a harness that silently served a `404` would make every
-// assertion below a vacuous green.
 func build(t *testing.T, identity func(*http.Request) (*http.Response, error), options ...func(*BffOptions)) *harness {
 	t.Helper()
 
@@ -178,23 +120,18 @@ func build(t *testing.T, identity func(*http.Request) (*http.Response, error), o
 // helper that genuinely needs the bare response takes it with `.Response`.
 type testResponse struct{ *http.Response }
 
-// answer is an identity answer, built rather than fetched.
 func answer(status int, body string, headers ...string) testResponse {
 	res := &http.Response{
 		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     http.Header{},
 	}
-	// `Retry-After` and friends arrive as pairs so a test cannot pass a header
-	// without a value and quietly assert on an absent one.
 	for i := 0; i+1 < len(headers); i += 2 {
 		res.Header.Set(headers[i], headers[i+1])
 	}
 	return testResponse{res}
 }
 
-// sameOrigin is the header a browser sends on a request it attributes to this
-// page, and the ONLY one a test needs for a mutating route to work.
 func sameOrigin() map[string]string {
 	return map[string]string{"Sec-Fetch-Site": "same-origin"}
 }
@@ -203,7 +140,6 @@ func cookies(res testResponse) []*http.Cookie {
 	return (&http.Response{Header: res.Header}).Cookies()
 }
 
-// The session id out of a `Set-Cookie`, or "".
 func sessionCookieValue(res testResponse) string {
 	for _, c := range cookies(res) {
 		if c.Name == SessionCookie {
@@ -213,20 +149,6 @@ func sessionCookieValue(res testResponse) string {
 	return ""
 }
 
-// hasSessionCookie is whether the answer carries a `Set-Cookie` for the session
-// cookie at all, whatever its value.
-//
-// NOT `sessionCookieValue(res) != ""`, which was the first version of this helper
-// and was wrong in a way the mutation gate found rather than a reviewer: a
-// CLEARING cookie is `Set-Cookie: __Host-bff-session=; Max-Age=0; Expires=…`, so
-// its value is the empty string, so "the cookie was cleared" and "no cookie was
-// sent" are the same observation through it. Every "the cookie was not cleared"
-// assertion below was passing vacuously until this was split into three.
-//
-// The three states are three different questions and conflating them is how a
-// sign-out bug hides: a response can set a cookie, clear one, or mention neither.
-//
-// setsSessionCookie is a cookie carrying a VALUE — gateway minted one.
 func setsSessionCookie(res testResponse) bool {
 	for _, c := range cookies(res) {
 		if c.Name == SessionCookie && c.Value != "" {
@@ -236,13 +158,6 @@ func setsSessionCookie(res testResponse) bool {
 	return false
 }
 
-// clearsSessionCookie is a cookie with no value AND an expiry in the past, which
-// is what a browser needs in order to drop it.
-//
-// The expiry is half the assertion on purpose. A `Set-Cookie` with an empty value
-// and no `Expires` is a cookie set to the empty string, not a deletion: the
-// browser stores it and the caller's next request presents an empty session id,
-// which is a different failure with the same shape in a log line.
 func clearsSessionCookie(res testResponse) bool {
 	for _, c := range cookies(res) {
 		if c.Name != SessionCookie || c.Value != "" {
@@ -255,7 +170,6 @@ func clearsSessionCookie(res testResponse) bool {
 	return false
 }
 
-// do asks the gateway and returns the recorded answer.
 func (h *harness) do(t *testing.T, method, path string, body string, headers map[string]string) testResponse {
 	t.Helper()
 
@@ -273,8 +187,6 @@ func (h *harness) do(t *testing.T, method, path string, body string, headers map
 	return testResponse{rec.Result()}
 }
 
-// signedIn logs in and returns the cookie header value, so a test about a later
-// request does not have to re-derive the exchange.
 func (h *harness) signedIn(t *testing.T) string {
 	t.Helper()
 
@@ -285,13 +197,6 @@ func (h *harness) signedIn(t *testing.T) string {
 	return SessionCookie + "=" + sessionCookieValue(res)
 }
 
-// loginIdentity answers the two routes a signed-in browser reaches.
-//
-// The return type is `doerFunc` rather than the bare literal: `bodyclose` reads a
-// call whose static type merely MENTIONS `*net/http.Response` as an HTTP request
-// that leaks a body, and a function returning a `func(*http.Request)
-// (*http.Response, error)` is exactly that shape. The named type is the same
-// function and assigns to `BffOptions.Doer` without a conversion.
 func loginIdentity(res testResponse) doerFunc {
 	return func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
@@ -316,10 +221,7 @@ func loginIdentity(res testResponse) doerFunc {
 	}
 }
 
-// PROPERTY 1 — the origin gate. Both directions, because a gate that refuses
-// everything is also a gate.
 
-// A cross-origin POST is refused, and identity is never asked.
 func TestACrossOriginPostIsRefusedAndIdentityIsNeverAsked(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked; the origin gate should have answered before it")
@@ -342,9 +244,6 @@ func TestACrossOriginPostIsRefusedAndIdentityIsNeverAsked(t *testing.T) {
 	}
 }
 
-// A same-origin POST succeeds. The other direction, and the one a gate written
-// as "refuse anything that is not provably same-origin" gets wrong by being
-// written as "refuse everything".
 func TestASameOriginPostSucceeds(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
@@ -360,8 +259,6 @@ func TestASameOriginPostSucceeds(t *testing.T) {
 	}
 }
 
-// The four values of `Sec-Fetch-Site` are not equally acceptable, and the two that
-// are refused are refused for different reasons that both matter.
 func TestOnlySameOriginSecFetchSitePasses(t *testing.T) {
 	cases := []struct {
 		value string
@@ -393,7 +290,6 @@ func TestOnlySameOriginSecFetchSitePasses(t *testing.T) {
 	}
 }
 
-// `Origin` is the fallback, and it is compared by HOST and not by origin.
 func TestOriginIsComparedByHostNotByScheme(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -424,7 +320,6 @@ func TestOriginIsComparedByHostNotByScheme(t *testing.T) {
 	}
 }
 
-// A request that states NEITHER header is refused: it is not provably same-origin.
 func TestARequestThatStatesNeitherHeaderIsRefused(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked for a request that stated no origin at all")
@@ -438,7 +333,6 @@ func TestARequestThatStatesNeitherHeaderIsRefused(t *testing.T) {
 	}
 }
 
-// When a request states BOTH and they disagree, the gate believes the stricter.
 func TestDisagreeingOriginSignalsAreRefused(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked for a request whose two origin signals disagree")
@@ -455,8 +349,6 @@ func TestDisagreeingOriginSignalsAreRefused(t *testing.T) {
 	}
 }
 
-// A read is not gated. CSRF defense protects a caller from a page they did not
-// navigate to, and `GET /auth/me` changes nothing.
 func TestTheReadIsNotGated(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
@@ -468,18 +360,6 @@ func TestTheReadIsNotGated(t *testing.T) {
 	}
 }
 
-// A header sent TWICE is not refused, and the FIRST value is what counts.
-//
-// Measured, not chosen: the reference answers `200` — with the cookie — to a
-// request carrying `Sec-Fetch-Site: same-origin` twice, so its framework hands the
-// gate ONE value. The first version of this port applied the WHATWG `Headers` rule
-// instead, joined the two into `same-origin, same-origin` and refused; and the
-// generated router refused even earlier, with a `text/plain` 400 that appears
-// nowhere in the contract. `internal/equivalence` reported both, in all six browser
-// scenarios.
-//
-// So two properties, and both are here: the generated router's own refusal is
-// UNREACHABLE for this header, and the gate reads the first value.
 func TestAHeaderSentTwiceTakesTheFirstValue(t *testing.T) {
 	for _, first := range []string{"same-origin", "cross-site"} {
 		t.Run(first, func(t *testing.T) {
@@ -509,15 +389,6 @@ func TestAHeaderSentTwiceTakesTheFirstValue(t *testing.T) {
 	}
 }
 
-// `paramRefusal` is unreachable for the two headers the contract declares, and that
-// is asserted rather than asserted-about: each is doubled and the request must reach
-// its handler.
-//
-// The tripwire for a NEW header parameter. If the document adds one that
-// `collapseRepeatedHeaders` does not collapse, this test is not what catches it —
-// `internal/equivalence` was, because it compares every operation the document
-// declares. What this one says is that the guard is still doing nothing, which is
-// the state a reader of `paramRefusal` needs to know.
 func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
 	for _, header := range []string{"Sec-Fetch-Site", "Origin"} {
 		t.Run(header, func(t *testing.T) {
@@ -535,9 +406,6 @@ func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
 			h.handler.ServeHTTP(rec, req)
 			res := rec.Result()
 
-			// The handler's answer is `201`. `paramRefusal`'s is the v0 `404` and
-			// the generator's default is a `text/plain` `400`, so all three are
-			// distinguishable and only one of them means the handler ran.
 			if res.StatusCode != http.StatusCreated {
 				t.Errorf("%s sent twice answered %d, and it must reach the handler and be answered there. A duplicate-header refusal is the generated router's, and it is not an answer this contract describes.", header, res.StatusCode)
 			}
@@ -548,10 +416,7 @@ func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
 	}
 }
 
-// PROPERTY 2 — the session cookie.
 
-// The cookie is exactly the `__Host-` contract, and it expires when identity's
-// session does.
 func TestTheSessionCookieIsTheHostPrefixedContract(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 
@@ -587,8 +452,6 @@ func TestTheSessionCookieIsTheHostPrefixedContract(t *testing.T) {
 	}
 }
 
-// The clearing cookie repeats every attribute, because a browser matches a
-// deletion on name, domain and path.
 func TestClearingTheCookieRepeatsEveryAttribute(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
@@ -612,17 +475,8 @@ func TestClearingTheCookieRepeatsEveryAttribute(t *testing.T) {
 	}
 }
 
-// PROPERTY 3 — the browser never receives an identity token. Source and
-// behavior, because a leak test that only greps finds the handler that forgot
-// and not the one that was never written.
 
-// PROPERTY 4 — one sentence for every refused credential. Two DIFFERENT causes,
-// and the comparison is byte equality of everything a caller can see.
 func TestTwoRefusalCausesProduceIdenticalResponses(t *testing.T) {
-	// The two cases identity must be able to distinguish internally and must NOT
-	// be able to distinguish through this gateway. The upstream bodies are
-	// deliberately different documents, so an implementation that forwarded
-	// either would fail this.
 	causes := map[string]string{
 		"a wrong password":   `{"error":"invalid_credentials","detail":"that password is not correct for this account"}`,
 		"an unknown account": `{"error":"no_such_user","detail":"no account has that email address"}`,
@@ -649,19 +503,12 @@ func TestTwoRefusalCausesProduceIdenticalResponses(t *testing.T) {
 	}
 
 	first, second := answers[0], answers[1]
-	// Read once. A body can only be read once, and reading it twice to compare it
-	// twice is how a test ends up comparing two empty strings.
 	firstRaw, secondRaw := readBody(t, first), readBody(t, second)
 	firstBody, secondBody := withoutTraceID(firstRaw), withoutTraceID(secondRaw)
 
 	if firstBody != secondBody {
 		t.Errorf("two refusal causes produced different bodies, and a login endpoint whose 401 varies by cause is an account-enumeration oracle:\n  cause A: %s\n  cause B: %s", firstBody, secondBody)
 	}
-	// `trace_id` is deliberately DIFFERENT on every response — it is a correlation
-	// id for one failed response, and it is the only field allowed to vary. So it
-	// is removed before the comparison rather than the comparison being dropped,
-	// because a body comparison that ignores a whole envelope proves less than
-	// one that ignores a field.
 	if traceIDOf(firstRaw) == "" || traceIDOf(secondRaw) == "" {
 		t.Errorf("a problem document carries no trace_id: %s / %s", firstRaw, secondRaw)
 	}
@@ -674,8 +521,6 @@ func TestTwoRefusalCausesProduceIdenticalResponses(t *testing.T) {
 	}
 }
 
-// The two 401s also have to be the same STATUS and the same code, not merely the
-// same sentence — a caller branching on either would still be enumerating.
 func TestTheTwoRefusalsAgreeOnStatusAndContentType(t *testing.T) {
 	var types []string
 	for _, upstream := range []string{`{"error":"a"}`, `{"error":"b"}`} {
@@ -699,8 +544,6 @@ func TestTheTwoRefusalsAgreeOnStatusAndContentType(t *testing.T) {
 	}
 }
 
-// A lockout travels with its window. Collapsing it into the 401 above would tell
-// someone with the RIGHT password to try again, and be refused again.
 func TestALockedAccountIs423AndItsRetryAfterTravels(t *testing.T) {
 	cases := []struct {
 		retry      string
@@ -738,10 +581,7 @@ func TestALockedAccountIs423AndItsRetryAfterTravels(t *testing.T) {
 	}
 }
 
-// PROPERTY 5 — a revoked session is dead on the next request.
 
-// `/auth/me` with a live session proxies with the stored token, and the browser
-// learns nothing but the account.
 func TestMeProxiesWithTheStoredTokenAndReturnsOnlyTheAccount(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
@@ -761,21 +601,16 @@ func TestMeProxiesWithTheStoredTokenAndReturnsOnlyTheAccount(t *testing.T) {
 
 	body := readBody(t, res)
 	assertNoToken(t, "the /auth/me body", body)
-	// EXACT equality, and the field ORDER is part of it: the equivalence check
-	// compares bytes and `api.User` would render email first.
 	if body != `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}` {
 		t.Errorf("the /auth/me body is %s and it must be `id` then `email` and nothing else — the reference's order, the reference's width, and the bytes the comparison needs", body)
 	}
 }
 
-// An expired session is a 401 and identity is never asked: the record is already
-// dead and there is nothing to revoke.
 func TestAnExpiredSessionIs401AndIdentityIsNeverAsked(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
 	before := len(h.calls)
 
-	// The clock moves PAST the expiry the fixture identity minted.
 	h.now = time.Date(2032, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	res := h.do(t, http.MethodGet, "/auth/me", "", map[string]string{"Cookie": cookie})
@@ -791,8 +626,6 @@ func TestAnExpiredSessionIs401AndIdentityIsNeverAsked(t *testing.T) {
 	}
 }
 
-// identity withdrawing the token drops the local record, so the revocation is true
-// from THIS request on rather than at the token's expiry.
 func TestAWithdrawnSessionIs401AndTheRecordIsDropped(t *testing.T) {
 	withdrawn := false
 	h := build(t, func(r *http.Request) (*http.Response, error) {
@@ -803,7 +636,6 @@ func TestAWithdrawnSessionIs401AndTheRecordIsDropped(t *testing.T) {
 	})
 	cookie := h.signedIn(t)
 
-	// The happy path first, so the record is demonstrably live.
 	if res := h.do(t, http.MethodGet, "/auth/me", "", map[string]string{"Cookie": cookie}); res.StatusCode != http.StatusOK {
 		t.Fatalf("the session was not live to begin with: %d", res.StatusCode)
 	}
@@ -822,14 +654,10 @@ func TestAWithdrawnSessionIs401AndTheRecordIsDropped(t *testing.T) {
 	}
 }
 
-// A session the store has forgotten clears the cookie: a signed-out user whose
-// every request looks like a server that forgot them is the failure this avoids.
 func TestAForgottenSessionIs401AndTheCookieIsCleared(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
 
-	// The store forgets it — a restart, a swept map — and the browser keeps
-	// presenting the id it was given.
 	forget(t, h, cookie)
 
 	res := h.do(t, http.MethodGet, "/auth/me", "", map[string]string{"Cookie": cookie})
@@ -841,8 +669,6 @@ func TestAForgottenSessionIs401AndTheCookieIsCleared(t *testing.T) {
 	}
 }
 
-// An identity OUTAGE is a 503 and the session SURVIVES it. Treating an outage as a
-// revocation signs everybody out whenever identity hiccups.
 func TestAnIdentityOutageIs503AndTheSessionSurvivesIt(t *testing.T) {
 	down := false
 	h := build(t, func(r *http.Request) (*http.Response, error) {
@@ -865,8 +691,6 @@ func TestAnIdentityOutageIs503AndTheSessionSurvivesIt(t *testing.T) {
 	}
 }
 
-// Signing out drops the record, tells identity, and a later `/auth/me` is a 401
-// with no call at all.
 func TestSignOutRevokesLocallyAndUpstream(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
@@ -892,8 +716,6 @@ func TestSignOutRevokesLocallyAndUpstream(t *testing.T) {
 	}
 }
 
-// Signing out with no cookie is a 401, and identity is never asked: a 204 would
-// report that something happened when there was no session to end.
 func TestSignOutWithNoCookieIs401(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		t.Error("identity was asked to revoke a session that was never presented")
@@ -907,8 +729,6 @@ func TestSignOutWithNoCookieIs401(t *testing.T) {
 	}
 }
 
-// A cookie the store has forgotten still signs the browser out: there is provably
-// nothing to revoke, which is the state the caller asked for.
 func TestSigningOutWithAForgottenCookieIs204AndStillClears(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
@@ -924,8 +744,6 @@ func TestSigningOutWithAForgottenCookieIs204AndStillClears(t *testing.T) {
 	}
 }
 
-// A session identity has already revoked is a 204, because that is the end state
-// the caller asked for.
 func TestSigningOutAnAlreadyRevokedSessionIs204(t *testing.T) {
 	for _, status := range []int{http.StatusNoContent, http.StatusUnauthorized, http.StatusNotFound} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -946,7 +764,6 @@ func TestSigningOutAnAlreadyRevokedSessionIs204(t *testing.T) {
 	}
 }
 
-// An identity that cannot be told still signs the browser out, and says so.
 func TestSigningOutWhileIdentityIsDownStillSignsOutAndSays503(t *testing.T) {
 	down := false
 	h := build(t, func(r *http.Request) (*http.Response, error) {
@@ -971,16 +788,6 @@ func TestSigningOutWhileIdentityIsDownStillSignsOutAndSays503(t *testing.T) {
 	}
 }
 
-// Identity answering something that is NOT a revocation is reported as unreachable,
-// which is the reference's own choice and not an omission.
-//
-// `src/bff/auth.ts` (removed at cutover)'s logout is `revoked ? 204 : unreachable()`. The port answered
-// `unusable()` — "identity answered with something this contract does not cover" —
-// which is a different `detail` and an extra log line, and `internal/equivalence`
-// found the difference on its first run with both answers printed.
-//
-// So this is a port of a decision rather than of a status, and the status alone
-// would not have caught it.
 func TestANonRevokingLogoutIsUnreachableNotUnusable(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusInternalServerError, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -1002,8 +809,6 @@ func TestANonRevokingLogoutIsUnreachableNotUnusable(t *testing.T) {
 			if !strings.Contains(body, `"detail":"the authentication service could not be reached"`) {
 				t.Errorf("the 503 says %q. The reference's logout answers `unreachable()`, not `unusable()` — a caller that can tell those two apart can tell whether identity was REACHED, and `unreachable` is the answer that says it was not.", body)
 			}
-			// And the local sign-out happened either way, which is the part the
-			// caller cares about most.
 			if h.sessions.Size() != 0 {
 				t.Errorf("the store holds %d record(s); the browser must be signed out even when identity cannot confirm it", h.sessions.Size())
 			}
@@ -1011,8 +816,6 @@ func TestANonRevokingLogoutIsUnreachableNotUnusable(t *testing.T) {
 	}
 }
 
-// The store being DOWN is a 503 on every route that touches it, and never a 401:
-// a 401 would send a signed-in browser to sign in again over an outage.
 func TestAStoreThatIsDownIs503Not401(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 	cookie := h.signedIn(t)
@@ -1032,9 +835,6 @@ func TestAStoreThatIsDownIs503Not401(t *testing.T) {
 	_ = h
 }
 
-// Two logins are two sessions, and neither reuses the other's id. A session id is
-// minted here and never accepted from the caller — fixation needs an id the
-// attacker knows first.
 func TestEveryLoginMintsAFreshSessionId(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 
@@ -1056,7 +856,6 @@ func TestEveryLoginMintsAFreshSessionId(t *testing.T) {
 	}
 }
 
-// The cookie's value is the key the record is stored under.
 func TestTheCookieIsTheKeyTheRecordIsStoredUnder(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 
@@ -1068,10 +867,7 @@ func TestTheCookieIsTheKeyTheRecordIsStoredUnder(t *testing.T) {
 	}
 }
 
-// PROPERTY: registration is not a login, and the body reaches identity untouched.
 
-// A registration returns `{id, email}` and NO cookie — identity has not minted a
-// session, so a cookie here would stand for nothing.
 func TestRegisterReturnsTheAccountAndNoCookie(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test","password_digest":"sha256:deadbeef","role":"admin"}`).Response, nil
@@ -1092,9 +888,6 @@ func TestRegisterReturnsTheAccountAndNoCookie(t *testing.T) {
 	}
 }
 
-// The caller's body reaches identity verbatim. Only "is this an object" is decided
-// here: whether an address is deliverable and a password strong enough is
-// identity's call, in one place.
 func TestTheCallersBodyReachesIdentityVerbatim(t *testing.T) {
 	sent := `{"email":"a@example.test","password":"pw","display_name":"A","extra":{"nested":[1,2]},"unicode":"héllo ☃"}`
 	h := build(t, func(*http.Request) (*http.Response, error) {
@@ -1108,7 +901,6 @@ func TestTheCallersBodyReachesIdentityVerbatim(t *testing.T) {
 	}
 }
 
-// The two body refusals, and the third for the cap.
 func TestMalformedBodiesAreRefusedAndIdentityIsNeverAsked(t *testing.T) {
 	oversized := `{"email":"a@example.test","password":"` + strings.Repeat("x", maxBodyBytes) + `"}`
 
@@ -1145,8 +937,6 @@ func TestMalformedBodiesAreRefusedAndIdentityIsNeverAsked(t *testing.T) {
 	}
 }
 
-// A body just inside the cap is forwarded: an off-by-one here fails a registration
-// identity would accept.
 func TestABodyJustInsideTheCapIsForwarded(t *testing.T) {
 	padding := maxBodyBytes - len(`{"email":"a@example.test","password":""}`)
 	body := `{"email":"a@example.test","password":"` + strings.Repeat("x", padding) + `"}`
@@ -1162,7 +952,6 @@ func TestABodyJustInsideTheCapIsForwarded(t *testing.T) {
 	}
 }
 
-// The identity refusals registration can produce, mapped and not guessed at.
 func TestIdentitysRegistrationRefusalsAreMapped(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1198,8 +987,6 @@ func TestIdentitysRegistrationRefusalsAreMapped(t *testing.T) {
 	}
 }
 
-// Identity being unreachable is a 503 whose detail names no host — an anonymous
-// browser is not allowed to learn where identity lives.
 func TestAnUnreachableIdentityIs503AndNamesNoHost(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("dial tcp 10.0.0.1:8080: connect: connection refused")
@@ -1218,17 +1005,11 @@ func TestAnUnreachableIdentityIs503AndNamesNoHost(t *testing.T) {
 	}
 }
 
-// A dependency that CRASHES is a 503 on one request, not a dead gateway. `Doer` is
-// a seam a test can supply anything behind, and a real client can panic in a
-// redirect handler or a dialer, so the recovery is not theoretical.
 func TestAPanickingIdentityIsA503AndNotADeadGateway(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		panic("identity: nil pointer dereference in the token verifier")
 	})
 
-	// If this process dies, the suite fails here with the panic rather than with
-	// an assertion — which is the point: the assertion below is about the ANSWER,
-	// and the recovery is about the process still being there to give one.
 	res := h.do(t, http.MethodPost, "/auth/login", `{"email":"a@example.test","password":"pw"}`, sameOrigin())
 
 	if res.StatusCode != http.StatusServiceUnavailable {
@@ -1237,11 +1018,8 @@ func TestAPanickingIdentityIsA503AndNotADeadGateway(t *testing.T) {
 	assertNoToken(t, "the panic body", readBody(t, res))
 }
 
-// A hung identity is bounded by the timeout rather than holding the request.
 func TestAHungIdentityIsBounded(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
-		// Ignores its context on purpose: that is the `Doer` the timer exists for,
-		// and a `Doer` that honored the deadline would not test the timer.
 		time.Sleep(2 * time.Second)
 		return answer(http.StatusOK, `{}`).Response, nil
 	}, func(o *BffOptions) { o.IdentityTimeout = 60 * time.Millisecond })
@@ -1258,9 +1036,6 @@ func TestAHungIdentityIsBounded(t *testing.T) {
 	}
 }
 
-// A session identity minted with an unusable expiry is refused, and NOTHING is
-// stored: a cookie would be set and the next request would refuse it, which is a
-// login that reports success and signs the user out.
 func TestASessionWithNoUsableExpiryIsRefusedAndNothingIsStored(t *testing.T) {
 	cases := map[string]string{
 		"no token":              `{"expires_at":"` + futureExpiry + `"}`,
@@ -1291,7 +1066,6 @@ func TestASessionWithNoUsableExpiryIsRefusedAndNothingIsStored(t *testing.T) {
 	}
 }
 
-// The login body says when the session runs out and nothing else.
 func TestTheLoginBodyCarriesTheExpiryAndNothingElse(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 
@@ -1307,9 +1081,7 @@ func TestTheLoginBodyCarriesTheExpiryAndNothingElse(t *testing.T) {
 	assertNoToken(t, "the login body", body)
 }
 
-// CONFIGURATION: the refusals happen at construction.
 
-// A malformed identity URL is a refusal to build, not a 503 on every sign-in.
 func TestAMalformedIdentityURLIsARefusalToBuild(t *testing.T) {
 	cases := map[string]string{
 		"empty":                        "",
@@ -1329,8 +1101,6 @@ func TestAMalformedIdentityURLIsARefusalToBuild(t *testing.T) {
 	}
 }
 
-// A trailing slash is what an operator types out of habit, and keeping it would
-// join into `//v1/users`.
 func TestATrailingSlashIsDropped(t *testing.T) {
 	bff, err := NewBff(BffOptions{IdentityURL: "http://identity.test:8080/", Sessions: sessiontest.New(nil)})
 	if err != nil {
@@ -1341,8 +1111,6 @@ func TestATrailingSlashIsDropped(t *testing.T) {
 	}
 }
 
-// A negative timeout is a refusal, and a zero one is the default rather than "no
-// limit".
 func TestTheTimeoutIsValidatedAndZeroMeansTheDefault(t *testing.T) {
 	if _, err := NewBff(BffOptions{IdentityURL: "http://identity.test", Sessions: sessiontest.New(nil), IdentityTimeout: -1}); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("a negative timeout returned %v, and it must be a refusal", err)
@@ -1357,8 +1125,6 @@ func TestTheTimeoutIsValidatedAndZeroMeansTheDefault(t *testing.T) {
 	}
 }
 
-// A browser surface with no session store is a refusal to build: four routes that
-// cannot tell a signed-in user from a stranger are not a gateway.
 func TestABrowserSurfaceWithNoSessionStoreIsARefusalToBuild(t *testing.T) {
 	_, err := NewBff(BffOptions{IdentityURL: "http://identity.test"})
 	if !errors.Is(err, ErrNotConfigured) {
@@ -1369,9 +1135,6 @@ func TestABrowserSurfaceWithNoSessionStoreIsARefusalToBuild(t *testing.T) {
 	}
 }
 
-// WITHOUT a browser surface the four routes decline with the reference's `404` —
-// the answer `createApp({})` gives, since it does not register `/auth/*` without an
-// identity to ask.
 func TestWithoutABrowserSurfaceTheFourRoutesAre404(t *testing.T) {
 	handler, err := New(Options{})
 	if err != nil {
@@ -1398,14 +1161,6 @@ func TestWithoutABrowserSurfaceTheFourRoutesAre404(t *testing.T) {
 	}
 }
 
-// A browser surface does NOT register a probe, because the reference does not.
-//
-// Measured, not assumed: `createApp({bff})` answers `{"deps":{}}`, because
-// `identityProbe` is registered by `runtimeOptions` — which reads `IDENTITY_URL`,
-// a variable `RuntimeOptions` in this package does not read because the verifier
-// that needs it is another packet. The first version of this port auto-registered
-// it and `/readyz` differed from the reference in all six browser scenarios, at
-// byte 9.
 func TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees(t *testing.T) {
 	h := build(t, func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == identityHealthz {
@@ -1424,18 +1179,6 @@ func TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees(t *testing.T) {
 	}
 }
 
-// When a caller DOES register the identity probe, it renders where it was
-// registered, and a broken identity is `unavailable` by name.
-//
-// The first half is the ORDER property: `/readyz` renders `deps` in registration
-// order because `Options.Probes` is a slice, and `encoding/json` sorts map keys —
-// so a name declared in a non-alphabetical order is the only way to tell the two
-// apart. The second is the never-name-the-reason property.
-//
-// BOTH ways down, because they are different code paths: a transport failure
-// (`call` returns an error) and a dependency that is up and answering `5xx` — which
-// is what most outages actually look like, and the case `src/bff/auth.ts` (removed at cutover) calls out
-// as the one that used to pass through with no log line at all.
 func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 	cases := map[string]struct {
 		identity func(*http.Request) (*http.Response, error)
@@ -1475,9 +1218,6 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := build(t, tc.identity, func(o *BffOptions) {})
 
-			// Registered in a NON-alphabetical order, which is the point: a sorted
-			// renderer would produce `identity` first and this test would pass
-			// whether the order were preserved or not.
 			handler, err := New(Options{
 				BFF: &BffOptions{
 					IdentityURL: "http://identity.test",
@@ -1520,16 +1260,12 @@ func TestARegisteredIdentityProbeReportsByNameAndNeverByReason(t *testing.T) {
 	}
 }
 
-// PROPERTY 3, as a source check. The behavioral tests above search for one
-// literal token; this reads the file to catch the handler that writes a token
-// without the fixture's literal ever appearing in it.
 func TestTheBrowserNeverReceivesTheIdentityToken(t *testing.T) {
 	source, err := os.ReadFile("bff.go")
 	if err != nil {
 		t.Fatalf("cannot read bff.go: %v", err)
 	}
 
-	// Every line that writes a response, or sets a cookie on one.
 	writes := regexp.MustCompile(`(?m)^\s*(?:writeJSON|writeRawJSON|writeProblem|setSessionCookie|clearSessionCookie|http\.SetCookie)\(`)
 	found := false
 	for i, line := range strings.Split(string(source), "\n") {
@@ -1547,10 +1283,6 @@ func TestTheBrowserNeverReceivesTheIdentityToken(t *testing.T) {
 	}
 }
 
-// Every mutating route is gated and the read is not, read out of the DOCUMENT
-// rather than out of a hand-written list — a list would go stale the day an
-// operation is added, and would report "all mutating routes are gated" about a
-// route nobody looked at.
 func TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose(t *testing.T) {
 	generated, err := os.ReadFile(filepath.Join("..", "api", "api.gen.go"))
 	if err != nil {
@@ -1572,8 +1304,6 @@ func TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose(t *testing.T) {
 		}).handler
 
 		req := httptest.NewRequestWithContext(context.Background(), method, "https://gateway.test"+path, strings.NewReader(`{}`))
-		// A body gateway refuses, so a `400` means the request REACHED the
-		// handler, and a `403` means the gate stopped it in front.
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -1590,39 +1320,14 @@ func TestTheOriginGateCoversEveryMutatingRouteAndOnlyThose(t *testing.T) {
 	}
 }
 
-// No file in this package opens a socket. The `Doer` seam is the reason the
-// assertions above are about what gateway SENDS, and a test that reached for
-// `http.Get` would still pass and would stop being that.
 func TestNoFileInThisPackageTalksToARealSocket(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("cannot read this package's directory: %v", err)
 	}
 
-	// Deliberately NOT a filename pattern. A check that searched for `*_test.go`
-	// would miss a test file this package happens not to name that way, and a
-	// check that searched for `test` in the name would find nothing in a Go
-	// package whose tests are `bff_test.go` only by accident. The scope is the
-	// directory, and the thing searched for is the call.
 	forbidden := regexp.MustCompile(`http\.(Get|Post|Head|DefaultClient\.Do)\(|\bhttptest\.NewServer\(`)
 
-	// ONE NAMED EXEMPTION, and it is here rather than loosened into the pattern
-	// because a pattern with a hole in it is a check that has stopped being a
-	// check.
-	//
-	// `proxy_test.go` stands up a real `httptest` server to RECORD what the
-	// pass-through sends upstream: the header allowlist, the credential
-	// substitution and the rebuilt path are properties of an outbound request, and
-	// asserting them against a `Doer` double would assert them against a double.
-	// That is the one thing in this package that needs a socket, and it is a TEST
-	// file — the rule this check exists to protect is about PRODUCTION code
-	// opening one, which `TestNoProductionFileImportsTheSessionDouble` and the
-	// import-graph assertion beside it already cover from the other direction.
-	//
-	// This check was written by the BFF packet, which had no pass-through to
-	// record. The proxy packet added the server and this check went red on a real
-	// conflict rather than on a defect: two correct packets, one rule between
-	// them, and the rule was written before the second thing existed.
 	exempt := map[string]string{
 		"proxy_test.go": "records the outbound request; a double would assert the properties against itself",
 	}
@@ -1646,9 +1351,6 @@ func TestNoFileInThisPackageTalksToARealSocket(t *testing.T) {
 		}
 	}
 
-	// The exemption is a name in a map, so a rename could make it name nothing and
-	// this check would go back to red — or, worse, a reader could add a name to it
-	// without a reason. Both are the failure this check has, so both are named.
 	for name := range exempt {
 		if _, err := os.Stat(name); err != nil {
 			t.Errorf("the exemption names %s, which does not exist: an exemption that matches no file is a hole with a comment on it", name)
@@ -1660,8 +1362,6 @@ func TestNoFileInThisPackageTalksToARealSocket(t *testing.T) {
 	}
 }
 
-// assertNoToken is the one place the literal credential is searched for, so a
-// failure names what leaked rather than a string comparison.
 func assertNoToken(t *testing.T, where, body string) {
 	t.Helper()
 
@@ -1681,8 +1381,6 @@ func readBody(t *testing.T, res testResponse) string {
 	return string(raw)
 }
 
-// forget drops the record a `Cookie` header names, so a test can stand in for a
-// store that lost it — a restart, a swept map.
 func forget(t *testing.T, h *harness, cookie string) {
 	t.Helper()
 
@@ -1691,15 +1389,10 @@ func forget(t *testing.T, h *harness, cookie string) {
 	}
 }
 
-// traceIDField is the one field a problem document is allowed to vary between two
-// otherwise-identical answers.
 var traceIDField = regexp.MustCompile(`"trace_id":"[0-9a-f]{32}"`)
 
-// withoutTraceID replaces it with a constant, so a body comparison can be about
-// everything else instead of being dropped.
 func withoutTraceID(body string) string {
 	return traceIDField.ReplaceAllString(body, `"trace_id":"<id>"`)
 }
 
-// traceIDOf is the raw match, or "" when the document carries none.
 func traceIDOf(body string) string { return traceIDField.FindString(body) }

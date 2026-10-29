@@ -1,55 +1,4 @@
 #!/usr/bin/env bash
-#
-# bin/chart-test — gateway's chart test.
-#
-#   ./bin/chart-test   render charts/gateway with helm and assert the Ingress
-#                      carries the cert-manager issuer annotation
-#
-# WHAT IT IS: the bounded chart check W67 recorded by hand in
-# REPORT-gateway-chart-01 ("The render, recorded exactly") and this packet
-# makes continuous. It is deliberately NOT wired into bin/prime: the gate is
-# static Go with a port-probe test, and a chart test needs `helm` on the
-# machine — the manager owns the gate and W67's report ruled the render "a
-# separate, bounded command" rather than part of it.
-#
-# WHAT IT ASSERTS:
-#   1. `helm template` with the committed values renders the Ingress with
-#      `cert-manager.io/cluster-issuer: letsencrypt-prod` and the existing
-#      `tls.secretName: gateway-tls`. Before packet gateway-w94-issuer the
-#      annotation was nowhere in the chart, so `gateway-tls` was a secret
-#      nothing filled and TLS failed on the box — launch item B7.
-#   2. THE CONTROL THAT MUST GO RED: with `ingress.clusterIssuer: ""` the
-#      annotation is ABSENT — the chart does not invent an issuer — and the
-#      Ingress still renders. Empty means no cert-manager: a secret nothing
-#      writes (the generator's own rule, caf/internal/gen/chart.go).
-#   3. The operator's `ingress.annotations` map still works and does not
-#      collide with the issuer: operator annotations render beside it, and an
-#      explicit operator `cert-manager.io/cluster-issuer` wins over the value
-#      (a duplicate key is invalid YAML, so one of them must).
-#   4. THE DEPLOYMENT PULLS THE PUBLISHED IMAGE, AND IT RENDERS TWO WAYS. A
-#      committed digest renders `<published>@sha256:<64 hex>` — the digest
-#      read from the same values.yaml the Deployment renders — and a CHANGED
-#      digest changes the rendered text, which is the property Argo's diff
-#      reads. NO digest renders `<published>:<tag>`: the arm a chart that has
-#      not published yet takes, and the arm kit's own `pin the image by
-#      digest` inserts the field ahead of. The measured defect this replaced:
-#      the chart pinned the image by TAG, the tag is overwritten on every
-#      master push, so the rendered string was identical before and after a
-#      build, Argo reported `Synced` with no rollout, and
-#      `imagePullPolicy: IfNotPresent` kept the node on the six-hour-old image
-#      (REPORT-roll-c5-image-digest carries the two digests). A MALFORMED
-#      digest — non-empty, not `sha256:<64 lowercase hex>` — is REFUSED: the
-#      render fails and names `image.digest`, the same shape kit's pin step
-#      refuses before it writes the field and `bin/prime-go` refuses
-#      statically. `repository@not-a-digest` renders nothing a registry
-#      answers while looking like a pin, so it is never a render this chart
-#      produces. A values.yaml with NO digest is refused HERE before anything
-#      asserts on it — an assertion would otherwise match a render with an
-#      empty digest, which is exactly how a check passes because the field is
-#      absent.
-#   5. `helm lint` passes.
-#
-# set -euo pipefail is the whole mechanism — no error handling to forget.
 
 set -euo pipefail
 
@@ -62,7 +11,6 @@ note() { printf '\n== %s\n' "$*"; }
 ok()   { printf 'ok   - %s\n' "$*"; }
 bad()  { printf 'FAIL - %s\n' "$*"; failures=$((failures + 1)); }
 
-# assert <description> <fixed string wanted> <haystack>
 assert() {
   if printf '%s' "$3" | grep -qF -- "$2"; then
     ok "$1"
@@ -71,7 +19,6 @@ assert() {
   fi
 }
 
-# assert_absent <description> <fixed string unwanted> <haystack>
 assert_absent() {
   if printf '%s' "$3" | grep -qF -- "$2"; then
     bad "$1 — unwanted: $2"
@@ -80,21 +27,17 @@ assert_absent() {
   fi
 }
 
-# ingress_doc [helm args...] — the rendered Ingress document, extracted from
-# a full render: from the ingress source comment to the next document
-# separator. Empty means the Ingress did not render at all.
 ingress_doc() {
   helm template gateway "$CHART" "$@" 2>&1 | awk '
-    /^# Source: gateway\/templates\/ingress\.yaml$/ { f=1 }
+    /^
     f && /^---$/ { exit }
     f { print }
   '
 }
 
-# deployment_doc [helm args...] — the rendered Deployment document, same shape.
 deployment_doc() {
   helm template gateway "$CHART" "$@" 2>&1 | awk '
-    /^# Source: gateway\/templates\/deployment\.yaml$/ { f=1 }
+    /^
     f && /^---$/ { exit }
     f { print }
   '
@@ -131,10 +74,6 @@ assert "operator annotation foo: bar renders" \
 assert "the issuer annotation renders beside it" \
   "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
 
-# An operator who sets the issuer key explicitly in the map wins: a duplicate
-# annotation key is invalid YAML, so the value-derived one must stand down.
-# A values file rather than --set, because --set reads the dots in
-# `cert-manager.io/cluster-issuer` as nesting separators.
 override=$(mktemp)
 trap 'rm -f "$override"' EXIT
 cat > "$override" <<'EOF'
@@ -149,14 +88,9 @@ assert_absent "the value-derived issuer does not duplicate it" \
   "cert-manager.io/cluster-issuer: letsencrypt-prod" "$doc"
 
 note "4. the Deployment pulls the published image — by digest, or by tag"
-# DERIVED, not typed: kit's image workflow pushes to ghcr.io/<github.repository>
-# and takes no input for the name, so the expected path comes from this
-# repository's own go.mod module path. A hostless value is the measured failure.
 module_path="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' go.mod | head -n1)"
 published="ghcr.io/${module_path#github.com/}"
 app_version="$(sed -n 's/^appVersion:[[:space:]]*//p' "$CHART/Chart.yaml" | head -n1 | tr -d "\"'")"
-# The digest, READ from the same values.yaml the Deployment renders: a check
-# that typed its own digest would be a copy of the value, not a reading of it.
 image_digest="$(sed -n 's/^  digest:[[:space:]]*//p' "$CHART/values.yaml" | head -n1 | tr -d "\"'")"
 
 doc=$(deployment_doc)
@@ -166,10 +100,6 @@ else
   ok "helm template renders the Deployment"
 fi
 
-# THE ABSENCE IS THE FAILURE, NAMED FIRST. With an empty digest the assertion
-# below would MATCH the broken render — `image: "$published@"` — and a check
-# that passes because the field is absent is worse than no check. So the
-# absence is refused here, at the render level, and statically in bin/prime-go.
 if [ -z "$image_digest" ]; then
   bad "values.yaml names no image.digest — the Deployment would render '$published@', a reference no registry answers"
   image_digest="sha256:$(printf '%064d' 0)"
@@ -181,9 +111,6 @@ assert "the container image is the published repository at the committed digest"
 assert_absent "the container image is NOT named by the mutable tag" \
   "image: \"$published:$app_version\"" "$doc"
 
-# THE CASE ARGO'S DIFF READS: a changed digest is a changed Deployment. The
-# tag was identical before and after a build, which is why the diff never
-# fired and the box never rolled; this is the property the packet buys.
 changed="sha256:$(printf '%064d' 1)"
 doc=$(deployment_doc --set image.digest="$changed")
 assert "a changed digest changes the rendered image (the diff Argo reads)" \
@@ -191,33 +118,18 @@ assert "a changed digest changes the rendered image (the diff Argo reads)" \
 assert_absent "the committed digest is gone from the changed render" \
   "image: \"$published@$image_digest\"" "$doc"
 
-# The control: a hostless repository renders Docker Hub-shaped, which is what
-# the box measured, and the published path is absent — so the assertion above
-# is about the value and not about a string that happens to appear.
 doc=$(deployment_doc --set image.repository=anywaye/gateway)
 assert "the control renders a hostless repository at the digest" \
   "image: \"anywaye/gateway@$image_digest\"" "$doc"
 assert_absent "the control does not render the published path" \
   "image: \"$published@" "$doc"
 
-# THE OTHER RENDER: no digest falls back to the committed tag. A chart that
-# has not published yet renders `<published>:<tag>` — the arm kit's `pin the
-# image by digest` inserts the field ahead of — and, unlike an unconditional
-# `repository@`, that is a name a registry answers.
 doc=$(deployment_doc --set image.digest="")
 assert "no digest falls back to the committed tag" \
   "image: \"$published:$app_version\"" "$doc"
 assert_absent "no digest does NOT render a bare 'repository@'" \
   "image: \"$published@\"" "$doc"
 
-# MALFORMED IS REFUSED, NOT RENDERED. A template cannot reject the value at
-# the source the way kit's pin step and bin/prime-go do, so it refuses the
-# RENDER instead, naming the field. This is the red control: the render must
-# FAIL, and a render that succeeded would be a chart shipping
-# `repository@nonsense` — the defect the kit step exists to prevent. The three
-# shapes are the three ways a digest goes wrong: not a digest at all, a
-# `sha256:` prefix with the wrong length, and the right length with a
-# non-hex character.
 for shape in not-a-digest sha256:abc "sha256:$(printf '%063d' 0)z"; do
   if helm template gateway "$CHART" --set "image.digest=$shape" >/dev/null 2>&1; then
     bad "a malformed digest is refused — '$shape' rendered instead"

@@ -1,178 +1,16 @@
 ---
-# anywaye.yml — the anywaye project manifest for gateway.
-#
-# Conforms to core's frozen schema
-# (anywaye/core: schemas/anywaye.manifest.schema.json). Specs are manager-owned:
-# a worker records the shape it is being built against and marks what it cannot
-# decide. See AGENTS.md.
-#
-# > DECISION NEEDED (gateway) — CLOSED in packet gateway-w87. `exposes` was
-# > absent and this block said why: filling it in needs an OpenAPI 3.1
-# > document for gateway's HTTP surface, and specs are manager-owned. That
-# > document exists — `openapi/v1.yaml`, complete, with the routed surface
-# > (`/v1/me`, the four `/auth/*` routes) and the two probes — and
-# > `exposes.api` now names it. The gap this block described is closed.
-# >
-# > What is NOT closed, and is not gateway's to close: with the document
-# > declared, the harness's `openapi.*` rules read it for the first time (until
-# > now every one of them skipped it — the harness checks what the manifest
-# > names and nothing it can guess at) and report 17 findings in three rule
-# > classes: `openapi.paths-are-versioned` for the six unversioned paths (the
-# > two probes and the four `/auth/*` browser routes), `openapi.errors-are-
-# > problems` for the `500`/`503` responses, and `openapi.idempotency-key` for
-# > the three mutating POSTs. Every class is recorded in the document's own
-# > "Open decisions" header as a requested core/manager ruling, and none is
-# > resolved here.
-# >
-# > The two probes are core's numbered open decision (raised by core-07;
-# > `core/DECISIONS.md`, which measured the identical failure in identity,
-# > darkroom and pantry and recommends the *rule* be relaxed because a probe
-# > is infrastructure, not contract). `/healthz` and `/readyz` stay exactly as
-# > they are — recorded here, not resolved here.
 name: gateway
 description: The anywaye public gateway — the only door in, terminating auth and rate limits in front of every service.
-# `go`, and it said `typescript` until the otel packet. `src/` was deleted at
-# cutover (f87c891) and `bin/prime` is the Go gate, so `typescript` described an
-# implementation that is not in this repository any more — and it had a cost
-# beyond being wrong: `caf gen telemetry` reads this field and REFUSES any
-# language it does not generate for, so gateway could not take its own telemetry
-# setup from the generator the fleet maintains until this line agreed with the
-# tree. The manifest is specs-owned, so this is recorded here rather than left
-# implicit: one field, one word, no other consequence than that generator works
-# again. It does not resolve DECISION NEEDED item 7 below, which is about which
-# implementation the manifest describes and is still open.
 language: go
 core: ^0.2.0
 
 exposes:
-  # The OpenAPI 3.1 document for gateway's HTTP surface: /v1/me, the four
-  # /auth/* routes, and the two probes. Named here as of packet gateway-w87;
-  # the closed DECISION NEEDED at the top of this file records what the
-  # harness reports about the probe paths, and that it is core's call.
   api: openapi/v1.yaml
 
-# gateway subscribes to no events. It answers requests; it does not react to a
-# bus. Delivery being at-least-once is someone else's idempotency problem.
 consumes: []
 
-# gateway builds on identity's signing keys: the JWKS it verifies bearer tokens
-# against belongs to identity. Nothing else is a service-level dependency —
-# hono, jose, bun and the rest are packages and live in package.json (rule 4).
-#
-# > DECISION NEEDED (gateway, guard-02): the auth contract gateway is built to
-# > differs from `core/docs/openapi-conventions.md` in three places, because
-# > packet guard-02's contract is manager-decided and fixed and this worker
-# > followed it rather than second-guessing it. The gaps are recorded here
-# > because a future packet that widens any of them has to know they exist:
-# >
-# >  1. Algorithms. core accepts RS256 **and** ES256. gateway accepts RS256 only,
-# >     pinned in one constant in `src/middleware/jwt.ts`. Widening is a
-# >     one-line change, and it should happen when identity publishes ES256
-# >     keys, not before — accepting an algorithm no key set uses buys nothing
-# >     and widens what a token can ask for.
-# >  2. The scope claim. core's conventions name a `scopes` claim; the guard-02
-# >     contract says a space-separated `scope` string, optional. gateway reads
-# >     `scope`. One constant (`SCOPE_CLAIM`) is the whole difference, but until
-# >     it is settled no service can be sure which name to mint.
-# >  3. The default issuer. core documents
-# >     `https://identity.anywaye.com/.well-known/jwks.json`; the packet fixes
-# >     `https://identity.localhost/.well-known/jwks.json` for the compose
-# >     stack. `IDENTITY_ISSUER` overrides it, and the JWKS path is appended to
-# >     the issuer by gateway, not written into the variable.
-# >
-# > Requested: a ruling on 1 and 2 from the manager, ideally in the same place
-# > core's conventions are amended, so the contract lives in one file.
-#
-# > DECISION NEEDED (gateway, guard-03): the browser surface adds two error codes
-# > core does not reserve, and gives one service a second variable.
-# >
-# >  4. `invalid_json` (400), `payload_too_large` (413) and `account_locked`
-# >     (423). core's reserved list is unauthorized, forbidden, not_found,
-# >     conflict, validation_failed, rate_limited, idempotency_key_reused,
-# >     internal, unavailable. identity already answers with all three slugs
-# >     (identity/internal/httpapi/problem.go), and gateway is the second caller of
-# >     identity's answers, so it reuses them rather than inventing a
-# >     gateway-private synonym for the same three failures. The alternative makes
-# >     a client need a translation table to read a platform.
-# >  5. Two variables for one service. `IDENTITY_ISSUER` is where tokens are
-# >     *verified* — an https origin, in every environment. `IDENTITY_URL` is where a
-# >     session is *requested* — a service address, different per environment, and
-# >     `localhost` inside a container is gateway itself. One variable cannot be
-# >     both, and core's conventions name neither, so nothing is being
-# >     contradicted — but an amendment should say what a gateway is expected to
-# >     call its identity service.
-# >
-# > Requested: a ruling on 4 and 5 alongside 1 and 2, and an entry in core's
-# > conventions for the three code slugs so the list is not kept twice.
-#
-# > DECISION NEEDED (gateway, guard-04): the rate limiter's counters are per process
-# > unless `REDIS_URL` names a shared store, and this manifest cannot say where
-# > that store is supposed to come from.
-# >
-# >  6. Redis is infrastructure, not a anywaye service, so it is not in
-# >     `dependencies` — the list is for services with a version, and Redis has
-# >     none of the platform's. But a deployment that forgets `REDIS_URL` gets an
-# >     N× limit across N replicas and a counter that resets on every deploy, and
-# >     nothing in the platform would notice. Three questions, none of which a
-# >     worker can answer:
-# >
-# >    a. Is there a managed Redis a anywaye deployment points at — a `pantry`
-# >       service, an operator's own, or something compose brings up? If it is a
-# >       platform service it probably belongs in `dependencies` and in compose.
-# >    b. Should `REDIS_URL` be **required** rather than optional, so a
-# >       multi-replica gateway cannot boot without it? gateway would rather fail to
-# >       start than serve an N× limit, but it does not know the replica count and
-# >       will not refuse to boot on a single-instance deployment either.
-# >    c. Are the shipped per-route numbers (`README.md`, "Per-route allowances")
-# >       platform defaults, or per-tenant configuration? Today they are code,
-# >       with only the general allowance overridable from the environment, because
-# >       a table that is half environment and half code is a table where lowering
-# >       the default is mistaken for having lowered the login limit. A platform
-# >       that wants per-tenant limits needs a decision about where that table
-# >       lives before it can be one.
-# >
-# > DECISION NEEDED (gateway, gateway-go-substrate-01): gateway is being rewritten
-# > in Go, and this manifest cannot say which implementation it describes.
-# >
-# >  7. `implementation` is not a field core's frozen schema defines, and
-# >     `additionalProperties: false` makes adding one a validation failure rather
-# >     than a comment — so the fact that TWO implementations of this manifest's
-# >     service are live right now is recorded here and nowhere else in the
-# >     manifest. `src/` is the TypeScript reference and still what serves
-# >     traffic; `cmd/gateway` and `internal/` are the Go rewrite and serve all
-# >     seven operations of the contract. Everything below about dependencies,
-# >     configuration and the contract describes the reference; the Go service
-# >     reads fifteen environment variables, listed exhaustively by
-# >     `TestTheRuntimeReaderReadsExactlyTheseVariables`.
-# >
-# >  8. Nothing in this manifest can be right for both implementations for long.
-# >     `DEPENDENCY` was the sharpest case and no longer is: identity is
-# >     `required: true` and the Go service *can* use it now — `internal/auth`
-# >     verifies RS256 against a JWKS cache and `RuntimeOptions` builds it
-# >     unconditionally. What the Go service still cannot do is the part of the
-# >     manifest with no HTTP surface in either language (API-key management,
-# >     which `openapi/v1.yaml` does not declare), so the divergence has moved
-# >     rather than closed. The alternative, a second manifest, is worse: two
-# >     files describing one service is how they come to disagree. Requested: either
-# >     a field core's schema defines for "which implementation is being built", or
-# >     a ruling that the manifest describes the reference until `src/` is deleted.
-# >
-# >     Reversal cost, stated: one field in one file, or nothing at all if the
-# >     second ruling is taken. The cost of NOT ruling is that the next reader of
-# >     `anywaye.yml` learns nothing about the rewrite from it.
-# >
-# > Also unverified and worth a ruling: the GCRA Lua in
-# > `src/middleware/rateLimitRedis.ts` is now executed against a real
-# > `redis-server` by the `redis` CI job, so the script itself is no longer
-# > covered only by a transcription. What that does NOT answer is (a) or (b)
-# > above: CI proves the script works, not that any deployment configures
-# > `REDIS_URL` at all, and a deployment that does not is an N× limit that stays
-# > invisible. The deploy half is `TODO(guard-06)`, which is a platform answer
-# > rather than a repository one.
 dependencies:
   - name: identity
-    # Provisional: no anywaye service has tagged a release yet, so this is the
-    # platform's initial core range rather than a version identity has shipped.
     version: ^0.1.0
     required: true
 
@@ -193,9 +31,6 @@ env:
     description: "Redis for counters/sessions."
 
 repository:
-  # The GitHub repository was renamed guard -> gateway, so this URL is no
-  # longer "deliberately stale": the old one redirects, and this one is where
-  # the bytes actually live. `any dev` and `pantry` read this field.
   url: git@github.com:anywaye/gateway.git
   defaultBranch: master
   visibility: private

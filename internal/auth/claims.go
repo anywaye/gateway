@@ -1,44 +1,3 @@
-// A JWT payload whose member order survives a round trip through Go.
-//
-// # WHY THIS TYPE EXISTS AT ALL
-//
-// `GET /v1/me` echoes the verified claims, and `internal/equivalence` compared
-// that body **byte for byte** against the TypeScript reference. `encoding/json`
-// sorts `map[string]interface{}` keys, and `jose` hands `jwt.ts` the payload as
-// the object `JSON.parse` produced — which preserves the order the token
-// wrote. So a plain map renders `{"aud":…,"iss":…,"sub":…}` where the reference
-// renders `{"iss":…,"aud":…,"sub":…}`, and every one of the 72-equivalent
-// comparisons on `/v1/me` would fail on key order.
-//
-// The substrate already hit this once, for `/readyz`'s `deps`, and solved it by
-// marshaling that one object by hand (`orderedDeps`). This is the same problem
-// one layer down and the same answer: the order a caller wrote is the order the
-// response carries.
-//
-// # WHAT "PRESERVED" MEANS HERE, PRECISELY
-//
-// The key order of the token's own payload, and the *last* value for a
-// duplicated key at the position of the first. That is what `JSON.parse` does
-// in every engine this repository is compared against, and it is the only
-// definition of "preserved" that a duplicate key has: the alternative —
-// dropping earlier duplicates — would render a token the reference renders
-// differently, for the length of a payload nobody writes twice on purpose.
-//
-// # NUMBERS ARE `float64`, NOT THE LITERAL
-//
-// The decoder is NOT `UseNumber`, and that is a deliberate choice rather than an
-// omission. `JSON.parse` turns every number into an IEEE double, and
-// `JSON.stringify` writes it back out as the shortest representation that round
-// trips. So a token carrying `{"exp":1e3}` is echoed as `{"exp":1000}` by the
-// reference. Preserving the *literal* would render `{"exp":1e3}` here and fail
-// the comparison on a token both sides agree about — and it would be the
-// reference that is right, because a client parses `1e3` and `1000` to the same
-// double.
-//
-// Integral doubles marshal without a decimal point in both languages
-// (`strconv.AppendFloat(_, f, 'f', -1, 64)` and `Number.prototype.toString`
-// agree below 1e21 and above 1e-6), which is the whole of the range a JWT's
-// `exp`, `nbf` and `iat` ever occupy.
 package auth
 
 import (
@@ -62,10 +21,6 @@ type claimMember struct {
 	value any
 }
 
-// newClaims is the only constructor, and it exists so the index and the slice
-// are built together. A `Claims` with members but no index would silently answer
-// "absent" for every `String` lookup, which is a wrong answer rather than a
-// failed one.
 func newClaims(members []claimMember) Claims {
 	c := Claims{members: members, index: make(map[string]int, len(members))}
 	for i, member := range members {
@@ -90,9 +45,6 @@ func (c *Claims) UnmarshalJSON(data []byte) error {
 
 	members, ok := value.([]claimMember)
 	if !ok {
-		// The caller turns this into `ERR_JWT_INVALID` — jose refuses a claims
-		// set that is not a top-level object with its own message, and this
-		// file does not decide what a caller says about it.
 		return fmt.Errorf("auth: a JWT claims set must be a top-level JSON object")
 	}
 
@@ -192,12 +144,6 @@ func ClaimsFrom(members map[string]any) Claims {
 	return newClaims(ordered)
 }
 
-// decodeOrdered reads one JSON value, rebuilding objects as `[]claimMember`.
-//
-// A `map[string]any` would be simpler by four lines and is exactly what this
-// file exists to avoid, so the reason is stated once here rather than repeated:
-// `encoding/json` renders a map with sorted keys, and the reference renders the
-// order the token wrote.
 func decodeOrdered(dec *json.Decoder) (any, error) {
 	token, err := dec.Token()
 	if err != nil {
@@ -206,9 +152,6 @@ func decodeOrdered(dec *json.Decoder) (any, error) {
 
 	delim, ok := token.(json.Delim)
 	if !ok {
-		// A string, a float64, a bool or nil. Numbers arrive as float64 because
-		// the decoder is not in `UseNumber` mode — see the package comment for
-		// why that is the choice that matches `JSON.parse`.
 		return token, nil
 	}
 
@@ -241,8 +184,6 @@ func decodeOrderedObject(dec *json.Decoder) ([]claimMember, error) {
 			return nil, err
 		}
 
-		// LAST VALUE WINS AT THE FIRST POSITION. What `JSON.parse` does, and the
-		// only reading of a duplicate key that both implementations agree on.
 		if seen, dup := at[name]; dup {
 			members[seen].value = value
 			continue
@@ -251,9 +192,6 @@ func decodeOrderedObject(dec *json.Decoder) ([]claimMember, error) {
 		members = append(members, claimMember{name: name, value: value})
 	}
 
-	// The closing `}` is consumed here rather than by the caller, so a truncated
-	// document is an error from this function instead of a member list that
-	// happens to stop early.
 	if _, err := dec.Token(); err != nil {
 		return nil, err
 	}

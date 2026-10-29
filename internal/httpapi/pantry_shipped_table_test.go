@@ -12,35 +12,12 @@ import (
 	"testing"
 )
 
-// The shipped pantry route tables, held to the seam audit's finding F2.
-//
-// Pantry's write path verifies a gateway-signed principal assertion (RS256,
-// `aud` = pantry's own origin, `sub` required). The minting mechanism is
-// complete and tested (`table.go`, `proxy.go`, `assertion.go`) — but no
-// shipped route table declared `principal` for pantry, so gateway minted
-// nothing and every pantry write 401'd at the second hop.
-//
-// These tests read the tables the way an operator ships them — the
-// `ROUTE_TABLE` documents in `docker-compose.yml` and
-// `charts/gateway/values.yaml` — and assert the shape that closes the seam:
-// reads stay on the existing public `/v1/pantry` prefix, a non-public write
-// prefix declares `principal: ["sub"]` (sub only), the write prefix mints an
-// assertion carrying `sub` and nothing else, and the read prefix mints
-// nothing. A table that regresses to no-principal fails here rather than at
-// pantry's second hop.
 
-// shippedTableFile is one deployed ROUTE_TABLE document and where it lives,
-// relative to this package's directory.
 var shippedTableFiles = []string{
 	"../../docker-compose.yml",
 	"../../charts/gateway/values.yaml",
 }
 
-// shippedRouteTableDoc extracts the ROUTE_TABLE JSON document from a shipped
-// file, whether the entry is active or commented out. Both shipped files
-// carry the table as a single-line YAML scalar (single-quoted in compose,
-// double-quoted in the chart); what matters here is the JSON, not whether
-// the deployment has activated it.
 func shippedRouteTableDoc(t *testing.T, path string) string {
 	t.Helper()
 
@@ -74,9 +51,6 @@ func shippedRouteTableDoc(t *testing.T, path string) string {
 	return ""
 }
 
-// shippedEnvValues returns every value a shipped file assigns to an env
-// variable, active lines and commented examples alike. A shipped file that
-// stops naming the variable fails the caller, not this helper.
 func shippedEnvValues(t *testing.T, path, name string) []string {
 	t.Helper()
 
@@ -101,9 +75,6 @@ func shippedEnvValues(t *testing.T, path, name string) []string {
 	return out
 }
 
-// TestShippedPantryTablesMintSubOnlyOnTheWritePrefix is the F2 seam guard:
-// the write prefix mints an assertion carrying `sub` (and only `sub`), and
-// the read prefix mints nothing.
 func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 	for _, file := range shippedTableFiles {
 		t.Run(file, func(t *testing.T) {
@@ -112,7 +83,6 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 				t.Fatalf("the shipped table in %s does not boot: %v", file, err)
 			}
 
-			// The write prefix: the one non-public pantry entry declaring claims.
 			var writePrefix string
 			writeEntries := 0
 			for prefix, target := range table {
@@ -132,8 +102,6 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 				t.Fatalf("%s write prefix %s declares principal %q, want [\"sub\"] only — github_id is optional metadata pantry already treats as such, and a second claim is a second credential surface nobody asked for", file, writePrefix, got)
 			}
 
-			// The read prefix: the existing /v1/pantry entry stays public and
-			// declares nothing.
 			read, ok := table["/v1/pantry"]
 			if !ok {
 				t.Fatalf("%s lost the /v1/pantry read prefix", file)
@@ -145,9 +113,6 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 				t.Errorf("%s /v1/pantry declares principal %q on a public entry — which refuses to boot, and would mint a signed statement about a request nobody was required to make", file, read.Principal)
 			}
 
-			// The behavior, not just the declaration: the write prefix mints
-			// an assertion carrying sub and only sub, bound to pantry's
-			// origin; the read prefix mints nothing.
 			key := testKey(t)
 			minter, err := NewAssertionMinter(AssertionOptions{Key: key})
 			if err != nil {
@@ -180,37 +145,6 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 			if got := decoded.Claims["aud"]; got != writeRoute.BaseURL {
 				t.Errorf("the minted assertion is bound to aud=%v, want the write entry's origin %q", got, writeRoute.BaseURL)
 			}
-			// AND THE ORIGIN IS AN OPERATED ONE, NOT AN IN-CLUSTER NAME. The
-			// assertion above proves the aud equals the table's own entry; this
-			// one proves the entry names a service that EXISTS, which is the
-			// property the shipped table got wrong:
-			//
-			//   GET https://api.anywaye.com/v1/pantry = 503 "the service this
-			//   request needs could not be reached"
-			//
-			// because `http://pantry:8080` was an in-cluster name for a service
-			// the substrate does not — and must not — deploy: pantry is
-			// Anywaye-proprietary and runs on Anywaye infrastructure. The check is
-			// the SHAPE (an https origin with a public host), not the literal
-			// string, so a second copy of the origin cannot drift here the way
-			// this one did.
-			// AND THE TWO SHIPPED TABLES ARE ALLOWED TO DIFFER, BECAUSE THE
-			// TWO STACKS ARE DIFFERENT STACKS.
-			//
-			//   * `docker-compose.yml` is the LOCAL stack, where pantry runs in
-			//     the same compose network — `http://pantry:8080` is where it
-			//     is, and naming anything else would be wrong there.
-			//   * `charts/gateway/values.yaml` is what a BOX deploys, and a
-			//     box must never run pantry: it is Anywaye-proprietary and "runs
-			//     on Anywaye infrastructure … the box pattern applies: closed
-			//     code, public HTTPS endpoint". An in-cluster name in the chart
-			//     is a route to a service that does not exist, which is the live
-			//     503 this check was written from.
-			//
-			// So the deployed chart is held to the public-origin SHAPE (an
-			// https origin with a public host, never a cluster-local name) and
-			// the local stack is not — while the assertion above, that the aud
-			// equals the table's own entry, holds for both.
 			if strings.Contains(file, "charts/") {
 				aud, _ := decoded.Claims["aud"].(string)
 				if !strings.HasPrefix(aud, "https://") || strings.Contains(aud, ".svc.cluster.local") || !strings.Contains(aud, ".") {
@@ -229,9 +163,6 @@ func TestShippedPantryTablesMintSubOnlyOnTheWritePrefix(t *testing.T) {
 	}
 }
 
-// TestShippedPantryTablesKeepAssertionTTLAtOrUnderTheCeiling holds the
-// lifetime half of the seam: whatever ASSERTION_TTL_MS a shipped file sets
-// must be at or under pantry's ten-minute ceiling.
 func TestShippedPantryTablesKeepAssertionTTLAtOrUnderTheCeiling(t *testing.T) {
 	for _, file := range shippedTableFiles {
 		t.Run(file, func(t *testing.T) {

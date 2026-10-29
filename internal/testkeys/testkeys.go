@@ -1,36 +1,3 @@
-// Package testkeys mints RS256 tokens and serves a JWKS, for tests.
-//
-// # WHY IT IS A PACKAGE AND NOT A `_test.go` HELPER
-//
-// Two test packages need it: `internal/httpapi`, which drives a signed token
-// through the handler, and `internal/equivalence`, which has to hand BOTH
-// implementations a token signed by a key in a key set both of them fetch over
-// HTTP. A `_test.go` file is invisible to another package, so a helper written as
-// one would be copied into both and would drift — and a JWKS fixture that has
-// drifted between the two tests is a fixture that compares two different key sets
-// and reports the difference as an equivalence failure.
-//
-// # IT KNOWS NOTHING ABOUT THE VERIFIER
-//
-// It mints keys, tokens and documents. It does NOT build an `auth.Verifier`, even
-// though every caller wants one, because a fixture package that imports the package
-// under test cannot be imported BY that package's tests — an import cycle Go rejects
-// in a test build. The two callers build the verifier themselves, in four lines,
-// from `Issuer`, `Audience` and `Clock`, which are exported for exactly that reason.
-//
-// # IT IS NOT PART OF THE SERVICE
-//
-// Nothing outside a `_test.go` file imports this package, so the Go linker drops
-// it from `cmd/gateway`. `internal/equivalence` is in the same position today and
-// `Dockerfile` copies the whole context either way — which is recorded in
-// that file's header rather than fixed here, because filtering a `COPY` is how a
-// test double reaches a shipped image.
-//
-// # THE KEY IS GENERATED, NOT HARD-CODED
-//
-// A 2048-bit RSA key generated per run costs about 100ms and removes the question
-// a checked-in key raises: what happens when this key leaks, and who else is
-// verifying tokens with it. A key in a repository is a key in every clone of it.
 package testkeys
 
 import (
@@ -49,24 +16,13 @@ import (
 	"time"
 )
 
-// The claim values a test can ask for, and the two that are not values at all.
 const (
-	// KeyID is the `kid` the published key set carries. Not a constant the tests
-	// should spell, because a fixture where the token's `kid` and the set's `kid` are
-	// written twice can disagree, and the disagreement looks like an unknown-key
-	// refusal rather than a typo.
 	KeyID = "test-key-1"
 
-	// Issuer is the `iss` the verifier is configured with AND the tokens carry.
 	Issuer = "https://identity.test"
 
-	// Audience is the `aud` every token is addressed to, and the verifier's audience.
 	Audience = "gateway"
 
-	// Subject is the `sub` a token carries when a test does not name one. Exported
-	// so a test asserting on the echoed principal reads the SAME constant the mint
-	// used — a test that spelled the uuid out would be asserting on a string it
-	// copied, and the copy is what rots.
 	Subject = "00000000-0000-4000-8000-000000000001"
 )
 
@@ -87,9 +43,6 @@ const (
 // verifier.
 var Clock = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 
-// Exp is a claim's expiry relative to `Clock`. Tests pass `-time.Hour` for expired
-// and `time.Hour` for valid; zero is ABSENT, which is valid forever and is not the
-// same as expiring now.
 const (
 	Expired = -time.Hour
 	Valid   = time.Hour
@@ -104,30 +57,17 @@ const (
 // parallel by default only when they say `t.Parallel()`. Each `NewFixture` gets its
 // own listener and its own key.
 type Fixture struct {
-	// The key pair. `Private` is what mints; `Public` is what the JWKS publishes.
 	Private *rsa.PrivateKey
 	Public  *rsa.PublicKey
 
-	// The JWKS document, verbatim. A test that wants to mutate it (to withdraw a
-	// key, to publish two under one `kid`) reads and rewrites this rather than
-	// reaching into the server.
 	Document []byte
 
-	// Where the document is served, or "" if `NewFixture` was not asked for a
-	// server.
 	URL string
 
-	// DocumentURL is the URL the fixture's own handler serves `Document` from, set
-	// by `Serve`. It is separate from `URL` because a test that wants the key set at
-	// a path other than the well-known one — or served by a handler that fails on
-	// demand — points the VERIFIER here while `URL` stays the conventional address.
 	DocumentURL string
 
 	server *httptest.Server
 
-	// How many times the key set has been fetched. The single-flight assertions need
-	// it, and it is a counter under a lock rather than a log because a test that
-	// reads a log after a race reads a number that may not be the number.
 	mu       sync.Mutex
 	fetched  int
 	failing  bool
@@ -229,39 +169,21 @@ func (f *Fixture) Heal() { f.FailWith(0) }
 // an extra claim: a fixture that sends `{"exp":…,"sub":…,"scope":…}` because a test
 // wrote three map keys is a fixture whose claim set is invisible to a reader.
 type Claims struct {
-	// Issuer, Audience and Subject default to the fixture's own values when empty.
-	// A test that wants them ABSENT names that, because "empty means default" and
-	// "absent" are different answers and the absence is what several of these tests
-	// are about.
 	Issuer   string
 	Audience string
 	Subject  string
 
-	// ExpiresIn and NotBefore are offsets from now. Zero means ABSENT, which is not
-	// the same as "expires immediately" — a token with no `exp` is valid forever,
-	// and `exp: now` is not. A test that wants an already-expired token says
-	// `ExpiresIn: -time.Hour`.
 	ExpiresIn time.Duration
 	NotBefore time.Duration
 
-	// AccountID is the `account_id` claim, and empty means absent.
 	AccountID string
 
-	// Scope is the `scope` claim, and empty means absent rather than empty string.
 	Scope string
 
-	// KeyID overrides the header's `kid`. Empty means `KeyID`; a test for the
-	// unknown-`kid` path names a `kid` the published set does not carry.
 	KeyID string
 
-	// Algorithm overrides the header's `alg`. Empty means `RS256`.
 	Algorithm string
 
-	// RawClaims is merged into the payload AFTER the typed fields, so a test can
-	// produce the shapes the typed fields cannot: an `aud` that is an array, an
-	// `exp` that is a string, a payload that is not an object at all. It is last
-	// because a caller that wants `aud` to be an array has to overwrite the typed
-	// one, and having to do that explicitly is the point.
 	RawClaims map[string]any
 }
 
@@ -344,10 +266,6 @@ func MintWith(t *testing.T, key *rsa.PrivateKey, claims Claims) string {
 		"aud": or(claims.Audience, Audience),
 		"sub": or(claims.Subject, Subject),
 	}
-	// Relative to `Clock`, not `time.Now`. See that variable for why, and the answer
-	// is the same sentence twice: a token minted against the wall clock and verified
-	// against a fixed clock is a token whose validity depends on which of two clocks
-	// reached it.
 	if claims.ExpiresIn != 0 {
 		payload["exp"] = Clock.Add(claims.ExpiresIn).Unix()
 	}
@@ -410,10 +328,6 @@ func Segment(document string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(document))
 }
 
-// or is `claims.X || FIXTURE.X`, and the empty-is-default rule is why an absent
-// claim is spelled differently from an empty one: `RawClaims` is the escape hatch
-// for absence, and a fixture that guessed "empty means absent" would make
-// `"aud": ""` and no `aud` at all the same token.
 func or(value, fallback string) string {
 	if value != "" {
 		return value

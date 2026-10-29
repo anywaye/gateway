@@ -10,130 +10,17 @@ import (
 	"unicode/utf8"
 )
 
-// Which path prefix goes to which service, in configuration rather than in code.
-//
-// Ported from `src/routes/table.ts` (removed at cutover). A gateway that authenticates a caller and
-// then has nowhere to send them is a gateway that terminates auth for its own
-// sake. This file is the half of forwarding that can be decided without any of
-// forwarding: the table of prefixes and upstreams, validated at construction,
-// plus the one question a request asks of it — "who owns this path?".
-//
-// ## Why a static table and not a registry
-//
-// The set of services in a deployment is small, known, and changes with a deploy
-// rather than at runtime, so a table read from configuration is the honest shape
-// *now* rather than a simplification. Filling it from a registry is writing a
-// different `RuntimeOptions` and changing nothing here — which is why there is no
-// interface indirection waiting for a consumer that does not exist yet.
-//
-// ## What is validated, and why each one is a startup error
-//
-// `REDIS_URL=redis//redis` refusing to boot is the precedent, and every rule
-// below is the same argument about a value an operator typed:
-//
-//   - a prefix outside `/v1/` could never match, because the pass-through is
-//     mounted on the API surface — a route that silently forwards nothing;
-//   - a glob (`*`, `?`) is a second matching language, and the only question a
-//     route asks is "everything under here";
-//   - a base URL carrying a path would put the caller's path somewhere nobody is
-//     serving it — the same rule the identity URL applies to identity;
-//   - `/v1/me` is gateway's own route, registered before the pass-through, so a
-//     table claiming it describes a route that can never run;
-//   - a token with a line break in it is header injection through configuration
-//     rather than through a request, which is not a smaller problem;
-//   - a `public` value that is not a boolean, and a `public` entry that also
-//     carries a `token`, are both refusals for the same reason: a security field
-//     an operator half-configured must not resolve to anything at all;
-//   - a claim name that is not a claim name, one of the claims gateway owns
-//     (`iss`, `aud`, `exp`…), and a `public` entry that also declares
-//     `principal` — the last being the sharpest rule in the file.
-//
-// ## THE ONE PLACE GO IS NOT THE SAME SHAPE, AND WHY
-//
-// `RouteTarget` says `Token string`, `Public bool` and `Principal []string`, so
-// Go's zero value is "no token, not public, no claims" and there is no way to
-// spell the difference between an absent field and a field spelled `false` or
-// `""`. TypeScript has three values for each and the distinction is load-bearing
-// there: `{"principal": []}` is an operator mistake and `{"token": ""}` is an
-// operator mistake, and both are refusals rather than the absence.
-//
-// The difference is kept where it can be observed and dropped where it cannot.
-// `ParseRouteTable` reads the JSON's own types and refuses `[]`, `""` and
-// `"true"` — so the operator mistake still stops the boot — and the typed struct
-// is the *result* of that, where an absent and an empty field genuinely are the
-// same answer. What a reader would lose is the ability to see which spelling an
-// operator used, which is not a security property and is recorded in the
-// operator-facing refusal messages instead.
 
 // RouteTarget is one upstream, and the credential gateway attaches when it calls.
 type RouteTarget struct {
-	// The service's base URL: http(s), no path, no query, no fragment and no
-	// credentials in the authority.
-	//
-	// No path is the load-bearing half. The caller's remaining path is appended to
-	// it, so a base carrying one would put `/v1/items` under a prefix the operator
-	// typed out of habit and nobody serves.
 	BaseURL string
 
-	// The credential gateway presents to this service, as a bearer token.
-	//
-	// Empty means the entry declares none, which is meaningful rather than
-	// convenient: a service that authenticates nothing is reached with **no**
-	// `Authorization` header at all, which is a different thing from reaching it
-	// with one this process invented.
-	//
-	// It is *never* the caller's own credential. See `proxy.go` for why, and for
-	// what would have to be true to change that.
 	Token string
 
-	// Whether this prefix is mounted with **no caller credential required**.
-	//
-	// False is the default because the safe reading of "I did not say" is the one
-	// where nothing is opened by omission.
-	//
-	// It is about the CALLER and `Token` is about the SERVICE, which is the whole
-	// distinction this field exists to be careful about — two credentials answering
-	// two different questions, so an entry carrying both is refused rather than
-	// resolved.
-	//
-	// One entry, named, in a table a human reads. There is no wildcard and no
-	// prefix-independent switch, and `false` is what every existing entry already
-	// means — the field is additive and no deployed route changes behavior.
 	Public bool
 
-	// The claims this upstream is declared to need, and therefore the only claims
-	// gateway will assert about the caller when it calls.
-	//
-	// Nil means **no assertion is minted at all** — not "an assertion with no
-	// claims", which would be a token whose only content is which gateway minted
-	// it. An upstream that has not declared what it needs has not asked, and the
-	// alternative hands every service in a deployment a credential it never agreed
-	// to hold.
-	//
-	// The names are claim names on the caller's verified token, read from the token
-	// rather than from gateway's typed principal, so `scope` crosses as the string
-	// identity signed and `github_id` — which is not a field gateway knows — crosses
-	// without gateway being taught its name. A name the token does not carry is
-	// omitted, never invented and never refused.
 	Principal []string
 
-	// The scopes a caller must hold for this prefix, and therefore the only
-	// callers gateway forwards to it.
-	//
-	// Nil means **no scope check** — the route forwards any verified caller,
-	// which is what every entry already means and the reason the field is additive:
-	// a deployed route changes behavior only when its operator says so.
-	//
-	// This is the capabilities half of what the verifier proves about a caller,
-	// and on a shared platform it is the difference between "any tenant may reach
-	// this service" and "only a tenant holding this scope may". The check is
-	// mounted by `scopeGate`, after the credential gate and before the limiter, so
-	// a caller refused for capability is counted against nothing — the same rule
-	// an unverified token gets.
-	//
-	// A `public` entry cannot declare scopes, and the combination refuses to boot:
-	// a public route has no verified caller, so there is nothing to check a scope
-	// against. The same rule `principal` has, for the same reason.
 	Scopes []string
 }
 
@@ -149,14 +36,11 @@ type RouteTable map[string]RouteTarget
 // destination from one match and the openness from another would be two answers to
 // "which prefix claimed this".
 type ResolvedRoute struct {
-	// The prefix that claimed the path, for the log line on a failure.
 	Prefix  string
 	BaseURL string
 	Token   string
 	Public  bool
-	// Claims to assert about the caller, or nil when the entry declared none.
 	Principal []string
-	// Scopes the caller must hold, or nil when the entry declared none.
 	Scopes []string
 }
 
@@ -171,23 +55,8 @@ type ResolvedRoute struct {
 // to remember.
 const RouteMount = "/v1/*"
 
-// gatewayOwned is the one path under the mount that gateway itself serves.
 const gatewayOwned = "/v1/me"
 
-// isGatewayOwned reports whether a path under the mount is gateway's own route
-// rather than forwarded traffic.
-//
-// The pass-through and the scope gate both exclude these paths, the way the
-// reference's registration order does for /v1/me: chi's trie prefers the more
-// specific path, so a pass-through mounted as middleware would see them — and a
-// table carrying the `/v1` prefix, which is allowed and claims everything under the
-// surface, would relay gateway's own route to a service.
-//
-// `/v1/api-keys` and its subtree are gateway's own for the same reason `/v1/me`
-// is: they are answered by gateway's own handlers, so a broad table entry must not
-// shadow them. Without this, `ROUTE_TABLE={"/v1":{…}}` would relay the key
-// management surface to the upstream and the three routes would 404 from a service
-// that has never heard of them.
 func isGatewayOwned(path string) bool {
 	if path == gatewayOwned {
 		return true
@@ -232,39 +101,14 @@ func ValidateRouteTable(table RouteTable) (RouteTable, error) {
 			return nil, err
 		}
 
-		// The contradiction, refused rather than resolved. Both resolutions are
-		// wrong in a way an operator cannot see from the running service: honoring
-		// `public` hands an anonymous caller an upstream that may be authenticating
-		// gateway's calls, and honoring `Token` quietly answers 401 to a route the
-		// table says is open. What is certain is that nobody reading this table can
-		// say which of the two was meant, so it does not boot and the message names
-		// both ways out.
 		if target.Public && target.Token != "" {
 			return nil, fmt.Errorf("%w: routeTable: %s is declared public AND carries an upstream token, which are two different credentials answering two different questions. \"public\" is about the CALLER: the prefix is mounted with no caller credential required. \"token\" is gateway's own credential to the SERVICE, attached on every call it makes. An entry carrying both is an operator who has not decided which of the two they meant, and choosing here would either hand an anonymous caller a credential-protected upstream or silently require a credential the table says is not required. Drop \"token\" if the route is meant to be caller-anonymous and the service takes nothing from gateway; drop \"public\" if the caller must present a credential", ErrNotConfigured, prefix)
 		}
 
-		// THE SHARPEST RULE IN THIS FILE, and the one that makes MD19's first
-		// property structural rather than conditional: **a public route gets no
-		// assertion, ever.** Declaring the claims a public route needs is an operator
-		// who has not noticed that a public route has no caller to assert one about —
-		// and it is the exact shape of the bug this field could introduce, because
-		// the machinery to mint one would be configured, present and correct.
-		// Honoring it would mint a signed token saying who sent a request that
-		// nobody was required to send.
-		//
-		// Refused rather than ignored, and refused at BOOT rather than at the send
-		// site: an entry that says this and does not get it is a table that lies
-		// about what is on the wire. `proxy.go` also refuses to mint for a public
-		// entry, because a security property that depends only on a validation in
-		// another file is one refactor from being decorative.
 		if target.Public && target.Principal != nil {
 			return nil, fmt.Errorf("%w: routeTable: %s is declared public AND declares principal claims, and a public route carries no assertion about a caller. \"public\" means the prefix is mounted with no caller credential required, so there is no verified caller to assert anything about: an assertion here would be a signed statement about a request that nobody was required to make. Drop \"principal\" if the route really is anonymous, or drop \"public\" if the upstream really does need to know who the caller is — a private prefix is what carries the assertion", ErrNotConfigured, prefix)
 		}
 
-		// A public route has no verified caller, so there is no credential whose
-		// scope could be checked either. Same rule as `principal` above, same
-		// reason, and refused at boot for the same reason: an entry that says this
-		// and does not get it is a table that lies about what is on the wire.
 		if target.Public && target.Scopes != nil {
 			return nil, fmt.Errorf("%w: routeTable: %s is declared public AND declares scopes, and a public route has no verified caller to check a scope against. \"public\" means the prefix is mounted with no caller credential required, so a scope here would be a check that never runs — or worse, a route that silently forwards everyone. Drop \"scopes\" if the route really is anonymous, or drop \"public\" if the upstream really does need a capable caller", ErrNotConfigured, prefix)
 		}
@@ -350,7 +194,6 @@ func ResolveRoute(table RouteTable, path string) (ResolvedRoute, bool) {
 	return best, bestLength >= 0
 }
 
-// pathname is the path, without the query or the fragment.
 func pathname(path string) string {
 	if cut := strings.IndexAny(path, "?#"); cut >= 0 {
 		return path[:cut]
@@ -358,7 +201,6 @@ func pathname(path string) string {
 	return path
 }
 
-// claims reports whether a prefix owns a path, on a segment boundary.
 func claims(prefix, path string) bool {
 	if prefix == "/" {
 		return path == "/"
@@ -369,12 +211,6 @@ func claims(prefix, path string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
-// checkPrefix refuses a prefix that is not a path under the API surface.
-//
-// The trailing slash is left alone because it is meaningful to the matcher, and
-// `/v1` is allowed because it is the whole surface. What is refused is anything
-// that could not be reached, could match more than a subtree, or could carry a
-// traversal out of the mount before a request is ever made.
 func checkPrefix(prefix string) error {
 	if prefix == "" {
 		return fmt.Errorf("%w: routeTable: route prefixes must be non-empty strings", ErrNotConfigured)
@@ -395,10 +231,6 @@ func checkPrefix(prefix string) error {
 		if segment == "." || segment == ".." {
 			return fmt.Errorf("%w: routeTable: route prefixes must not contain a traversal segment, got %q", ErrNotConfigured, prefix)
 		}
-		// `%2e%2e` is `..`, and a prefix carrying it is a traversal that has not
-		// happened yet: the pass-through rebuilds the upstream path from decoded
-		// segments, so a configured prefix is checked in the same notation a
-		// caller's path arrives in.
 		if decoded, ok := decodeSegment(segment); ok && decoded == ".." {
 			return fmt.Errorf("%w: routeTable: route prefixes must not contain a traversal segment, got %q", ErrNotConfigured, prefix)
 		}
@@ -407,11 +239,6 @@ func checkPrefix(prefix string) error {
 	return nil
 }
 
-// checkBaseURL reduces an upstream's base URL to an origin.
-//
-// No path (the caller's path is appended), no trailing slash (it would join into
-// `//v1/items`), and credentials in the authority are refused because a URL that
-// carries a password is a URL that ends up in a log line.
 func checkBaseURL(prefix, value string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("%w: routeTable: %s baseUrl must be a non-empty string", ErrNotConfigured, prefix)
@@ -437,11 +264,6 @@ func checkBaseURL(prefix, value string) (string, error) {
 	return originOf(parsed), nil
 }
 
-// parseAbsoluteURL parses an absolute http(s) URL, or reports that it is not one.
-//
-// Shared by the base URL and the assertion issuer, which are the same rule twice:
-// both are operator-typed origins, both end up in a signed claim or a request line,
-// and both have to be a startup refusal rather than a 503 later.
 func parseAbsoluteURL(value string) (*url.URL, error) {
 	parsed, err := url.Parse(value)
 	if err != nil {
@@ -456,15 +278,6 @@ func parseAbsoluteURL(value string) (*url.URL, error) {
 	return parsed, nil
 }
 
-// originOf is `scheme://host[:port]` with the default port dropped and the host
-// lowercased, which is what `URL.origin` is.
-//
-// The default port is the half that matters and it is not cosmetic: it is the
-// `aud` claim on every principal assertion (see `assertion.go`), so a table
-// naming `http://pantry:80` and one naming `http://pantry` would mint two
-// assertions whose audiences are two different strings for the same service, and
-// an upstream that verified `aud` would refuse one of them for no reason a reader
-// could find.
 func originOf(parsed *url.URL) string {
 	host := strings.ToLower(parsed.Hostname())
 	if port := parsed.Port(); port != "" && !isDefaultPort(parsed.Scheme, port) {
@@ -478,12 +291,6 @@ func isDefaultPort(scheme, port string) bool {
 	return (scheme == "http" && port == "80") || (scheme == "https" && port == "443")
 }
 
-// checkToken refuses a bearer token, or accepts one.
-//
-// Whitespace and control characters are refused rather than escaped. This value
-// is written into a request header verbatim, so a newline here is header
-// injection configured on purpose — the same class of defect as a caller's CRLF,
-// arriving from the one place an operator trusts.
 func checkToken(prefix, value string) error {
 	if value == "" {
 		return nil
@@ -494,11 +301,6 @@ func checkToken(prefix, value string) error {
 	return nil
 }
 
-// hasHeaderUnsafe is the one definition of "a byte that must never reach a header
-// value", shared by the token and by a claim name. Go's `http.Header.Set` would
-// let a newline through into a value, and `net/http` would then refuse the
-// request with an error the caller never sees — so this is a startup refusal
-// rather than a runtime surprise.
 func hasHeaderUnsafe(value string) bool {
 	for _, r := range value {
 		if r <= 0x1f || r == 0x7f || unicode.IsSpace(r) {
@@ -508,12 +310,6 @@ func hasHeaderUnsafe(value string) bool {
 	return false
 }
 
-// redactUserinfo removes the credentials from a URL before it appears in an
-// error message.
-//
-// The refusal has to *name* the URL, and a URL that carries a password in it is
-// the case: quoting it back verbatim would put the password in the log line the
-// message goes to, which is the whole reason the field is refused.
 func redactUserinfo(value string) string {
 	if at := strings.LastIndex(value, "@"); at >= 0 {
 		if scheme := strings.Index(value, "://"); scheme >= 0 && scheme+3 < at {
@@ -523,9 +319,6 @@ func redactUserinfo(value string) string {
 	return value
 }
 
-// --------------------------------------------------------------------------
-// the path, before anything reads it
-// --------------------------------------------------------------------------
 
 // NormaliseRequestPath is the dot-segment removal a URL parser performs, applied
 // to the request line's own spelling of the path.
@@ -587,9 +380,6 @@ func redactUserinfo(value string) string {
 // slash appears because a `..` that pops a segment leaves the separator that
 // preceded it.
 func NormaliseRequestPath(path string) string {
-	// Fast path, and it is the overwhelmingly common one: a path with no dot in the
-	// first position of any segment cannot contain a dot segment, and this is the
-	// function every request in the deployment goes through.
 	if !strings.Contains(path, ".") && !strings.Contains(path, "2e") && !strings.Contains(path, "2E") {
 		return path
 	}
@@ -597,16 +387,11 @@ func NormaliseRequestPath(path string) string {
 	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
 
 	out := make([]string, 0, len(segments))
-	// Whether a segment that was consumed — `.` or `..` — leaves a separator
-	// behind. `/a/b/..` is `/a/` rather than `/a`, and that trailing `/` is the
-	// difference between a path a service routes and a path it refuses.
 	separatorPending := false
 
 	for i, segment := range segments {
 		switch {
 		case isDoubleDotSegment(segment):
-			// Never past the root: `/..` is `/`, and popping it would produce the
-			// empty string, which is not a path.
 			if len(out) > 0 {
 				out = out[:len(out)-1]
 			}
@@ -630,13 +415,6 @@ func NormaliseRequestPath(path string) string {
 	return "/" + joined
 }
 
-// isDoubleDotSegment is the segment a URL parser treats as `..`: the literal, and
-// every spelling of it that percent-encodes one or both dots.
-//
-// The `%2e` forms are case-insensitive and the mixtures matter — `.%2e` and
-// `%2e.` are both `..` — because a filter that only knew `..` would be bypassed by
-// a two-character change to a request line, which is the cheapest possible attack
-// against a check written by someone who did not measure the parser.
 func isDoubleDotSegment(segment string) bool {
 	switch strings.ToLower(segment) {
 	case "..", ".%2e", "%2e.", "%2e%2e":
@@ -645,14 +423,10 @@ func isDoubleDotSegment(segment string) bool {
 	return false
 }
 
-// isSingleDotSegment is the segment a URL parser treats as `.`.
 func isSingleDotSegment(segment string) bool {
 	return segment == "." || strings.EqualFold(segment, "%2e")
 }
 
-// --------------------------------------------------------------------------
-// the path, rebuilt rather than forwarded
-// --------------------------------------------------------------------------
 
 // UpstreamPath rebuilds the service's path from the caller's segments.
 //
@@ -703,10 +477,6 @@ func UpstreamPath(prefix, path string) (string, bool) {
 		return "", false
 	}
 
-	// A trailing slash is not a segment. `/v1/pantry/items/` and
-	// `/v1/pantry/items` are the same question and every service this platform has
-	// answers them the same way; an *interior* empty segment is a doubled slash,
-	// which is not a path and is refused below rather than quietly collapsed.
 	segments := strings.Split(rest[1:], "/")
 	if segments[len(segments)-1] == "" {
 		segments = segments[:len(segments)-1]
@@ -728,18 +498,6 @@ func UpstreamPath(prefix, path string) (string, bool) {
 	return "/" + strings.Join(out, "/"), true
 }
 
-// decodeSegment percent-decodes one segment, or reports that it is not valid.
-//
-// ## THE UTF-8 CHECK IS THE PART GO DOES NOT GIVE YOU
-//
-// `url.PathUnescape` returns a string and an error, and the error is only about
-// the *syntax* of the escape: `%ff` is a perfectly well-formed escape of a byte
-// that is not a character, and `PathUnescape` hands it back as an invalid string
-// with `err == nil`. `decodeURIComponent` throws on it, and the reference's
-// answer for a path carrying one is therefore a 404 from the refusal below rather
-// than a relay of a path whose last segment is not text. Without the
-// `utf8.ValidString` check the two implementations disagree on `%ff` — and on
-// every overlong encoding and every surrogate half, which is the same class.
 func decodeSegment(segment string) (string, bool) {
 	decoded, err := url.PathUnescape(segment)
 	if err != nil {
@@ -751,19 +509,6 @@ func decodeSegment(segment string) (string, bool) {
 	return decoded, true
 }
 
-// encodeURIComponent percent-encodes a string the way `encodeURIComponent` does.
-//
-// ## NOT `url.PathEscape`, AND NOT `url.QueryEscape`
-//
-// Neither matches. `url.PathEscape` leaves `$&+,:;=@` alone — a `?` and a `=` in
-// a path segment would survive into the upstream's query string — and
-// `url.QueryEscape` writes a space as `+`, which is a form encoding and means
-// nothing in a path. The set kept here is ECMA-262's: `A-Za-z0-9-_.!~*'()`, and
-// everything else is `%XX` over the UTF-8 bytes, upper-case hex.
-//
-// Getting this wrong is a path-integrity bug rather than a cosmetic one: a
-// segment carrying `?` or `#` that reached the upstream unescaped would truncate
-// the path there and move the rest of it into the query string.
 func encodeURIComponent(value string) string {
 	const hex = "0123456789ABCDEF"
 
@@ -784,14 +529,6 @@ func encodeURIComponent(value string) string {
 	return b.String()
 }
 
-// isURIComponentUnreserved is ECMA-262's unreserved set, over bytes.
-//
-// The seven characters beyond `A-Za-z0-9-_.` are the ones `encodeURIComponent`
-// has always left alone and that a segment legitimately carries: `!~*'()`. Note
-// that it leaves `*` alone, which is safe here only because the segments are
-// re-encoded into a path *after* `checkPrefix` has refused globs in the prefix —
-// a `*` in a caller's segment is a literal segment character here, never a
-// wildcard.
 func isURIComponentUnreserved(c byte) bool {
 	switch {
 	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
@@ -802,20 +539,7 @@ func isURIComponentUnreserved(c byte) bool {
 	return false
 }
 
-// --------------------------------------------------------------------------
-// the JSON a deployment writes
-// --------------------------------------------------------------------------
 
-// rawTarget is one entry as the JSON carries it, with the two security fields
-// left raw.
-//
-// `json.RawMessage` rather than `bool` and `[]string` because the refusals this
-// port has to keep are refusals about **the JSON's own types**: `{"public":
-// "true"}` is exactly what an operator writes when they mean it to be public and
-// have not checked that JSON has no booleans-as-strings, and a Go field of type
-// `bool` would either refuse it with a type error that names no field, or — if
-// someone reached for `,string` — coerce it, which is the one outcome on this
-// field that a silent default must never produce.
 type rawTarget struct {
 	BaseURL   string          `json:"baseUrl"`
 	Token     *string         `json:"token"`
@@ -859,8 +583,6 @@ func ParseRouteTable(document string) (RouteTable, error) {
 	return ValidateRouteTable(table)
 }
 
-// rawTargetOf turns one entry's JSON into a typed one, refusing the spellings
-// that mean something other than what they say.
 func rawTargetOf(prefix string, raw json.RawMessage) (RouteTarget, error) {
 	var decoded rawTarget
 	if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -903,13 +625,6 @@ func rawTargetOf(prefix string, raw json.RawMessage) (RouteTarget, error) {
 	return target, nil
 }
 
-// checkPublicField accepts `true` and `false` and refuses everything else.
-//
-// The case that earns the rule is the string: `ROUTE_TABLE` is JSON, and
-// `{"public":"true"}` is exactly what an operator writes. Coerced, that is a
-// route serving anyone, which is the one outcome on this field that a silent
-// default must never produce — so it refuses to boot and the message says what to
-// type instead.
 func checkPublicField(prefix string, raw json.RawMessage) (bool, error) {
 	var public bool
 	if err := json.Unmarshal(raw, &public); err != nil {
@@ -918,26 +633,6 @@ func checkPublicField(prefix string, raw json.RawMessage) (bool, error) {
 	return public, nil
 }
 
-// checkPrincipalField accepts a non-empty list of claim names, and refuses four
-// things, each of which is a value an operator can type in JSON and believe has
-// been honored:
-//
-//   - **Not an array.** `{"principal": "sub"}` is a string where a list was
-//     wanted. Coerced it would be one claim named `s`,`u`,`b`.
-//   - **An empty array.** Which is *not* the same as omitting the field, and the
-//     difference is the whole contract: omitted means "no assertion", and an empty
-//     list can only mean "an assertion carrying no claims" — a token whose entire
-//     content is which gateway minted it.
-//   - **A name gateway owns.** `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` are the
-//     envelope, and honoring one would produce a token whose audience or lifetime
-//     the operator chose rather than gateway.
-//   - **A name with whitespace, a control character or a wildcard.** `"*"` in
-//     particular is the shape that would quietly turn "minimal claims" into "the
-//     whole JWT", which is the one outcome the field exists to prevent.
-//
-// A repeat is deduplicated rather than refused: two spellings of the same name is
-// an operator's editor and not an undecided question, and refusing it would train
-// a reader to ignore a rule that matters.
 func checkPrincipalField(prefix string, raw json.RawMessage) ([]string, error) {
 	var names []string
 	if err := json.Unmarshal(raw, &names); err != nil {
@@ -964,7 +659,6 @@ func checkPrincipalField(prefix string, raw json.RawMessage) ([]string, error) {
 	return out, nil
 }
 
-// checkClaimName refuses one claim name, or accepts it.
 func checkClaimName(prefix, name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: routeTable: %s principal must hold claim names as non-empty strings, got \"\"", ErrNotConfigured, prefix)
@@ -981,23 +675,6 @@ func checkClaimName(prefix, name string) error {
 	return nil
 }
 
-// checkScopesField accepts a non-empty list of scope names, and refuses the same
-// four shapes `checkPrincipalField` does, because a scope name is the same kind
-// of value — one token a caller either holds or does not — and the same operator
-// can type the same mistakes:
-//
-//   - **Not an array.** `{"scopes": "pantry:read"}` is a string where a list was
-//     wanted. Coerced it would be one scope named `p`,`a`,…
-//   - **An empty array.** Which is not the same as omitting the field: omitted
-//     means "no scope check", and an empty list can only mean "a gate that
-//     refuses everything with a message naming nothing" — the one outcome the
-//     field exists to prevent.
-//   - **A blank name, or one with whitespace.** A scope is one token from a
-//     space-separated claim, so a name with a space in it is a name no token
-//     can match.
-//
-// A repeat is deduplicated rather than refused, for the reason `principal` gives:
-// two spellings of the same scope is an editor, not an undecided question.
 func checkScopesField(prefix string, raw json.RawMessage) ([]string, error) {
 	var names []string
 	if err := json.Unmarshal(raw, &names); err != nil {

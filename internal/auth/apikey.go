@@ -13,37 +13,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// The API key, the second credential. It authenticates on the API surface the
-// way the bearer token does, and it is the one that can be revoked before it
-// expires: a self-contained JWT cannot be withdrawn before its `exp`, and a
-// long-lived key that is only as revocable as its own expiry is not a machine
-// credential, it is a password with a longer memory.
-//
-// # WHAT CROSSES THE WIRE AND WHAT IS STORED
-//
-// The key is `caf_` followed by 43 base64url characters — 32 bytes from the
-// platform CSPRNG. Only its SHA-256 is stored, so a leaked database yields
-// digests and not credentials. Only its first twelve characters are ever
-// displayed, and the plaintext is shown exactly once, at issue.
-//
-// # THE STORE IS A SEAM, AND THE v0 IMPLEMENTATION IS ONE PROCESS
-//
-// `ApiKeyStore` is the trait and `MemoryApiKeyStore` is the honest v0 shape:
-// a key issued on one replica does not exist on the next, and every key is lost
-// on restart. That is the same limitation the reference's own v0 store had, and
-// closing it is `TODO(guard-07)`'s shared store — a packet, not an oversight.
 
-// apiKeyScheme is the `Authorization` header's scheme for a key. Case-insensitive
-// like the bearer scheme, per RFC 6750 §2.1's rule for credentials generally.
 const apiKeyScheme = "apikey"
 
-// apiKeyPrefix marks a key on the wire and is never stored separately: it is the
-// first twelve characters of the key itself.
 const apiKeyPrefix = "caf_"
 
-// apiKeySecretBytes is the entropy behind one key. 32 bytes is 256 bits, which
-// no dictionary and no brute force reaches, and it is the number the contract's
-// own security scheme declares.
 const apiKeySecretBytes = 32
 
 // ApiKeyRecord is one stored key. `Hash` and `AccountID` never leave the store:
@@ -64,13 +38,9 @@ type ApiKeyRecord struct {
 // return value, because a distinguishable failure is the same oracle one layer
 // down.
 type ApiKeyStore interface {
-	// Issue mints a key for an account and returns the record and the plaintext.
 	Issue(accountID string, scopes []string) (ApiKeyRecord, string, error)
-	// ByHash looks a key up by the digest of its plaintext.
 	ByHash(hash string) (ApiKeyRecord, bool)
-	// List returns an account's keys, live and revoked.
 	List(accountID string) ([]ApiKeyRecord, error)
-	// Revoke removes one of the account's keys. Cross-tenant is a no-op.
 	Revoke(accountID, id string)
 }
 
@@ -149,15 +119,11 @@ func (s *MemoryApiKeyStore) Revoke(accountID, id string) {
 	s.byHash[record.Hash] = record
 }
 
-// hashApiKey is the one digest a key's plaintext becomes, and the only form the
-// store keeps. SHA-256, hex-encoded.
 func hashApiKey(key string) string {
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }
 
-// apiKeyCredential reads the key out of an `Authorization` header, or "" when
-// the header is not an API key. Case-insensitive scheme, like the bearer one.
 func apiKeyCredential(authorization string) string {
 	fields := strings.Fields(strings.TrimSpace(authorization))
 	if len(fields) != 2 {
@@ -187,11 +153,6 @@ func apiKeyCredential(authorization string) string {
 func ApiKeyGate(store ApiKeyStore, refuse Refuser) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// A principal already on the context means a gate in front of this one
-			// authenticated the request — the outer credential gate when a route
-			// table is configured. Re-authenticating would either refuse a key (its
-			// header is not a bearer token) or pay for a second lookup of a key the
-			// first already found.
 			if PrincipalOf(r) != nil {
 				next.ServeHTTP(w, r)
 				return

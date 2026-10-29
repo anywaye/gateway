@@ -16,18 +16,7 @@ import (
 	"time"
 )
 
-// The environment reader, and what a gateway built from it actually does.
-//
-// `TestTheRuntimeReaderReadsExactlyTheseVariables` in `runtime_variables_test.go`
-// is the tripwire for the SET. This file is the other half: it asserts that what
-// the reader produced is a gateway with the properties a reader of `RuntimeOptions`
-// needs to be able to see — a route table, a minter, a credential gate, and the
-// two refusals that gate is supposed to make.
 
-// A PEM in a temporary file, because `ASSERTION_SIGNING_KEY_FILE` is a **path** and
-// the reason is the property this whole file is about — a private key in an
-// environment variable turns up in `docker inspect`, in `/proc/<pid>/environ` and in
-// any crash dump.
 func writeKeyFile(t *testing.T, name string) string {
 	t.Helper()
 
@@ -42,11 +31,6 @@ func writeKeyFile(t *testing.T, name string) string {
 	return path
 }
 
-// An unset `ROUTE_TABLE` is no routing, which is the honest default for a deployment
-// that has not decided where anything goes — and it is DIFFERENT from an empty table,
-// which is a refusal to boot. An operator who wrote `ROUTE_TABLE={}` meant to
-// configure something, and the gateway that forwards nothing should say so rather
-// than look configured.
 func TestARouteTableIsReadFromTheEnvironmentAndAnUnsetOneIsNoRouting(t *testing.T) {
 	for _, document := range []string{
 		`{"/v1/pantry":{"baseUrl":"http://pantry:8080","token":"svc"}}`,
@@ -77,9 +61,6 @@ func TestARouteTableIsReadFromTheEnvironmentAndAnUnsetOneIsNoRouting(t *testing.
 	}
 }
 
-// Every refusal is a refusal to **boot**, and it names the variable. A route table
-// that is malformed is a gateway that answers 404 for a service that exists, and the
-// only moment at which anybody can be told about it is startup.
 func TestAMalformedRouteTableVariableIsARefusalToBoot(t *testing.T) {
 	for _, document := range []string{
 		`not json`,
@@ -99,10 +80,6 @@ func TestAMalformedRouteTableVariableIsARefusalToBoot(t *testing.T) {
 	}
 }
 
-// The signing key is a path, the TTL has a ceiling, and both are read only when the
-// key is named. The last row is the one that matters: `ASSERTION_TTL_MS` set with no
-// key is a variable that configures nothing, and it is refused rather than accepted
-// so an operator who set it finds out.
 func TestTheAssertionKeyIsReadFromTheEnvironmentAndNothingElseIs(t *testing.T) {
 	path := writeKeyFile(t, "signing.pem")
 
@@ -124,7 +101,6 @@ func TestTheAssertionKeyIsReadFromTheEnvironmentAndNothingElseIs(t *testing.T) {
 		t.Errorf("the issuer is %q, want https://gateway.example", got)
 	}
 
-	// And the refusal paths, each naming the variable.
 	if _, err := RuntimeOptions(mapEnv(map[string]string{"ASSERTION_SIGNING_KEY_FILE": filepath.Join(t.TempDir(), "absent.pem")})); err == nil {
 		t.Error("RuntimeOptions accepted a key file that is not there; a missing key must be a refusal to boot")
 	} else if !strings.Contains(err.Error(), "ASSERTION_SIGNING_KEY_FILE") {
@@ -137,17 +113,12 @@ func TestTheAssertionKeyIsReadFromTheEnvironmentAndNothingElseIs(t *testing.T) {
 		t.Errorf("the TTL refusal does not name the variable:\n  %v", err)
 	}
 
-	// Above the ceiling, which `NewAssertionMinter` refuses with its own sentence —
-	// and which is worth asserting here because the ceiling is MD19's third property
-	// and this is the only way an operator reaches it.
 	if _, err := RuntimeOptions(mapEnv(map[string]string{"ASSERTION_SIGNING_KEY_FILE": path, "ASSERTION_TTL_MS": "2592000000"})); err == nil {
 		t.Error("RuntimeOptions accepted a thirty-day assertion lifetime")
 	} else if !strings.Contains(err.Error(), "short-lived") {
 		t.Errorf("the ceiling refusal does not say why:\n  %v", err)
 	}
 
-	// The TTL variables with no key are not read at all, because a lifetime with
-	// nothing to sign is not a configuration.
 	config, err = RuntimeOptions(mapEnv(map[string]string{"ASSERTION_TTL_MS": "60000"}))
 	if err != nil {
 		t.Fatalf("RuntimeOptions refused a TTL with no key: %v", err)
@@ -157,31 +128,6 @@ func TestTheAssertionKeyIsReadFromTheEnvironmentAndNothingElseIs(t *testing.T) {
 	}
 }
 
-// A gateway started from the environment HAS a credential gate, and this test is
-// the one that says so.
-//
-// # IT USED TO ASSERT THE OPPOSITE, AND THE FLIP IS THE WHOLE STORY
-//
-// This test was written by the pass-through packet as
-// `TestAGatewayBuiltFromTheEnvironmentHasNoCredentialGateYet`, and it asserted that
-// an anonymous request to a private route reached the pass-through and got the
-// upstream's `503`. That was true — there was no verifier in this repository yet —
-// and it is false now.
-//
-// The name ended in "Yet" precisely because it was a statement about a temporary
-// state, and the temporary state ended when `internal/auth` landed. What is
-// interesting is not that the test had to change but that it changed SILENTLY: the
-// reader would have taken away "no gate from the environment" and gone on. The test
-// is now its own opposite, and its new assertion is the one that matters: an
-// anonymous request is refused **at the gate**, and never reaches an upstream.
-//
-// # THE `503` MOVED TO WHERE IT BELONGS
-//
-// Nothing is listening on `127.0.0.1:1`, so a relayed request answers `503`. The
-// assertion below is that it answers `401` instead — the refusal happens above the
-// pass-through, so the dead port is never dialed. That is the observable difference
-// between "relayed anonymously" and "refused", and it is worth being able to tell
-// them apart from a test rather than from a log line.
 func TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstream(t *testing.T) {
 	config, err := RuntimeOptions(mapEnv(map[string]string{
 		"ROUTE_TABLE": `{"/v1/pantry":{"baseUrl":"http://127.0.0.1:1"}}`,
@@ -214,13 +160,6 @@ func TestAGatewayBuiltFromTheEnvironmentRefusesAnAnonymousRequestBeforeTheUpstre
 	}
 }
 
-// The OTHER half of the gate, and the one that is easy to leave out: a route the
-// operator declared `public` answers for an anonymous caller, even on a gateway
-// that has a verifier.
-//
-// One test above and this one together are the property. A gate that refuses
-// everything is not a gate, it is a wall, and the difference between them is a
-// single word in one JSON entry.
 func TestAPublicRouteStillAnswersForAnAnonymousCallerOnAGatewayWithAVerifier(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	verifier, err := authVerifierFor(t, fixture)
@@ -239,16 +178,11 @@ func TestAPublicRouteStillAnswersForAnAnonymousCallerOnAGatewayWithAVerifier(t *
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/catalog/items", nil))
 
-	// `503`, not `401`: port 1 is closed, so a request that was NOT refused at the
-	// gate reaches the pass-through and finds nothing listening. A `401` here would
-	// be the wall.
 	if rec.Code != 503 {
 		t.Errorf("an anonymous request to a public route answered %d, want 503 — the upstream is closed, so 503 is the pass-through's own answer and a 401 means the gate refused a route it was told to leave open", rec.Code)
 	}
 }
 
-// The whole configuration at once, because a reader who sees four variables handled
-// separately has learned nothing about whether they compose.
 func TestTheWholeRuntimeConfigurationComposes(t *testing.T) {
 	path := writeKeyFile(t, "signing.pem")
 
@@ -271,16 +205,11 @@ func TestTheWholeRuntimeConfigurationComposes(t *testing.T) {
 	if _, ok := config.Options.Routes["/v1/pantry"]; !ok {
 		t.Errorf("the table is %+v", config.Options.Routes)
 	}
-	// And the handler builds and answers, which is the only proof that four
-	// separately-parsed variables produced one working gateway.
 	if rec := ask(t, config.Options, "GET", "/healthz", nil); rec.Code != 200 {
 		t.Errorf("the gateway built from the whole configuration answered %d on /healthz", rec.Code)
 	}
 }
 
-// The key file is read once, at startup — which is the difference between a missing
-// key being a refusal to boot and being a 503 on every proxied request. Read twice
-// with the second read failing, the property is gone.
 func TestTheKeyFileIsReadAtStartupRatherThanPerRequest(t *testing.T) {
 	path := writeKeyFile(t, "signing.pem")
 
@@ -291,16 +220,11 @@ func TestTheKeyFileIsReadAtStartupRatherThanPerRequest(t *testing.T) {
 		t.Fatalf("cannot remove the key file: %v", err)
 	}
 
-	// The configuration survives the file going away, because it already holds the
-	// parsed key. A gateway that re-read it per request would start failing here.
 	if _, err := RuntimeOptions(mapEnv(map[string]string{"ASSERTION_SIGNING_KEY_FILE": path})); err == nil {
 		t.Fatal("RuntimeOptions accepted a key file that is gone, so the key is not being read at startup")
 	}
 }
 
-// A generated key must actually generate: this is the one place a test asserts that
-// `testKey` produced something usable, so a failure in `TestTheAssertionVerifies-
-// AgainstThePublishedJWK` cannot be a failure of the fixture instead.
 func TestTheTestKeyFixtureIsAnRSAKeyPair(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

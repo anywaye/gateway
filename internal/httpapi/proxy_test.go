@@ -17,24 +17,8 @@ import (
 	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
-// The pass-through, and the security properties it exists to hold.
-//
-// Each test below is ONE property, named after it, and each is shown red by a
-// mutation in `test/proxyMutations.sh`. The properties are the eight in the
-// packet brief plus the standing 401, and they are checked **on the request the
-// upstream received** rather than on the function that built it: a header-building
-// helper can be correct while the thing that sends the request adds a header back,
-// and the recorded request is the only place that difference is visible.
 
-// --------------------------------------------------------------------------
-// fixtures
-// --------------------------------------------------------------------------
 
-// recordedRequest is what an upstream actually received.
-//
-// Method, escaped path, raw query and the header set. Nothing else: the transport's
-// own headers are written by two different HTTP clients and are not gateway's
-// choice, so comparing them would compare `net/http` with undici.
 type recordedRequest struct {
 	Method string
 	Path   string
@@ -43,16 +27,6 @@ type recordedRequest struct {
 	Body   string
 }
 
-// upstream is a recording service: it answers whatever it was told to answer and
-// remembers what it was asked.
-//
-// A real socket rather than an injected client, and that is a deliberate departure
-// from `src/routes/proxy.test.ts` (removed at cutover), which injects `fetch` so the suite never opens
-// one. There are three properties here that only a real client can demonstrate —
-// that a redirect is not followed, that a hung upstream is bounded by a deadline,
-// and that a body streams — and an injected fetch would assert about a stub rather
-// than about the code that has to get it right. Every assertion in this file is
-// about what leaves the process, so the socket is the honest fixture.
 type upstream struct {
 	server *httptest.Server
 
@@ -91,13 +65,8 @@ func newUpstream(t *testing.T, answer http.HandlerFunc) *upstream {
 	return u
 }
 
-// Origin is the base URL to put in a route table. httptest's own, so it is a real
-// `http://127.0.0.1:PORT` with no path, which is what `checkBaseURL` demands.
 func (u *upstream) Origin() string { return u.server.URL }
 
-// Last is what the upstream last received, failing the test if it received
-// nothing — a property asserted against an empty recorder is a property that
-// silently passed.
 func (u *upstream) Last(t *testing.T) recordedRequest {
 	t.Helper()
 
@@ -109,19 +78,12 @@ func (u *upstream) Last(t *testing.T) recordedRequest {
 	return u.last
 }
 
-// Count is how many requests the upstream received.
 func (u *upstream) Count() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.requests
 }
 
-// testKey is an RSA key pair for the assertion tests.
-//
-// Generated per test run rather than checked in, because a committed private key in
-// a repository is a thing every reader has to notice and none of them should have
-// to. `rsa.GenerateKey` at 2048 bits takes tens of milliseconds, which is a cost
-// paid once per run and not per assertion.
 func testKey(t *testing.T) AssertionKey {
 	t.Helper()
 
@@ -132,12 +94,6 @@ func testKey(t *testing.T) AssertionKey {
 	return AssertionKey{Private: private, Public: &private.PublicKey}
 }
 
-// silenceLog swaps the operational log for the duration of one test.
-//
-// Every refusal and every translated upstream answer writes a line, and a suite
-// that printed them would bury its own failures in the noise of tests that are
-// supposed to fail upstream. Restored by `t.Cleanup`, so a test cannot leave the
-// process's stderr pointing at a buffer nobody reads.
 func silenceLog(t *testing.T) *strings.Builder {
 	t.Helper()
 
@@ -149,19 +105,7 @@ func silenceLog(t *testing.T) *strings.Builder {
 	return captured
 }
 
-// --------------------------------------------------------------------------
-// property 1: the caller's credential never reaches an internal service
-// --------------------------------------------------------------------------
 
-// TestTheCallersCredentialNeverReachesAnInternalService is property 1, and it is
-// the anti-confused-deputy property: the reason the gateway exists.
-//
-// The caller authenticates *to gateway* and gets to choose nothing about what a
-// service sees. So the `Authorization` that reaches the upstream is the table's own
-// service credential — never the caller's — and the caller's `Cookie` does not
-// reach it at all. Both are asserted on the request the upstream **received**,
-// because a header builder that is correct and a transport that adds something back
-// produce the same green here and opposite behavior in production.
 func TestTheCallersCredentialNeverReachesAnInternalService(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -194,10 +138,6 @@ func TestTheCallersCredentialNeverReachesAnInternalService(t *testing.T) {
 	}
 }
 
-// The other half of the same property, and the one an allowlist gets wrong by
-// accident: an entry with **no** token must be reached with no `Authorization` at
-// all. Sending one this process invented would be a different thing, and a service
-// that authenticates nothing is the case where inventing one matters.
 func TestAnEntryWithNoTokenIsReachedWithNoAuthorizationAtAll(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -213,17 +153,7 @@ func TestAnEntryWithNoTokenIsReachedWithNoAuthorizationAtAll(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// property 3: only content-type and accept cross
-// --------------------------------------------------------------------------
 
-// TestOnlyContentTypeAndAcceptCrossToTheService is property 3.
-//
-// Two headers, and the list is the control. Every other header the caller sent is
-// dropped — which is asserted as a *set*, over a caller that sent nine of them, so
-// a name nobody thought of when this test was written is not a hole in it. The
-// allowlist is read out of `ForwardedRequestHeaders` rather than restated, so
-// widening the list in `proxy.go` makes this test fail.
 func TestOnlyContentTypeAndAcceptCrossToTheService(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -249,11 +179,6 @@ func TestOnlyContentTypeAndAcceptCrossToTheService(t *testing.T) {
 
 	seen := service.Last(t)
 
-	// The two that must cross, and must carry the caller's value. `sent` is keyed
-	// canonically because that is what `http.Header.Set` writes and what the
-	// recorded request comes back with, while the allowlist is spelled in lower case
-	// because that is how it is spelled in the source — a comparison between the two
-	// spellings is a comparison that silently compares nothing.
 	for _, name := range ForwardedRequestHeaders {
 		canonical := http.CanonicalHeaderKey(name)
 		if got, want := seen.Header.Get(name), sent[canonical]; got != want {
@@ -261,10 +186,6 @@ func TestOnlyContentTypeAndAcceptCrossToTheService(t *testing.T) {
 		}
 	}
 
-	// And the shape: no header beyond the allowlist, gateway's own credential and the
-	// transport's. `Host` is not in `Header` on the server side — it is
-	// `Request.Host` — so it cannot be compared here, and the pass-through's own
-	// comment is where that exclusion is argued.
 	allowed := map[string]bool{"Accept-Encoding": true, "User-Agent": true}
 	for _, name := range ForwardedRequestHeaders {
 		allowed[http.CanonicalHeaderKey(name)] = true
@@ -284,9 +205,6 @@ func TestOnlyContentTypeAndAcceptCrossToTheService(t *testing.T) {
 	}
 }
 
-// The same property in the response direction, on a caller that sent a body: a
-// body crosses, and `content-type` crosses with it, so the service reads the shape
-// it was sent as.
 func TestABodyIsStreamedAndItsContentTypeCrossesWithIt(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -317,15 +235,6 @@ func TestABodyIsStreamedAndItsContentTypeCrossesWithIt(t *testing.T) {
 	}
 }
 
-// TestTheRequestAllowlistIsExactlyTwoNames is the check the allowlist test above
-// could not be.
-//
-// `TestOnlyContentTypeAndAcceptCrossToTheService` builds its expectation out of
-// `ForwardedRequestHeaders`, which is right for "the two that crossed are the two
-// named" and useless for "only two cross": widen the list and the test widens with
-// it and stays green. That was not reasoned — it was measured, by the mutation
-// script, which added `x-forwarded-for` to the list, watched the test stay green,
-// and reported it. This test states the list as a literal so the mutation bites.
 func TestTheRequestAllowlistIsExactlyTwoNames(t *testing.T) {
 	want := []string{"content-type", "accept"}
 
@@ -339,13 +248,6 @@ func TestTheRequestAllowlistIsExactlyTwoNames(t *testing.T) {
 	}
 }
 
-// TestTheResponseAllowlistIsExactlyOneName is the same property in the response
-// direction, and it is one name long: `content-type`.
-//
-// `set-cookie` is not in it, which is why a service cannot write the browser's
-// session from behind the edge. The response allowlist is read by the relay, so a
-// name added here crosses to the caller — and the mutation that adds `set-cookie`
-// is the one that turns session fixation back on.
 func TestTheResponseAllowlistIsExactlyOneName(t *testing.T) {
 	want := []string{"content-type"}
 
@@ -359,17 +261,7 @@ func TestTheResponseAllowlistIsExactlyOneName(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// property 4: no redirect is followed, and the call is bounded
-// --------------------------------------------------------------------------
 
-// TestARedirectIsNeitherFollowedNorRelayed is property 4, first half.
-//
-// A `Location` an internal service answers with is an address that is not on the
-// internet, so following it is a way out of the route table and relaying it hands
-// the caller the same address. The upstream here serves both the redirect and the
-// destination it names, so a `CheckRedirect` that follows answers 200 with the
-// destination's body — and the test's failure names exactly that.
 func TestARedirectIsNeitherFollowedNorRelayed(t *testing.T) {
 	logged := silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -415,13 +307,6 @@ func TestARedirectIsNeitherFollowedNorRelayed(t *testing.T) {
 	}
 }
 
-// TestAnUpstreamThatHangsIsA503AndNotAHungGateway is property 4, second half.
-//
-// The deadline has to bound the **handler**, not just the socket: an upstream that
-// accepts the connection and then says nothing is the case where a client timeout
-// is the only thing standing between one slow service and a gateway that stops
-// answering. The upstream here sleeps for a long time relative to the timeout, and
-// the test does not wait for it — the assertion is that the answer arrives first.
 func TestAnUpstreamThatHangsIsA503AndNotAHungGateway(t *testing.T) {
 	logged := silenceLog(t)
 	release := make(chan struct{})
@@ -448,19 +333,7 @@ func TestAnUpstreamThatHangsIsA503AndNotAHungGateway(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// property 5 and 6: what crosses back
-// --------------------------------------------------------------------------
 
-// TestTheRelayDropsSetCookieAndSetsNoStore is properties 5 and 6 together, because
-// they are two halves of one header policy.
-//
-// `set-cookie` is dropped because a service answering `Set-Cookie: __Host-bff-session=…`
-// would be writing the browser's session from behind the edge — session fixation
-// arriving through the gateway on an origin where the `__Host-` prefix is honored.
-// `cache-control: no-store` is the one header added rather than forwarded, because
-// proxied traffic is authenticated and a shared cache in front of this is an
-// account's data at rest.
 func TestTheRelayDropsSetCookieAndSetsNoStore(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -492,10 +365,6 @@ func TestTheRelayDropsSetCookieAndSetsNoStore(t *testing.T) {
 	}
 }
 
-// An upstream that cached its own answer and said so must not get to: the relay
-// overrides it. This is the same property as above from the other side, and it is
-// separate because an allowlist that forgets to *set* the header still drops the
-// upstream's, which is a different bug from forgetting to drop.
 func TestAnUpstreamsOwnCacheControlIsOverriddenNotForwarded(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -519,25 +388,11 @@ func TestAnUpstreamsOwnCacheControlIsOverriddenNotForwarded(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// property 7: what crosses back depends on the status
-// --------------------------------------------------------------------------
 
-// TestOnlyA2xxOrA4xxIsRelayed is property 7, through a real upstream rather than
-// against the predicate.
-//
-// The bug this rule exists to prevent is relaying everything, and relaying a 500
-// turns a service's outage into an opaque 500 the caller cannot act on while
-// `ECONNREFUSED` and an HTML error page leak the platform's internals. The table
-// covers every status class on both sides of both boundaries, because a check that
-// only tests 200 and 500 does not know where the boundary is.
 func TestOnlyA2xxOrA4xxIsRelayed(t *testing.T) {
 	relayed := []int{200, 201, 202, 299, 400, 401, 403, 404, 409, 413, 422, 423, 429, 499}
 	translated := []int{300, 301, 302, 303, 304, 307, 308, 399, 500, 502, 503, 504}
 
-	// The predicate, over the same boundaries — the first run of the reference's own
-	// suite got this wrong as a range check, so the predicate and the behavior are
-	// held together rather than one of them being assumed.
 	for _, status := range relayed {
 		if !IsRelayableStatus(status) {
 			t.Errorf("IsRelayableStatus(%d) = false; a 2xx and a 4xx are the service's own contract", status)
@@ -594,15 +449,11 @@ func TestOnlyA2xxOrA4xxIsRelayed(t *testing.T) {
 	}
 }
 
-// The two 503s are deliberately different sentences, and an operator reading a log
-// at 3am has to be able to tell "the service is down" from "the service is broken".
-// Both are asserted, because a change that merged them would still produce two
-// green tests elsewhere.
 func TestTheTwoServiceFailuresAreDifferentSentencesAndDifferentLogLines(t *testing.T) {
 	silenceLog(t)
 
 	unreachable := newUpstream(t, nil)
-	unreachable.server.Close() // nothing is listening now
+	unreachable.server.Close()
 	logged := silenceLog(t)
 	rec := ask(t, Options{Routes: RouteTable{"/v1/pantry": {BaseURL: unreachable.Origin()}}},
 		http.MethodGet, "/v1/pantry/x", nil)
@@ -622,9 +473,6 @@ func TestTheTwoServiceFailuresAreDifferentSentencesAndDifferentLogLines(t *testi
 	}
 }
 
-// A service's error page is exactly where a credential turns up, so the log gets
-// the **shape** of it and never the body. The assertion plants a credential in the
-// body and looks for it in the log.
 func TestTheLogNamesTheShapeOfAnAnswerAndNeverItsBody(t *testing.T) {
 	logged := silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -649,9 +497,6 @@ func TestTheLogNamesTheShapeOfAnAnswerAndNeverItsBody(t *testing.T) {
 	}
 }
 
-// A JSON error page and an HTML one are different diagnoses, and the reference
-// separates them deliberately — `typeof null` is "object", so the obvious test
-// reports an HTML page as a JSON document.
 func TestTheShapeOfAnAnswerTellsJsonFromNullFromText(t *testing.T) {
 	cases := []struct{ body, want string }{
 		{body: `{"error":"boom"}`, want: "a JSON document"},
@@ -681,21 +526,9 @@ func TestTheShapeOfAnAnswerTellsJsonFromNullFromText(t *testing.T) {
 	}
 }
 
-// An upstream that answers without a content type gets `application/octet-stream`,
-// and not `text/plain; charset=utf-8` sniffed out of the body by `net/http` and not
-// nothing either.
-//
-// The reference's answer was measured: `new Response(body, {status, headers})` with
-// no content type in `headers` reaches the caller as `application/octet-stream`
-// under Bun. Go has three possible answers here — the service's, `octet-stream`, and
-// whatever `net/http` guesses from the first 512 bytes — and the check exists to say
-// which one this port picks, because a relayed body whose type changed under it is a
-// difference a client that switches on the content type would see.
 func TestAResponseWithNoContentTypeIsRelayedAsOctetStreamNotSniffed(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
-		// `Header()["Content-Type"]` with no values is the only way to write a
-		// response with no content type at all through net/http's own writer.
 		w.Header()["Content-Type"] = []string{}
 		w.WriteHeader(http.StatusOK)
 		io.WriteString(w, `plain text, deliberately untyped`)
@@ -712,20 +545,7 @@ func TestAResponseWithNoContentTypeIsRelayedAsOctetStreamNotSniffed(t *testing.T
 	}
 }
 
-// --------------------------------------------------------------------------
-// the standing 401, and the gate's placement
-// --------------------------------------------------------------------------
 
-// TestAnAnonymousCallerToAPrivateRouteGets401AndTheUpstreamIsNeverContacted is the
-// property two prior packets each promised, and the reason the gate is a seam
-// rather than a copy of the verifier.
-//
-// The refusal is asserted **and** the upstream is asserted not to have been
-// contacted, because a 401 after a call was already made is a 401 that still spent
-// a service's capacity on a caller who was never going to be let in. The
-// `Authenticate` here refuses, which is the only thing it has to do: what is under
-// test is the gate's decision and its position, not verification — that is the
-// packet that ports RS256, and this seam is where it plugs in.
 func TestAnAnonymousCallerToAPrivateRouteGets401AndTheUpstreamIsNeverContacted(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -758,32 +578,6 @@ func TestAnAnonymousCallerToAPrivateRouteGets401AndTheUpstreamIsNeverContacted(t
 	}
 }
 
-// A refused request is counted against nothing, and that is the ordering.
-//
-// # WHY THIS TEST EXISTS RATHER THAN A COMMENT ON `everyRequest`
-//
-// Because the equivalence comparison cannot see it. Every scenario in
-// `internal/equivalence` asks a routed path with a bucket already spent or an
-// unreachable store, so it never gets far enough to have a gate refuse anything —
-// and a limiter mounted ABOVE the gate would answer a 401 with a 429 on the first
-// request, which is a difference, but a difference about the wrong thing. This
-// asks the request that matters and reads the store, which is the only place the
-// count is visible from.
-//
-// Planted, both ways, while fixing the routed mount:
-//
-//   - the limiter below the gate: this passes, and that is the point.
-//   - the limiter above the gate: this fails on the store's own record, naming the
-//     request the gateway refused.
-//
-// # WHAT THE AMPLIFIER WOULD BE
-//
-// A flood of forged tokens would each be refused at the gate and each be counted
-// under `ip:unknown` — because that is all a rejected request has. They would
-// exhaust the shared anonymous bucket and every legitimate anonymous caller with
-// it. Counting a refusal is how a credential-garbage flood denies service to
-// callers who did nothing wrong, so the rule is that authentication resolves
-// first and the limiter sees the identity a request actually proved.
 func TestARequestTheAuthGateRefusedIsNotCounted(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -811,13 +605,6 @@ func TestARequestTheAuthGateRefusedIsNotCounted(t *testing.T) {
 	}
 }
 
-// The other half of the same property: the request the gate ACCEPTS is counted, so
-// the test above is not passing because the limiter was never reached.
-//
-// Without this, a gateway that never ran the limiter on routed traffic would pass
-// the test above — which is exactly the defect the mount change fixed, and exactly
-// the shape that makes a "the refused request was not counted" assertion
-// unfalsifiable.
 func TestARequestTheAuthGateAcceptedIsCounted(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -844,34 +631,10 @@ func TestARequestTheAuthGateAcceptedIsCounted(t *testing.T) {
 	}
 }
 
-// The header reduction runs before every gate, on forwarded traffic as well as on
-// the router's own routes.
-//
-// # WHAT IT PROVES, AND WHAT IT DOES NOT
-//
-// It proves the reduction RUNS on a forwarded request, which it did not when it was
-// a chi `Use` — that was the gap, and dropping it from the routed chain fails this
-// (planted, measured).
-//
-// It does **not** prove the reduction runs before the gate *on this path*, because
-// nothing on a forwarded path reads `Origin`: the same-origin gate belongs to the
-// browser surface, and `/v1/*` is proxied. That ordering is asserted where it is
-// observable, on a `/auth/*` path, by `TestAHeaderSentTwiceTakesTheFirstValue` in
-// `bff_test.go`. A moved-down reduction in `everyRequest` was planted and left all
-// 171 tests in this package green, which is why this comment says what it checks
-// rather than what the mount comment says.
-//
-// The observation point is the request object itself rather than the response,
-// because the response cannot distinguish "the reduction ran and the gate saw one
-// value" from "nothing read the header at all".
 func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
 
-	// A browser surface AND a route table, because the assertion needs both halves
-	// of the chain: the origin gate reads the reduced header, and the path is one a
-	// table claims, so the request reaches that gate through the wrapper `everyRequest`
-	// builds rather than through chi's `Use`.
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test"}`).Response, nil
 	})
@@ -890,8 +653,6 @@ func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	// The reduction ran. Read on the request itself, because that is the value every
-	// gate in the chain reads.
 	if got := len(req.Header["Origin"]); got != 1 {
 		t.Fatalf("Origin still carries %d value(s) when the request reached the gateway's own gates. `collapseRepeatedHeaders` runs outermost precisely so a gate never decides about a value the gateway then throws away, and on a routed path it reaches those gates only through the chain `everyRequest` builds.", got)
 	}
@@ -899,8 +660,6 @@ func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) 
 		t.Errorf("Origin is %q after the reduction, want the FIRST value %q. The reference takes the first value of a doubled header — refusing one would look stricter and be a divergence.", got, "https://gateway.test")
 	}
 
-	// And the request was forwarded, so the assertion above was read on a path the
-	// pass-through answered rather than on one that stopped at a refusal.
 	if rec.Code != http.StatusOK {
 		t.Errorf("a doubled Origin on a public routed path answered %d, want the upstream's 200. The reduction takes the first value, so this request is same-origin and must be forwarded.", rec.Code)
 	}
@@ -909,8 +668,6 @@ func TestADoubledHeaderIsReducedBeforeTheGatesOnAForwardedRequest(t *testing.T) 
 	}
 }
 
-// bffOf is the browser surface a `build` harness assembled, for a test that needs
-// one on a gateway it configures itself rather than through `build`.
 func bffOf(h *harness) *BffOptions {
 	return &BffOptions{
 		IdentityURL: "http://identity.test",
@@ -922,12 +679,6 @@ func bffOf(h *harness) *BffOptions {
 	}
 }
 
-// newCountingStore is a limiter store that records how many times it was asked.
-//
-// `internal/ratelimit`'s own store is deliberately unobservable — counting and
-// answering in one step is what makes it a limiter — and this is the seam that
-// makes the count assertable from outside it. A `hit` and a `count` in one place
-// is what a `peek` on the real store would be, and the reason there is not one.
 func newCountingStore(t *testing.T) *countingStore {
 	t.Helper()
 	inner, err := ratelimit.NewMemoryStore(0)
@@ -949,8 +700,6 @@ func (s *countingStore) Hit(key string, request ratelimit.Request) (ratelimit.Ve
 
 func (s *countingStore) count() int { return s.hits }
 
-// countingLimiter is a limiter over that store, at an allowance no request here
-// reaches, so the tests observe WHERE the count happened rather than a refusal.
 func countingLimiter(t *testing.T, store ratelimit.Store) RateLimiter {
 	t.Helper()
 	limiter, err := ratelimit.NewLimiter(ratelimit.Options{
@@ -963,9 +712,6 @@ func countingLimiter(t *testing.T, store ratelimit.Store) RateLimiter {
 	return limiter
 }
 
-// The other half of the same property, and the one that makes it a *gate* rather
-// than a blanket refusal: a public route is still mounted, and the probe endpoints
-// still answer an orchestrator that has no credential at all.
 func TestAPublicRouteIsStillMountedAndTheProbesStillAnswerWithoutACredential(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -991,8 +737,6 @@ func TestAPublicRouteIsStillMountedAndTheProbesStillAnswerWithoutACredential(t *
 	}
 }
 
-// A caller the gate *did* establish reaches the pass-through, and is the only
-// difference between the two rows above.
 func TestACredentialTheGateEstablishedReachesThePassThrough(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -1012,18 +756,6 @@ func TestACredentialTheGateEstablishedReachesThePassThrough(t *testing.T) {
 	}
 }
 
-// TestGatewayOwnsItsOwnRouteEvenUnderTheBroadestPrefix is the port's one structural
-// difference from the reference, stated as a test.
-//
-// `src/index.ts` (removed at cutover) registers `/v1/me` before the pass-through and Hono answers in
-// registration order. chi has no such order for a middleware and a route, so the
-// exclusion is written into `routeProxy.handle`. `/v1` is a **permitted** prefix —
-// it claims the whole API surface — and it is the only table that can reach
-// `/v1/me`, so this is the case that would go quietly wrong.
-//
-// And `/v1/me/` is a different path, which the reference *does* relay under a `/v1`
-// entry: it is not gateway's own route, and treating it as one would be a refusal
-// the reference does not make.
 func TestGatewayOwnsItsOwnRouteEvenUnderTheBroadestPrefix(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -1031,8 +763,6 @@ func TestGatewayOwnsItsOwnRouteEvenUnderTheBroadestPrefix(t *testing.T) {
 	rec := ask(t, Options{Routes: RouteTable{"/v1": {BaseURL: service.Origin()}}},
 		http.MethodGet, "/v1/me", nil)
 
-	// With no verifier there is no `/v1/me` to serve, and both answers are the same
-	// 404 — which is the point. What must NOT happen is a relay.
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("`/v1/me` under a `/v1` entry answered %d, want 404 — it is gateway's own route and a table must not be able to proxy it away", rec.Code)
 	}
@@ -1040,7 +770,6 @@ func TestGatewayOwnsItsOwnRouteEvenUnderTheBroadestPrefix(t *testing.T) {
 		t.Errorf("the upstream was contacted for `/v1/me`; gateway's own route must never be proxied")
 	}
 
-	// And the sibling that ISN'T gateway's own route.
 	rec = ask(t, Options{Routes: RouteTable{"/v1": {BaseURL: service.Origin()}}},
 		http.MethodGet, "/v1/me/extra", nil)
 	if rec.Code != http.StatusOK {
@@ -1048,23 +777,15 @@ func TestGatewayOwnsItsOwnRouteEvenUnderTheBroadestPrefix(t *testing.T) {
 	}
 }
 
-// An assertion that cannot be signed is gateway's own 503, and the service never
-// sees the request. This is the property the comment on `routeProxy.call` claims,
-// and it is separate from a dead socket because the log line has to tell them
-// apart.
 func TestAnAssertionSigningFailureIsGatewayOwns503AndTheServiceIsNotAsked(t *testing.T) {
 	logged := silenceLog(t)
 	service := newUpstream(t, nil)
 
-	// A minter with no key: construction is bypassed so the failure happens at mint
-	// time, which is what a key that stopped being usable looks like.
 	broken := &AssertionMinter{issuer: DefaultAssertionIssuer, ttl: DefaultAssertionTTL, now: time.Now}
 
 	handler, err := New(Options{
 		Routes: RouteTable{"/v1/pantry": {BaseURL: service.Origin(), Principal: []string{"sub"}}},
 		Assert: broken,
-		// The gate is configured so there IS a principal to assert about; without it
-		// the pass-through has nothing to mint from and correctly sends nothing.
 		Authenticate: func(*http.Request) (*Principal, error) {
 			return &Principal{Sub: "user-1", Claims: auth.ClaimsFrom(map[string]any{"sub": "user-1"})}, nil
 		},
@@ -1087,8 +808,6 @@ func TestAnAssertionSigningFailureIsGatewayOwns503AndTheServiceIsNotAsked(t *tes
 	}
 }
 
-// The query crosses verbatim and the segment is rebuilt, on one request: the two
-// halves of "one configured destination, never a caller-supplied host".
 func TestTheQueryCrossesVerbatimAndTheDestinationIsTheTables(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -1105,21 +824,13 @@ func TestTheQueryCrossesVerbatimAndTheDestinationIsTheTables(t *testing.T) {
 	}
 }
 
-// errNoCredential is what a gate returns for a caller it will not authenticate.
 var errNoCredential = errCredential("no bearer token")
 
 type errCredential string
 
 func (e errCredential) Error() string { return string(e) }
 
-// The refusals above decode into `api.Problem` — the generated type — rather than
-// into a local struct, so a field renamed in `openapi/v1.yaml` breaks these tests
-// instead of silently making them assert nothing.
 
-// TestARelayedNoContentKeepsItsEmptyBody is the one 2xx that has no body to relay,
-// and it is separate from the table above because `net/http` suppresses a body on
-// it — so a test that asserted "the upstream's body came back" on a 204 would be
-// asserting something false about `net/http` rather than about the relay.
 func TestARelayedNoContentKeepsItsEmptyBody(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {

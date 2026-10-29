@@ -1,37 +1,3 @@
-// `GET /v1/me` — the route that proves the auth chain is wired.
-//
-// # IT HAS NO BEHAVIOR OF ITS OWN, AND THAT IS THE POINT
-//
-// No forwarding, no transformation, no decision. It exists so a deployment can be
-// checked end to end without asking a service for anything: what it answers is
-// exactly what gateway proved about the caller and nothing more.
-//
-// # WHY IT IS RENDERED BY HAND
-//
-// `api.Principal` is the generated type and this file deliberately does NOT hand
-// it to `writeJSON`. Two reasons, and both were measured rather than argued:
-//
-//  1. **Key order.** `oapi-codegen` writes the struct's fields alphabetically
-//     (`AccountID, Claims, Scope, Sub`), so `writeJSON` renders
-//     `{"accountId":…,"claims":{…},"scope":[…],"sub":…}`. `src/middleware/jwt.ts` (removed at cutover)
-//     builds the object literal as `{sub, scope, accountId, claims}`, and Hono's
-//     `c.json()` preserves insertion order, so the reference renders
-//     `{"sub":…,"scope":[…],"accountId":…,"claims":{…}}`. `internal/equivalence`
-//     compares bodies byte for byte, so this one line of ordering is a difference
-//     on every request. The substrate hit the same wall for `/readyz`'s `deps`
-//     and solved it the same way — `orderedDeps` — and the reason is the same one:
-//     the order a caller wrote is the order the response carries.
-//
-//  2. **Claim order.** `Claims` is `map[string]interface{}` in the generated type,
-//     and `encoding/json` sorts a map's keys. The reference echoes the token's own
-//     payload order. `auth.Claims` keeps that order (see `internal/auth/claims.go`)
-//     and marshals itself, so this file writes the member it was given.
-//
-// The `sub, scope, accountId, claims` sequence below is therefore NOT
-// alphabetical and MUST NOT be sorted. `TestThePrincipalBodyIsNotAlphabetical`
-// fails if it ever becomes one, because that failure is invisible to every other
-// test in this repository except the equivalence check — which is precisely why a
-// local assertion is needed.
 package httpapi
 
 import (
@@ -65,10 +31,6 @@ func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 
 	principal := auth.PrincipalOf(r)
 	if principal == nil {
-		// Unreachable while `Require` is mounted above this route on `/v1/*`, and
-		// the check is here because "unreachable" is a claim about code in another
-		// file and this file is what a caller reads when it is wrong. A `200` with
-		// a null body would be the answer nobody wants to debug.
 		CaptureError(fmt.Errorf("principal: unexpected nil principal"), r)
 		writeProblem(w, r, Problem{
 			Status: http.StatusInternalServerError,
@@ -81,19 +43,9 @@ func (s *server) GetCurrentPrincipal(w http.ResponseWriter, r *http.Request) {
 	writePrincipal(w, r, principal)
 }
 
-// writePrincipal renders the four members in the reference's order.
-//
-// Hand-built rather than marshaled from a struct, and `renderPrincipal` carries
-// the reason. Every value that could carry a character a caller chose goes through
-// `json.Marshal`: the `sub`, each scope, and the `account_id`. So this is not a
-// place a caller can inject a byte into a body, and the file says so rather than
-// leaving it as an assumption.
 func writePrincipal(w http.ResponseWriter, r *http.Request, principal *auth.Principal) {
 	body, err := renderPrincipal(principal)
 	if err != nil {
-		// Only reachable if a claim carried a value `encoding/json` refuses, which
-		// cannot happen for a payload that parsed. A `500` with the v0 envelope is
-		// the honest answer for a body that could not be built.
 		CaptureError(fmt.Errorf("principal: render failed"), r)
 		writeRawJSON(w, r, http.StatusInternalServerError, `{"error":"internal_error","message":"unexpected server error"}`)
 		return
@@ -120,10 +72,6 @@ func renderPrincipal(principal *auth.Principal) (string, error) {
 		return "", err
 	}
 
-	// `accountId` is ABSENT, not null, when the claim is absent — `omitempty` on the
-	// generated `*string` and `accountId: undefined` in the reference both drop the
-	// key, and a client rendering `accountId` must be able to tell "no account claim"
-	// from "the account is null".
 	accountID := ""
 	if principal.AccountID != nil {
 		encoded, err := json.Marshal(*principal.AccountID)

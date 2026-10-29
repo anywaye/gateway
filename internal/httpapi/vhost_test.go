@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// A bad vhost table is a refusal to construct the gateway, and the message names
-// the hostname — the same rule the path table follows, because a name that routes
-// nowhere answers 404 for a backend that exists and nothing about that failure
-// points at configuration.
 func TestABadVHostTableIsARefusalToConstructTheGateway(t *testing.T) {
 	t.Parallel()
 
@@ -52,9 +48,6 @@ func TestABadVHostTableIsARefusalToConstructTheGateway(t *testing.T) {
 	}
 }
 
-// An unset split is a gateway whose routing is the path table alone — not a
-// refusal, because a deployment that has not decided names mean different
-// backends is a deployment like every one that shipped before this file existed.
 func TestAnUnsetVHostTableIsThePathTableAlone(t *testing.T) {
 	t.Parallel()
 
@@ -72,10 +65,6 @@ func TestAnUnsetVHostTableIsThePathTableAlone(t *testing.T) {
 	}
 }
 
-// The Host header is matched case-insensitively with any port stripped, because
-// that is what a browser sends: `Auth.anywaye.test:443` is the same name as
-// `auth.anywaye.test`, and a split that missed it would route TLS traffic by no
-// rule a reader could find.
 func TestEffectiveHostIsCaseInsensitiveAndPortless(t *testing.T) {
 	t.Parallel()
 
@@ -94,10 +83,6 @@ func TestEffectiveHostIsCaseInsensitiveAndPortless(t *testing.T) {
 	}
 }
 
-// Gateway's own paths are never proxied away, whatever Host arrived: the probes
-// stay answerable through `api.anywaye.test` (readyz green on the API name is one
-// of the loop's proofs), and the browser surface and gateway's own routes are
-// answered here for the reason routeProxy.handle names its exclusion.
 func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 	t.Parallel()
 
@@ -107,7 +92,6 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 		t.Fatalf("New = %v, want a gateway", err)
 	}
 
-	// The probes answer 200 from gateway itself.
 	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		req.Host = "api.anywaye.test"
@@ -118,9 +102,6 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 		}
 	}
 
-	// `/v1/me` is gateway's own route too: without a verifier it declines with
-	// the router's 404 rather than 200, and the assertion that matters is the
-	// same — the backend never sees it.
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Host = "api.anywaye.test"
 	rec := httptest.NewRecorder()
@@ -137,9 +118,6 @@ func TestGatewayOwnPathsAreNeverVhostProxied(t *testing.T) {
 	}
 }
 
-// A hostname the table does not name falls through to the path table and then the
-// router — which is what keeps the split additive: unknown names behave exactly
-// as before this file existed.
 func TestAnUnknownHostnameFallsThroughToTheRouter(t *testing.T) {
 	t.Parallel()
 
@@ -158,9 +136,6 @@ func TestAnUnknownHostnameFallsThroughToTheRouter(t *testing.T) {
 	}
 }
 
-// The named hostname proxies the whole path to its backend: status and body
-// cross, the query crosses, the caller's credential does not, and gateway's
-// service token does.
 func TestANamedHostnameProxiesTheWholePathToItsBackend(t *testing.T) {
 	t.Parallel()
 
@@ -205,12 +180,6 @@ func TestANamedHostnameProxiesTheWholePathToItsBackend(t *testing.T) {
 	}
 }
 
-// A traversal through a named hostname is not expressible: an encoded separator
-// inside a segment survives URL normalisation (it is one segment, not three) and
-// `UpstreamPath` refuses it, so the request falls through to the router's 404
-// rather than reaching the backend in any spelling. A plain `%2e%2e` segment, by
-// contrast, resolves the way the URL parser resolves it — `/%2e%2e/secret` is
-// `/secret` on the same backend, which escaped nothing.
 func TestATraversalThroughANamedHostnameReachesNoBackend(t *testing.T) {
 	t.Parallel()
 
@@ -235,9 +204,6 @@ func TestATraversalThroughANamedHostnameReachesNoBackend(t *testing.T) {
 	}
 }
 
-// The split changes nothing about the API surface: with both tables configured,
-// a /v1 path on the API name is still answered by the path table's backend, and
-// the OIDC face on the auth name by the vhost's.
 func TestTheVhostSplitLeavesThePathTableAlone(t *testing.T) {
 	t.Parallel()
 

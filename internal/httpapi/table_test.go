@@ -6,24 +6,8 @@ import (
 	"testing"
 )
 
-// The route table, the path it claims, and the path that goes upstream.
-//
-// Every test here names one property of `table.go`, and the mutation script in
-// `test/proxyMutations.sh` removes each property in turn to show the test goes
-// red without it. A test that has only ever been observed passing has not been
-// tested.
 
-// --------------------------------------------------------------------------
-// property 8: a bad table is a refusal to boot, not a request
-// --------------------------------------------------------------------------
 
-// TestABadRouteTableIsARefusalToConstructTheGateway is property 8.
-//
-// "Validated at startup, not at request time, and a bad table fails the boot
-// rather than the first request." The assertion is that `New` refuses — not that it
-// logs, and not that the first request through it answers a problem document. A
-// gateway that boots with a bad table and refuses at request time is a gateway
-// whose 404 for a service that exists has no cause anyone can point at.
 func TestABadRouteTableIsARefusalToConstructTheGateway(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -107,14 +91,6 @@ func TestABadRouteTableIsARefusalToConstructTheGateway(t *testing.T) {
 	}
 }
 
-// TestTheJSONASpellingAnOperatorGetsWrongIsAlsoARefusal is the half of property 8
-// that a typed `RouteTable` cannot express.
-//
-// `{"public":"true"}`, `{"principal":"sub"}`, `{"principal":[]}` and
-// `{"token":""}` are four mistakes an operator makes on a Tuesday afternoon, and
-// after `ParseRouteTable` runs they are the *same* as their typed equivalents. The
-// refusals therefore have to live at the JSON boundary, and this test is what makes
-// them there rather than in a comment.
 func TestTheJSONASpellingAnOperatorGetsWrongIsAlsoARefusal(t *testing.T) {
 	cases := []struct {
 		document string
@@ -148,8 +124,6 @@ func TestTheJSONASpellingAnOperatorGetsWrongIsAlsoARefusal(t *testing.T) {
 	}
 }
 
-// The other direction of both checks: a checker that only proves the rejections
-// passes a validator that refuses everything.
 func TestAValidRouteTableIsNotRefused(t *testing.T) {
 	document := `{
 		"/v1/pantry":        {"baseUrl":"http://pantry:8080"},
@@ -168,7 +142,6 @@ func TestAValidRouteTableIsNotRefused(t *testing.T) {
 	if got := table["/v1/pantry/import"].Principal; len(got) != 2 || got[0] != "sub" || got[1] != "github_id" {
 		t.Errorf("the declared claims are %v, want [sub github_id] in the order the operator wrote them", got)
 	}
-	// The two origin normalisations, which are the `aud` claim on every assertion.
 	if got := table["/v1/catalog"].BaseURL; got != "https://pantry:8443" {
 		t.Errorf("base URL is %q, want https://pantry:8443", got)
 	}
@@ -176,16 +149,11 @@ func TestAValidRouteTableIsNotRefused(t *testing.T) {
 		t.Errorf("a trailing slash gave %q, want http://admin:9000 — it would join into //v1/…", got)
 	}
 
-	// And `New` accepts the result.
 	if _, err := New(Options{Routes: table}); err != nil {
 		t.Errorf("New refused a table ParseRouteTable produced: %v", err)
 	}
 }
 
-// The validated table is a copy, so a caller cannot widen a checked table after
-// the gateway was built. The claim slice is the sharp end of this: it is the only
-// thing standing between an operator's typo and a deployment that starts asserting
-// a claim the table never declared.
 func TestAValidatedTableIsACopyTheCallerCannotReachInto(t *testing.T) {
 	declared := []string{"sub"}
 	table := RouteTable{"/v1/pantry": {BaseURL: "http://pantry:8080", Principal: declared}}
@@ -195,30 +163,18 @@ func TestAValidatedTableIsACopyTheCallerCannotReachInto(t *testing.T) {
 		t.Fatalf("ValidateRouteTable refused a valid table: %v", err)
 	}
 
-	// Reaching in through the slice the caller kept…
 	declared[0] = "github_id"
 	if got := checked["/v1/pantry"].Principal; len(got) != 1 || got[0] != "sub" {
 		t.Errorf("the validated table now reads %v; ValidateRouteTable must copy the declared claims", got)
 	}
 
-	// …and through the map.
 	checked["/v1/pantry"] = RouteTarget{BaseURL: "http://elsewhere:1"}
 	if got := table["/v1/pantry"].BaseURL; got != "http://pantry:8080" {
 		t.Errorf("the caller's map now points at %q; ValidateRouteTable must return a fresh one", got)
 	}
 }
 
-// --------------------------------------------------------------------------
-// property 2: the path is rebuilt, never filtered
-// --------------------------------------------------------------------------
 
-// TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress is property 2.
-//
-// The right half of the property is the one a filter gets wrong: after this
-// function, a traversal is not *rejected*, it is not expressible. So the refusals
-// are per-segment, on the **decoded** segment, and a `%2e%2e` and an encoded
-// separator are both tested — the two ways a traversal can be spelled once the
-// request line has been read.
 func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testing.T) {
 	cases := []struct {
 		prefix string
@@ -226,14 +182,12 @@ func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testin
 		want   string
 		ok     bool
 	}{
-		// The ordinary shapes.
 		{prefix: "/v1/pantry", path: "/v1/pantry", want: "/", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/", want: "/", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/items", want: "/items", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/items/", want: "/items", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/a/b/c", want: "/a/b/c", ok: true},
 
-		// Traversal, in every spelling a parser and a proxy disagree about.
 		{prefix: "/v1/pantry", path: "/v1/pantry/../secret"},
 		{prefix: "/v1/pantry", path: "/v1/pantry/%2e%2e/secret"},
 		{prefix: "/v1/pantry", path: "/v1/pantry/%2E%2E/secret"},
@@ -241,27 +195,17 @@ func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testin
 		{prefix: "/v1/pantry", path: "/v1/pantry/.."},
 		{prefix: "/v1/pantry", path: "/v1/pantry/a/../../b"},
 
-		// A separator smuggled inside a segment. This is the case `%2e%2e` is not:
-		// a URL parser does not decode `%2f`, so this reaches the function intact and
-		// a Go upstream that *does* decode it would read three extra segments.
 		{prefix: "/v1/pantry", path: "/v1/pantry/a%2Fb"},
 		{prefix: "/v1/pantry", path: "/v1/pantry/%2f..%2f..%2fetc%2fpasswd"},
 		{prefix: "/v1/pantry", path: "/v1/pantry/a%5Cb"},
-		// NOT a dot segment: `%2eb` decodes to `.b`, which is an ordinary segment
-		// and has to survive. A check that refused anything containing an encoded
-		// dot would be refusing a tenth of a real catalog's identifiers.
 		{prefix: "/v1/pantry", path: "/v1/pantry/a%2eb", want: "/a.b", ok: true},
 
-		// Empty interior segments: a doubled slash is not a path.
 		{prefix: "/v1/pantry", path: "/v1/pantry//items"},
 		{prefix: "/v1/pantry", path: "/v1/pantry/a//b"},
 
-		// The two ways a segment is not text.
 		{prefix: "/v1/pantry", path: "/v1/pantry/%ff"},
 		{prefix: "/v1/pantry", path: "/v1/pantry/%c0%ae"},
 
-		// Re-encoding: a rebuilt segment carries only its unreserved characters, so
-		// nothing in it can become a separator, a query or a fragment downstream.
 		{prefix: "/v1/pantry", path: "/v1/pantry/a%3Fb%23c", want: "/a%3Fb%23c", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/caf%C3%A9", want: "/caf%C3%A9", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/a%20b", want: "/a%20b", ok: true},
@@ -270,7 +214,6 @@ func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testin
 		{prefix: "/v1/pantry", path: "/v1/pantry/~!*'()_-.", want: "/~!*'()_-.", ok: true},
 		{prefix: "/v1/pantry", path: "/v1/pantry/%25", want: "/%25", ok: true},
 
-		// The whole prefix is one segment and nothing is left of it.
 		{prefix: "/v1", path: "/v1", want: "/", ok: true},
 		{prefix: "/v1", path: "/v1/me", want: "/me", ok: true},
 	}
@@ -289,14 +232,6 @@ func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testin
 	}
 }
 
-// TestUpstreamPathWouldBePathCleanIfItWereAFilter is the assertion that this is a
-// reconstruction, stated as a difference rather than as a property.
-//
-// `path.Clean` is the function a Go port reaches for, and it is not this one. Each
-// of these is a case where `path.Clean` answers a path that exists on the upstream
-// and this function answers "not a path this gateway serves". If someone replaces
-// this with a clean, these three cases are the ones that go quietly wrong — which is
-// why they are written out here rather than left to the reader of a comment.
 func TestUpstreamPathWouldBePathCleanIfItWereAFilter(t *testing.T) {
 	cases := []struct {
 		path     string
@@ -316,22 +251,8 @@ func TestUpstreamPathWouldBePathCleanIfItWereAFilter(t *testing.T) {
 	}
 }
 
-// TestTheNormalisedPathIsTheURLParsersOwn holds Go's routing decision to the same
-// path the reference's URL parser produces.
-//
-// The rows are **measured**, not reasoned: every right-hand answer in this table
-// was read out of `new URL(path).pathname` under Bun 1.3.12, which is what
-// `src/routes/proxy.ts` (removed at cutover) calls. `TestUpstreamPathRebuildsEverySegmentAndRefuses-
-// WhatItCannotExpress` covers the refusals; this covers the **rewrite**, which is
-// the half that decides which prefix claims a path and therefore where a request
-// goes.
-//
-// The rows that are not about a dot segment are the ones that must come back
-// **unchanged** — `//` survives, `%252e%252e` is not a dot segment, and a path with
-// no dot in it is not touched at all.
 func TestTheNormalisedPathIsTheURLParsersOwn(t *testing.T) {
 	cases := []struct{ path, want string }{
-		// Dot segments are removed.
 		{path: "/a/..", want: "/"},
 		{path: "/a/b/..", want: "/a/"},
 		{path: "/..", want: "/"},
@@ -351,15 +272,12 @@ func TestTheNormalisedPathIsTheURLParsersOwn(t *testing.T) {
 		{path: "/v1/pantry/x/..", want: "/v1/pantry/"},
 		{path: "/v1/pantry/../secret", want: "/v1/secret"},
 
-		// The percent-encoded spellings, which `src/routes/proxy.ts:24` (removed at cutover) believes
-		// survive normalisation. They do not — see the comment on the function.
 		{path: "/v1/pantry/%2e%2e/secret", want: "/v1/secret"},
 		{path: "/v1/pantry/%2E%2E/secret", want: "/v1/secret"},
 		{path: "/v1/pantry/%2e/secret", want: "/v1/pantry/secret"},
 		{path: "/v1/pantry/.%2e/secret", want: "/v1/secret"},
 		{path: "/v1/pantry/%252e%252e/x", want: "/v1/pantry/%252e%252e/x"},
 
-		// And the ones a normaliser must NOT touch.
 		{path: "/v1/pantry/%2e%2e%2fsecret", want: "/v1/pantry/%2e%2e%2fsecret"},
 		{path: "/v1/pantry/%2f..%2fsecret", want: "/v1/pantry/%2f..%2fsecret"},
 		{path: "/v1/pantry//x", want: "/v1/pantry//x"},
@@ -380,12 +298,7 @@ func TestTheNormalisedPathIsTheURLParsersOwn(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// which prefix claims a path
-// --------------------------------------------------------------------------
 
-// TestTheLongestPrefixWinsOnASegmentBoundary, in both directions: a sibling name
-// cannot inherit a mount, and a nested prefix wins outright.
 func TestTheLongestPrefixWinsOnASegmentBoundary(t *testing.T) {
 	table := RouteTable{
 		"/v1/pantry":        {BaseURL: "http://pantry:8080"},
@@ -396,7 +309,7 @@ func TestTheLongestPrefixWinsOnASegmentBoundary(t *testing.T) {
 
 	cases := []struct {
 		path string
-		want string // the base URL it resolves to; "" means nothing claimed it
+		want string
 	}{
 		{path: "/v1/pantry", want: "http://pantry:8080"},
 		{path: "/v1/pantry/items", want: "http://pantry:8080"},
@@ -429,16 +342,6 @@ func TestTheLongestPrefixWinsOnASegmentBoundary(t *testing.T) {
 	}
 }
 
-// TestAPublicRouteIsDecidedByTheSameResolverThatDecidesTheDestination is why
-// `IsPublicRoute` exists as a one-line function over `ResolveRoute` rather than as
-// a second scan.
-//
-// The gate that decides who may reach a route without a credential and the
-// pass-through that decides where the request goes must agree about which prefix
-// claimed the path. Two scans would be two spellings of that question, and a
-// matching rule tightened in one would leave the other deciding who may reach it —
-// so the test asserts that a public read surface and a private write surface under
-// the same name are decided per-prefix, not per-name.
 func TestAPublicRouteIsDecidedByTheSameResolverThatDecidesTheDestination(t *testing.T) {
 	table := RouteTable{
 		"/v1/catalog":         {BaseURL: "http://pantry:8080", Public: true},
@@ -466,9 +369,6 @@ func TestAPublicRouteIsDecidedByTheSameResolverThatDecidesTheDestination(t *test
 	}
 }
 
-// TestAResolvedRouteIsACopyOfItsClaims, for the same reason the validated table is
-// a copy: the assertion is minted from these names, so a caller reaching in
-// afterwards would be choosing what gateway signs.
 func TestAResolvedRouteIsACopyOfItsClaims(t *testing.T) {
 	table := RouteTable{"/v1/pantry": {BaseURL: "http://pantry:8080", Principal: []string{"sub", "github_id"}}}
 
@@ -487,10 +387,6 @@ func TestAResolvedRouteIsACopyOfItsClaims(t *testing.T) {
 	}
 }
 
-// The validator's own emptiness is a finding: a table of refusals with no
-// acceptance proves nothing, so the accepted set is asserted here too — including
-// the one *shape* an operator gets right that looks wrong: a `public` entry
-// carrying no token and no claims.
 func TestAPublicRouteIsAcceptedWithNothingButAnOrigin(t *testing.T) {
 	table, err := ParseRouteTable(`{"/v1/catalog":{"baseUrl":"http://pantry:8080","public":true}}`)
 	if err != nil {
@@ -501,10 +397,6 @@ func TestAPublicRouteIsAcceptedWithNothingButAnOrigin(t *testing.T) {
 	}
 }
 
-// An empty variable is an unset one, which is what an unset variable looks like in
-// a compose file. `ParseRouteTable("")` therefore means "no routing" and not "a
-// table with nothing in it" — the two are different and the difference is the
-// difference between a default and an operator error.
 func TestAnEmptyRouteTableVariableIsNoRoutingAtAll(t *testing.T) {
 	for _, document := range []string{"", "   ", "\n\t "} {
 		table, err := ParseRouteTable(document)
@@ -517,9 +409,6 @@ func TestAnEmptyRouteTableVariableIsNoRoutingAtAll(t *testing.T) {
 	}
 }
 
-// The refusals name their reason, so a reader can tell which rule fired. This is
-// asserted for the whole set at once because the alternative is ten tests that each
-// prove one string.
 func TestEveryRouteTableRefusalNamesItsOwnRule(t *testing.T) {
 	document := `{"/v1/%2e%2e":{"baseUrl":"ftp://pantry:8080"},"/v1/pantry":{"baseUrl":"http://pantry:8080","token":"a b"}}`
 
@@ -527,16 +416,11 @@ func TestEveryRouteTableRefusalNamesItsOwnRule(t *testing.T) {
 	if err == nil {
 		t.Fatal("ParseRouteTable accepted a table with two refusable entries")
 	}
-	// Sorted order, so the refusal is deterministic: two bad entries must not name
-	// a different one on every run.
 	if !strings.Contains(err.Error(), "%2e%2e") {
 		t.Errorf("the refusal does not name the offending prefix, so it is not reproducible:\n  %v", err)
 	}
 }
 
-// `RouteTarget`'s zero value is a working entry — one origin, no credential, no
-// assertion — and that is asserted rather than assumed, because a Go zero value
-// that refused to boot would make every table in this file a special case.
 func TestAnEntryWithNothingButAnOriginIsTheDefaultShape(t *testing.T) {
 	table := RouteTable{"/v1/pantry": {BaseURL: "http://pantry:8080"}}
 
@@ -553,7 +437,6 @@ func TestAnEntryWithNothingButAnOriginIsTheDefaultShape(t *testing.T) {
 	}
 }
 
-// `searchOf` is the query, verbatim, and the three cases are all different.
 func TestTheQueryIsAppendedVerbatim(t *testing.T) {
 	cases := []struct{ raw, want string }{
 		{raw: "a=1&b=2", want: "?a=1&b=2"},

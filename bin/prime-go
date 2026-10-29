@@ -1,22 +1,4 @@
 #!/usr/bin/env bash
-# bin/prime-go — the Go tier of gateway's gate, and since the cutover the WHOLE
-# of it.
-#
-#   ./bin/prime-go   gofmt, build, vet, test, generated-code currency
-#
-# WHY A SECOND SCRIPT rather than more steps in bin/prime. It used to be two
-# tiers: `bin/prime` ran the TypeScript tier and called this last, and the two
-# coexisted for the length of the rewrite. `src/` is gone — deleted at cutover
-# (f87c891) once equivalence was proven: 51 cases, 13 scenarios, 914
-# comparisons, 0 differences — so `bin/prime` is now a wrapper around this file
-# and this file is the gate. It is still separate because `gate.yml` declares
-# `entrypoint: bin/prime`, and because "which tier is red" should stay a
-# question with an answer even when there is one tier.
-#
-# Green on a bare machine with a Go toolchain on PATH and no network. The live
-# Redis tier skips unless `GATEWAY_REDIS_URL` is set, prints a COUNTED SKIP
-# naming the reason rather than reporting a green that verified nothing, and is
-# counted below.
 set -euo pipefail
 set -o pipefail
 
@@ -24,12 +6,6 @@ cd "$(dirname "$0")/.."
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
-# THE TOOLCHAIN ASSERTION, and it is this script's first step and its only
-# precondition: this repository pins a Go version in TWO files (mise.toml's `go`
-# and the Dockerfile's ARG GO_VERSION), and nothing makes the go command
-# enforce either. Without the check a developer on a newer Go silently produces a
-# binary CI never built, and reads the difference as a defect in the code under
-# test — the anywaye-rb lesson, in a second language.
 if ! command -v go >/dev/null 2>&1; then
   echo "bin/prime-go: go is not on PATH — run 'mise install' in this worktree" >&2
   exit 127
@@ -42,10 +18,6 @@ if [ -z "$pinned_go" ]; then
   exit 127
 fi
 
-# go.mod's own `go` directive is the third copy of the number, and it is the one
-# the compiler enforces. A go.mod newer than the pin means somebody raised the
-# language version without raising the pin, and the error that produces is a
-# wall of text about language features.
 mod_go="$(sed -n 's/^go *\([0-9][0-9.]*\).*/\1/p' go.mod)"
 if [ -n "$mod_go" ] && [ "$mod_go" != "$pinned_go" ]; then
   echo "bin/prime-go: go.mod declares go $mod_go and mise.toml pins $pinned_go." >&2
@@ -66,37 +38,7 @@ fi
 step "toolchain: go $actual_go (mise.toml pins $pinned_go)"
 go version
 
-# THE IMAGE TAG AGREES WITH THE PIN, and this is the port of two tests in the
-# deleted `pins.test.ts` — "the Dockerfile builds on that toolchain" and "compose
-# passes the pin through rather than repeating it".
-#
-# WHY IT IS HERE AND NOT IN prime-go's header as a note. `pinned_go` above is
-# checked against go.mod, which is the copy the COMPILER enforces. These two
-# files are not read by the compiler and were read by nothing else: `grep -n
-# GO_VERSION` across the repository returned one hit, `docker-compose.yml:151`,
-# which is the thing being asserted rather than an assertion of it. So before this
-# block, mise.toml's comment — "`Dockerfile`'s ARG GO_VERSION is 1.26, the tag the
-# image builds with, the same way RUST_VERSION used to name an image rather than
-# a patch" — was a claim about two files that nothing could check. It is now
-# checked.
-#
-# THE RULE IS A PREFIX AND NOT EQUALITY, and that is the comment above being
-# right: the image names a tag (`1.26`) while the pin names a release (`1.26.1`).
-# Equal numbers would be a coincidence rather than a contract — a patch bump must
-# not have to edit two files in two languages. What must hold is that the image's
-# toolchain is the same major.minor the pin names, because a 1.25 image against a
-# 1.26.1 pin builds a binary CI never tested and reads the difference as a defect
-# in the code.
 image_go="$(sed -n 's/^ARG GO_VERSION=\(.*\)/\1/p' Dockerfile)"
-# `grep -E` and `tr -d` rather than a `sed` capture, and that is measured rather
-# than stylistic: the sed spelling
-#   s/^[[:space:]]*GO_VERSION:[[:space:]]*\([0-9][0-9.]*\).*/\1/p
-# matches nothing on the macOS BSD sed — the same line `grep -nE
-# '^[[:space:]]*GO_VERSION:'` finds at docker-compose.yml:151 — while exiting 0,
-# which is the worst of both. A check that reads an empty string here would have
-# reported "compose names no GO_VERSION" rather than "compose names 1.26", and a
-# reader would have gone looking in the wrong file. Digits only, so the YAML
-# quoting does not have to be modelled.
 compose_go="$(grep -E '^[[:space:]]*GO_VERSION:' docker-compose.yml | head -n1 | tr -dc '0-9.')"
 expected_prefix="${pinned_go%.*}"
 for pair in "Dockerfile:$image_go" "docker-compose.yml:$compose_go"; do
@@ -119,73 +61,16 @@ done
 echo "image tag: Dockerfile and docker-compose.yml build on go $expected_prefix, the major.minor mise.toml pins as $pinned_go"
 
 step "the CI jobs install every tool this gate requires"
-# THE CHECK THAT KEEPS A GREEN GATE AND A RED CI FROM PARTING COMPANY.
-#
-# The failure this exists for had happened twice, in the same shape: a step added
-# a REQUIREMENT to the gate and the CI job that runs the gate was not taught to
-# PROVIDE it. `roll-c5-lint-parity` added `golangci-lint run` to this script (it
-# refuses with exit 127 without the binary) and CI's `prime` job — which installs
-# Go and redis-server and runs `bin/prime`, but never mise — exited 127. And
-# gateway's runtime session tests exec a real `redis-server` (see
-# `internal/httpapi/runtime_session_test.go`), which kit's shared `go` job did
-# not install, so `ci (kit) / go` failed on a missing apt package. Both were
-# found by a red CI run rather than by the gate, which is the whole objection: a
-# gate that is green locally and red in CI is a gate whose local green verified
-# nothing about the environment it claims to describe.
-#
-# SO THE REQUIREMENTS ARE DERIVED, NOT LISTED. Two sources, one per way a tool
-# reaches this gate:
-#
-#   * `command -v <tool>` in the gate scripts — the tools this gate REFUSES to
-#     run without. Today: `go` and `golangci-lint`.
-#   * `exec.LookPath("<binary>")` in `*_test.go` — the binaries the tests EXEC
-#     rather than dial. Today: `redis-server`.
-#
-# A hand-written list here would be the failure mode itself: the next tool added
-# to the gate would not be in it, and the check would stay green about it.
-# Reading the same source the gate reads means a new `command -v` guard turns
-# this step RED until `ci/ci.yml` installs the tool — which is the
-# point of putting it in the gate instead of in a review checklist.
-#
-# THE TWO JOBS ARE CHECKED DIFFERENTLY, because they provide tools differently.
-# Both run the suite, so both need the TEST binaries: the `prime` job installs
-# them itself (`bin/prime` runs `go test`), and the kit `ci` job names them in
-# its `with:` block for kit to install (`test-packages`), which is the seam
-# added in the same packet as this check. The gate TOOLS only reach `prime`,
-# because kit's `go` job runs its own `go test` and never calls `bin/prime`.
-#
-# COMMENTS ARE STRIPPED BEFORE THE SEARCH, and this is load-bearing rather than
-# tidiness: the `prime` job's own header comment NAMES `redis-server` while
-# explaining why the install exists, so a check that read the raw text would find
-# the name in the prose and pass on a job that had lost the install. Finding the
-# thing in the sentence that describes it is the red herring
-# `internal/api/stripbaseurl`'s check hit with its own header — a check whose
-# verdict is decided by the text describing the thing it checks is a check whose
-# verdict means nothing. `install` must also share a LINE with the tool, so a
-# step NAME that names the tool cannot satisfy the check on its own; `go` is the
-# one exception, satisfied by `actions/setup-go`, because that is how it is
-# installed.
-#
-# This is the shell-level form of the control the packet asked for. In CI the
-# step runs as part of `bin/prime` and fails NAMING the tool and the job, before
-# the `command -v` guard could exit 127 — so a requirement added to the gate
-# without its install reds the job a developer runs, in the same commit, rather
-# than the job only CI runs.
 
-# Read one job's block out of `ci/ci.yml`, comments stripped.
-# `want` is the job's key at two-space indent; the block ends at the next key at
-# that indent.
-ci_job_block() { # <job-key>
+ci_job_block() {
   awk -v want="$1" '
     $0 ~ "^  " want ":" { found = 1; next }
     found && /^  [A-Za-z0-9_.-]+:/ { exit }
     found { print }
-  ' ci/ci.yml | grep -vE '^[[:space:]]*#'
+  ' ci/ci.yml | grep -vE '^[[:space:]]*
 }
 
-# Does this block install <tool>? `install` and the tool must share a line, so a
-# step name that merely mentions the tool cannot pass for its install.
-ci_provides() { # <block> <tool>
+ci_provides() {
   case "$2" in
     go) printf '%s\n' "$1" | grep -qE 'uses:[[:space:]]*actions/setup-go' ;;
     *) printf '%s\n' "$1" | grep -qE "install.*$2" ;;
@@ -205,7 +90,6 @@ if [ -z "$ci_job" ] || [ -z "$prime_job" ]; then
   exit 1
 fi
 
-# Derived, never listed — see the header comment above.
 gate_tools="$(grep -hoE 'command -v [A-Za-z0-9_.+-]+' bin/prime bin/prime-go | sed 's/.*command -v //' | sort -u)"
 test_binaries="$(grep -rhoE 'exec\.LookPath\("[^"]+"\)' ./cmd ./internal --include='*_test.go' | sed -n 's/.*exec\.LookPath("\([^"]*\)").*/\1/p' | sort -u)"
 if [ -z "$gate_tools" ] && [ -z "$test_binaries" ]; then
@@ -246,27 +130,6 @@ test_binaries_flat="$(printf '%s' "$test_binaries" | tr '\n' ' ' | sed 's/ *$//'
 echo "CI tools: 'prime' installs ${gate_tools_flat} ${test_binaries_flat}; 'ci (kit)' passes ${test_binaries_flat} to kit"
 
 step "the publish caller publishes the image and the chart"
-# THE PUBLISH LOOP'S SERVICE HALF, and the check exists because the loop was
-# open at this end. kit's `m84` landed the reusable half —
-# `publish.reusable.yml` composes `image.reusable.yml` and
-# `chart.reusable.yml` behind one `push` input — and published a CALLER
-# TEMPLATE at `kit/templates/publish/publish.yml` whose header says "copy this
-# file to `ci/publish.yml` in the service repository, verbatim".
-# gateway did not copy it: `.github/workflows/` held only `ci.yml`, so the
-# chart the substrate's `Application` pulls and the image `config/deploy.yml`
-# deploys were published by nothing — the front door could not be deployed at
-# all. This step asserts the copy happened and is correct.
-#
-# WHAT IS ASSERTED, and each fact is one that makes the loop work rather than
-# one that makes a file exist. A file that merely exists is the failure this
-# repository has been bitten by before in other guises: a green about nothing.
-#
-# THE PATTERNS ARE ANCHORED, and that is a correction rather than a style. A
-# fixed-string grep for `packages: write` matches this caller's own HEADER,
-# which mentions the grant in backticks while arguing for it — so a caller
-# that dropped the permission from the `permissions:` block would still pass,
-# and the check would be asserting a comment rather than a grant. `^` and `$`
-# with leading whitespace allowed matches the YAML line and nothing else.
 caller="ci/publish.yml"
 if [ ! -f "$caller" ]; then
   echo "bin/prime-go: $caller does not exist, so a push to master publishes" >&2
@@ -277,13 +140,6 @@ if [ ! -f "$caller" ]; then
   exit 1
 fi
 
-# 1. THE COMPOSITION IS CALLED, NOT INLINED. The image and chart steps live in
-# kit's reusable workflows, and this caller is one `uses:` of the composed
-# `publish.reusable.yml`. A caller that inlines the steps has forked the
-# composition: a second copy of the publish path that drifts, which is the
-# drift kit exists to prevent. The ref is `@master` because that is how every
-# anywaye service calls kit's workflows — see the `ci` job in this repository's
-# own ci.yml.
 if ! grep -qE '^[[:space:]]*uses: anywaye/kit/\.github/workflows/publish\.reusable\.yml@master$' "$caller"; then
   echo "bin/prime-go: $caller does not call kit's composed publish workflow." >&2
   echo "  Wanted: uses: anywaye/kit/ci/publish.reusable.yml@master" >&2
@@ -292,10 +148,6 @@ if ! grep -qE '^[[:space:]]*uses: anywaye/kit/\.github/workflows/publish\.reusab
   exit 1
 fi
 
-# 2. THE PERMISSION GRANT, AND WHY IT IS THE CALLER'S TO MAKE. A reusable
-# workflow can request a permission but cannot grant itself one, so
-# `packages: write` must be on the caller: omit it and the push fails with a
-# 401 that reads like a wrong password rather than like a missing grant.
 if ! grep -qE '^[[:space:]]*packages: write$' "$caller"; then
   echo "bin/prime-go: $caller does not grant packages: write. A reusable" >&2
   echo "  workflow can request a permission but cannot grant itself one, so" >&2
@@ -304,10 +156,6 @@ if ! grep -qE '^[[:space:]]*packages: write$' "$caller"; then
   exit 1
 fi
 
-# 3. THE OPT-IN. The reusable workflows default `push` to FALSE, so a caller
-# that omits the input publishes nothing and says nothing: the run is green,
-# the registry is untouched, and the substrate's Application keeps pulling
-# the old chart forever.
 if ! grep -qE '^[[:space:]]*push: true$' "$caller"; then
   echo "bin/prime-go: $caller does not pass push: true. The reusable" >&2
   echo "  workflows default push to false, so a caller that omits it publishes" >&2
@@ -315,11 +163,6 @@ if ! grep -qE '^[[:space:]]*push: true$' "$caller"; then
   exit 1
 fi
 
-# 4. THE CHART-DIR INPUT, AND THE DIRECTORY IT NAMES. The input is asserted
-# as the fixed string because that is the path this repository's own checks
-# (`ci.yml`, `bin/chart-test`) already know — and the directory it names is
-# then required to hold a Chart.yaml, so a caller pointing at an empty
-# directory is a red rather than a chart that publishes nothing.
 if ! grep -qE '^[[:space:]]*chart-dir: charts/gateway/$' "$caller"; then
   echo "bin/prime-go: $caller does not pass chart-dir: charts/gateway/." >&2
   echo "  gateway's chart lives at charts/gateway/ — not at the template's" >&2
@@ -335,14 +178,6 @@ if [ ! -f "$chart" ]; then
   exit 1
 fi
 
-# 5. THE CHART VERSION IS THE OCI TAG, AND THE EQUALITY IS THE ASSERTION.
-# `chart.reusable.yml` reads name and version from Chart.yaml and never takes
-# them as inputs, so the tag the substrate pulls is whatever this file says —
-# and the substrate's Application (kit,
-# templates/substrate/manifests/applications/gateway.yaml) says
-# `targetRevision: 0.1.0`. A service that bumps one and not the other is a
-# service that never deploys, and Argo reports no error: it just never finds
-# the artifact. The failure message names both sides for that reason.
 substrate_target="0.1.0"
 chart_version="$(sed -n 's/^version: *\(.*\)/\1/p' "$chart")"
 if [ -z "$chart_version" ]; then
@@ -364,38 +199,6 @@ fi
 echo "publish: $caller calls kit's composed publish workflow with push: true, grants packages: write, and points at charts/gateway/ — whose Chart.yaml version $chart_version is the substrate's targetRevision $substrate_target"
 
 step "the chart names the image the publish loop pushes"
-# THE IMAGE THE DEPLOYMENT PULLS IS THE IMAGE THE LOOP PUSHES, and this step
-# exists because the two disagreed in one value and nothing read it.
-#
-# WHAT WAS MEASURED, on a Contabo box: `charts/gateway/values.yaml` said
-# `repository: anywaye/gateway`, with no registry host. The Deployment renders
-# `"{{ .Values.image.repository }}:{{ .Values.image.tag }}"`, so containerd
-# resolved the hostless value against Docker Hub and the pod reached image-pull
-# and failed forever:
-#
-#     Failed to pull image "anywaye/gateway:0.1.0": ... pull access denied,
-#     repository does not exist or may require authorization
-#
-# The chart was the only place the published name appeared without its host.
-# `docker-compose.yml`'s `anywaye/gateway:dev` and the `Dockerfile`'s
-# `docker build -t anywaye/gateway:dev` are LOCAL tags — `docker compose build`
-# writes the former, and neither is ever pulled — so they are correctly bare and
-# are deliberately not asserted here. Every sibling chart names the host
-# (`ghcr.io/anywaye/identity`, …).
-#
-# WHY THE EXPECTED VALUE IS DERIVED AND NOT TYPED. kit's image workflow pushes
-# to `ghcr.io/<github.repository>`, lowercased, and takes no input for the name:
-# "the repository that builds an image is the only authority on what it is
-# called." So the expected path is derived from this repository's own identity —
-# `go.mod`'s module path is `github.com/<owner>/<repo>` — rather than typed,
-# because a literal here would be a second copy of a fact the repository already
-# states, and a rename would move the image and leave the check behind.
-#
-# THE HOST TEST IS A HOST TEST, NOT A CHARSET. A repository value is
-# `<host>/<path>`; containerd reads a first segment with no `.` and no `:` as a
-# Docker Hub namespace, so `anywaye/gateway` IS `docker.io/anywaye/gateway`. The
-# equality below catches the drift; this test is what makes the failure message
-# name Docker Hub instead of printing two strings that differ at character one.
 values="charts/gateway/values.yaml"
 if [ ! -f "$values" ]; then
   echo "bin/prime-go: $values does not exist, so the image the Deployment pulls" >&2
@@ -448,27 +251,6 @@ if [ "$image_repo" != "$published" ]; then
 fi
 echo "chart image: $values sets image.repository to $published, the image the publish workflow pushes"
 
-# THE DIGEST, AND WHY THE TAG ALONE WAS MEASURED NOT TO BE ENOUGH. The
-# repository check above names the image; this one names the BUILD, and the
-# two digests in the brief are the whole argument:
-#
-#     registry: ghcr.io/anywaye/gateway:0.1.0 → sha256:c264…37165
-#     node:     ghcr.io/anywaye/gateway:0.1.0 → sha256:8e60…e79b
-#
-# The Deployment rendered `repository:tag`, `image.tag` is a hardcoded
-# constant here, and the publish loop OVERWRITES that tag on every master
-# push — so the rendered text was identical before and after the fix, Argo's
-# diff reported `Synced` with no rollout, and `imagePullPolicy:
-# IfNotPresent` kept the node on the six-hour-old build. The tag is a value
-# a RELEASE commits and there was no release; a mutable release tag is
-# `latest` with a better-sounding name.
-#
-# `image.digest` is `sha256:` + 64 hex and nothing else: it is the manifest
-# digest `chart.reusable.yml` reads off the image the publish just built and
-# writes into this file before `helm push`. An EMPTY one renders
-# `$published@` — a reference no registry answers — and a malformed one is
-# worse, because it looks like a pin. Both are refused HERE rather than at
-# the pull, and the render-level half of the control is bin/chart-test's.
 image_digest="$(sed -n 's/^  digest:[[:space:]]*//p' "$values" | head -n1 | tr -d "\"'")"
 if [ -z "$image_digest" ]; then
   echo "bin/prime-go: $values sets no image.digest, and the Deployment renders" >&2
@@ -484,9 +266,6 @@ if [ -z "$image_digest" ]; then
 fi
 case "$image_digest" in
   sha256:?*)
-    # `sha256:` plus exactly 64 lowercase hex. The charset and the length are
-    # both asserted because a digest that is merely PREFIXED right is the
-    # shape a reader stops checking.
     if ! printf '%s' "$image_digest" | grep -qE '^sha256:[0-9a-f]{64}$'; then
       echo "bin/prime-go: $values sets image.digest to \"$image_digest\", which" >&2
       echo "  is not sha256:<64 hex> — the manifest digest chart.reusable.yml" >&2
@@ -507,14 +286,6 @@ esac
 echo "chart image: $values pins image.digest $image_digest — immutable, so a new build is a textual diff Argo rolls"
 
 step "gofmt -l"
-# `-l` prints the files that NEED formatting and exits 0 either way, so the count
-# is the assertion. An empty list is the pass and a non-empty one is a red that
-# names the file.
-#
-# `./cmd ./internal` and not `./...`, for the reason pantry's does the same: the
-# generated file is not this repository's to format, and a generator release that
-# changes its own indentation would otherwise turn every run red over a file
-# nobody is allowed to edit by hand.
 unformatted="$(gofmt -l ./cmd ./internal)"
 if [ -n "$unformatted" ]; then
   echo "bin/prime-go: these files are not gofmt-clean:" >&2
@@ -530,29 +301,6 @@ step "go vet ./..."
 go vet ./...
 
 step "golangci-lint run"
-# THE LINT THAT CI RUNS, AND THE VERSION IT RUNS AT.
-#
-# kit's ci.reusable.yml runs `golangci/golangci-lint-action@v9` with
-# `version: v2.14.0` and `--config` pointing at kit's `lint/golangci.yml`.
-# This step runs the SAME lint, at the SAME version, over the SAME config, and
-# a finding fails the gate. The version is pinned in two places — this
-# repository's `mise.toml` (`golangci-lint = "2.14.0"`) and kit's workflow — so
-# a bump touches both in the same commit. An unpinned local install or a CI run
-# on `latest` is how `bin/prime` stayed green while CI went red on 14 findings
-# (`httptest.NewRequest` without context, flagged by `noctx` in 2.14.0 in
-# contexts 2.6.2 did not reach).
-#
-# THE CONFIG IS NOT COPIED. kit's `lint/golangci.yml` header says "Not copied
-# into a service repo" because a copy is a second policy to drift. The config
-# is read from kit's checkout, and the location is resolved rather than
-# assumed: in CI it is at `.kit/lint/golangci.yml` (sparse checkout), locally
-# it is at `../kit/lint/golangci.yml` (moon workspace), and either may be
-# absent.
-#
-# THE TOOL MUST BE PRESENT. A step that quietly skips when the linter is absent
-# is the whole defect: a green that verified nothing. `mise install` provides
-# the pinned version; a bare `go` toolchain without it fails here rather than
-# passing.
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "bin/prime-go: golangci-lint is not on PATH — run 'mise install' in this worktree" >&2
   echo "  (mise.toml pins golangci-lint = \"2.14.0\", the same version CI runs)" >&2
@@ -587,17 +335,6 @@ echo "lint version: $(golangci-lint --version 2>&1 | head -n1)"
 golangci-lint run --config "$kit_config" ./...
 
 step "go test ./..."
-# `-v`, AND THE OUTPUT IS FILTERED, and both halves are load-bearing.
-#
-# -count=1 defeats the test cache: a gate that can report a stale green is a gate
-# that reports what it ran last, not what it would report now.
-#
-# `go test` DISCARDS a passing package's output entirely, so a package that prints
-# its own `skip:` row prints it into a void on every green run — which is
-# precisely the silent pass this repository has been bitten by before on the
-# TypeScript side (`rateLimitRedisLive.test.ts`). It was measured there rather
-# than assumed; it is true here for the same reason, and the equivalence tier's
-# skip is the one that needs it.
 out="$(go test -count=1 -v ./... 2>&1)" || {
   echo "$out"
   echo "bin/prime-go: go test failed; the full -v output is above." >&2
@@ -605,64 +342,7 @@ out="$(go test -count=1 -v ./... 2>&1)" || {
 }
 echo "$out" | grep -E '^(ok|FAIL|---|\?)|equivalence:' || true
 
-# THE EQUIVALENCE BLOCK IS GONE, AND THE REASON IS A DELETION RATHER THAN A
-# REWRITE.
-#
-# This block used to require one of two lines to appear in `go test`'s output:
-# `equivalence: DID NOT RUN — …` (no bun to stand the TypeScript reference up) or
-# `equivalence: N cases x M scenarios = K comparisons` (it ran). A missing
-# summary line was a FAILURE rather than a zero, deliberately: the line was the
-# evidence the tier had run, and `go test` discards a passing package's output,
-# which is how `rateLimitRedisLive.test.ts` was once skipped in silence.
-#
-# AT CUTOVER (f87c891) THERE IS NO EQUIVALENCE TIER TO COUNT. `internal/equivalence`
-# used to spawn `test/equivalence/reference.ts` and compare answers byte for byte;
-# that harness retired with the TypeScript tree, and what is left in the package
-# is the Go side asked directly (`caseSpec`, `ask`, `askBurst`) — the limiter's
-# refusal, its announced remaining and its fail-open answer, plus
-# `TestTheGoSideCountsRoutedTraffic`, the tripwire for the defect the comparison
-# found. It runs unconditionally, prints neither of the two markers, and cannot
-# skip.
-#
-# So the block was REMOVED rather than relaxed. The alternative — keep the grep
-# and let it match nothing — is the worst of the three options: the failure it
-# produced was a red gate naming a missing summary line that no code emits any
-# more, and `bin/prime` was red on a clean master for exactly that reason. It was
-# measured before this comment was written: exit 1, "internal/equivalence
-# printed neither its summary nor a counted skip".
-#
-# WHAT THE BLOCK WAS WORTH, and what replaced it, so the removal is not read as
-# a weakening. It counted one tier's skips. The tier that still CAN skip is the
-# live Redis one, and the block immediately below counts that — same mechanism,
-# same three outcomes, same escalation on `*_REQUIRED=1`. And the equivalence
-# package's own tests are no longer exempt from anything: they are in
-# `go test -count=1 -v ./...` like every other package and their `--- PASS:`
-# lines are in the `suite:` count printed at the end of this script. What no
-# longer exists is the ability to say "the TypeScript side agreed", because the
-# TypeScript side no longer exists to agree or disagree.
 
-# # THE SAME COUNT, FOR THE OTHER TIER THAT CAN SKIP
-#
-# `internal/ratelimit` has a live tier — the GCRA script against a real
-# `redis-server` — and it skips for the same reason and in the same silence. This
-# block exists because `live_test.go` says so in its own header: "the skip PRINTS a
-# line beginning `ratelimit: DID NOT RUN` and `bin/prime-go` counts it". Until this
-# block existed that sentence described a mechanism the gate did not have, which is
-# the same defect as a comment asserting a property the code does not have.
-#
-# IT WAS NOT ONLY A MISSING COUNT. While running the tier against a real server
-# (one was already listening on this machine at :6379) it turned out that
-# `TestMain` exited 0 BEFORE `m.Run()` whenever `GATEWAY_REDIS_URL` was unset — so
-# the entire package ran no tests at all, the parity table and the instant grid
-# included, and `go test` printed `ok`. That is the worst shape this class of bug
-# takes: a green about nothing whatsoever. The tier skips per test now and prints
-# one line, and this block is what makes that line countable.
-#
-# SAME THREE OUTCOMES AS THE BLOCK ABOVE, for the same three reasons. RAN when the
-# marker is absent. DID NOT RUN, and a failure, when the tier was declared
-# required. Neither — which cannot be told apart here, because the live tier has no
-# summary line to prove it ran — so the marker being ABSENT is taken as RAN and the
-# `-v` run above is what would notice if this gate had stopped seeing its output.
 ratelimit_skipped="$(grep -m1 -o 'ratelimit: DID NOT RUN.*' <<<"$out" || true)"
 if [ -z "$ratelimit_skipped" ]; then
   echo "ratelimit: the live Redis tier RAN — no DID NOT RUN marker"
@@ -674,40 +354,6 @@ else
   fi
 fi
 
-# THE SKIP CEILING, and this block is the port of `test/noSkips.test.ts` rather
-# than a replacement for it.
-#
-# That file read the suite's own source and failed on any `skip` outside a
-# one-entry allowlist. Its premise is still true and still load-bearing: exactly
-# one tier in this repository may skip, and it is named — the live Redis tier,
-# gated on `GATEWAY_REDIS_URL`. So the check moved here rather than being deleted
-# along with the file, and it is a real check on both sides:
-#
-#   * A RUNTIME COUNT. `go test -count=1 -v` above prints one `--- SKIP:` line per
-#     skipped test, and `go test` discards a passing package's output — so this
-#     block is the only place the number is ever visible. On a machine without
-#     Redis the live tier skips 13 tests and that is the whole of it; with Redis
-#     it skips 0.
-#   * A SOURCE COUNT. The same property the TypeScript version read out of the
-#     sources, checked where a converted skip would be WRITTEN rather than only
-#     where it would be observed. A `t.Skip` behind an environment condition that
-#     happens not to fire still lands here, which is the case a runtime count
-#     cannot see.
-#
-# WHY A CEILING AND NOT A FLOOR, which is the one place this is weaker than the
-# file it ports. `noSkips.test.ts` asserted EQUALITY with an allowlist; this
-# cannot, because the legitimate count is 13 without Redis and 0 with it, and a
-# gate that is right in one environment and red in the other is a gate people
-# learn to disable. 13 is the no-Redis number, which is what `bin/prime` always
-# produces, and a run with Redis sits BELOW the ceiling rather than over it — so
-# the ceiling is the one direction that holds in both environments.
-#
-# What it therefore does NOT catch is the whole tier disappearing: a
-# `GATEWAY_REDIS_URL` branch deleted whole leaves 0 skips, which is under the
-# ceiling. `GATEWAY_REDIS_REQUIRED=1` is what catches that, and so is the `redis`
-# CI job, which forces the tier. This block catches the other three of the four
-# ways — an undeclared skip added, an allowlist entry outliving its skip, a
-# second gated tier arriving — and the fourth is named rather than implied.
 skip_count="$(grep -c '^--- SKIP: ' <<<"$out" || true)"
 skip_ceiling=13
 if [ "$skip_count" -gt "$skip_ceiling" ]; then
@@ -719,10 +365,6 @@ if [ "$skip_count" -gt "$skip_ceiling" ]; then
   exit 1
 fi
 
-# The source half. ONE call site is the whole allowance, and it is named rather
-# than counted: an allowlist that only held a number would pass a repository
-# where the declared skip moved to a different file, which is the stale-allowlist
-# failure `noSkips.test.ts` had a test for by name.
 skip_sites="$(grep -rn 't\.Skip(' ./cmd ./internal --include='*_test.go' || true)"
 skip_site_count="$(printf '%s' "$skip_sites" | grep -c 't\.Skip(' || true)"
 if [ "$skip_site_count" -ne 1 ] || ! printf '%s' "$skip_sites" | grep -q '^\./internal/ratelimit/live_test\.go:'; then
@@ -778,23 +420,9 @@ if [ ! -f "$gen" ]; then
   exit 1
 fi
 
-# The checksum BEFORE regeneration, so this step can say whether it had to repair
-# the working tree. Regenerating is destructive by construction — it overwrites
-# whatever was there — and a step that silently rewrites a file a reader did not
-# know it was rewriting is a step that surprises whoever is holding the
-# repository. Reporting it costs one `cksum` and turns a surprise into a line.
 gen_before="$(cksum < "$gen")"
 
 module_cache="$(go env GOMODCACHE)"
-# `regen_out` AND NOT `out`, and that is a correction rather than a style. The
-# variable holding `go test`'s output is named `out` twenty lines above, so
-# regenerating into it would overwrite the test results and this script would
-# print a suite count of zero and exit ZERO.
-#
-# Caught by reading the gate's own output rather than its exit status, which is
-# the standing rule in the worker contract applied to this repository's own
-# script. A variable name is not a cosmetic choice in a script that reports its
-# own coverage.
 if ! regen_out="$(GOFLAGS=-mod=mod GOPROXY="file://$module_cache/cache/download" GOSUMDB=off \
   go generate ./internal/api/ 2>&1)"; then
   echo "bin/prime-go: regeneration FAILED, so whether $gen matches" >&2
@@ -808,13 +436,6 @@ if ! regen_out="$(GOFLAGS=-mod=mod GOPROXY="file://$module_cache/cache/download"
 fi
 echo "$regen_out" | sed 's/^/  /'
 
-# The header assertion is KEPT as well as the diff, and it is not redundant: it
-# names the generator version the committed file came from, which a diff against a
-# freshly-generated file would not tell you — a diff proves the two agree, not
-# which generator produced either. The version is READ out of go.mod, never
-# typed here: go.mod is the one copy (pinned through tools.go's blank import),
-# and a literal here would be a second copy that drifts silently the day the
-# tool is bumped.
 tool_version="$(sed -n 's|^[[:space:]]*github.com/oapi-codegen/oapi-codegen/v2 \(v[^ ]*\).*|\1|p' go.mod | head -n1)"
 if [ -z "$tool_version" ]; then
   echo "bin/prime-go: go.mod names no github.com/oapi-codegen/oapi-codegen/v2," >&2
@@ -830,28 +451,12 @@ grep -q "^// Code generated by github.com/oapi-codegen/oapi-codegen/v2 version $
   exit 1
 }
 
-# The post-processing step's own claim, checked rather than trusted. It rewrites
-# the registrations so core's account-scope checker can read them, and it says it
-# refuses when it has nothing to rewrite — so the thing worth asserting is that
-# the committed file carries the result.
 grep -q '^// POST-PROCESSED BY internal/api/stripbaseurl' "$gen" || {
   echo "bin/prime-go: $gen does not carry the stripbaseurl header, so the route" >&2
   echo "  registrations are still spelled r.Get(options.BaseURL+…) and core's" >&2
   echo "  account-scope checker cannot read them. Run 'go generate ./internal/api/'." >&2
   exit 1
 }
-#   OR ONE REGISTRATION WHOSE PATH IS AN EXPRESSION RATHER THAN A LITERAL.
-# The pattern is the SHAPE, not the token, and that is a correction: the first
-# draft grepped for `options.BaseURL+` anywhere in the file, and the header comment
-# stripbaseurl prepends quotes the generator's own output in order to explain
-# itself — so the gate went red on its own documentation. A check that fires on the
-# text describing the thing it checks is a check whose red means nothing.
-#
-# `^\s*r\.<method>\(\s*[^"]` is core's recogniser's requirement read as a pattern:
-# a `/`-prefixed string literal must be the FIRST term after the open paren. Any
-# registration line that does not satisfy it is invisible to
-# `account-scope-check`, and this repository's whole surface would read as
-# `route_defs=0` — a count of nothing printing exactly like a count of zero.
 if grep -qE '^[[:space:]]*r\.(Get|Post|Put|Patch|Delete|Head)\([[:space:]]*[^"]' "$gen"; then
   echo "bin/prime-go: $gen has a route registration whose path is an expression" >&2
   echo "  rather than a string literal, so core's account-scope checker cannot read" >&2
@@ -860,9 +465,6 @@ if grep -qE '^[[:space:]]*r\.(Get|Post|Put|Patch|Delete|Head)\([[:space:]]*[^"]'
   exit 1
 fi
 
-# `git status --porcelain` rather than `git diff --quiet` because the gate must
-# also catch a file that is UNTRACKED-but-present, and because `git diff` alone
-# reports nothing for a tree with no HEAD (a fresh clone's first run).
 drift="$(git status --porcelain -- "$gen" | sed 's/^/    /')"
 if [ -n "$drift" ]; then
   echo "bin/prime-go: $gen DOES NOT MATCH openapi/v1.yaml. Regenerating changed it:" >&2
@@ -885,18 +487,6 @@ if [ "$gen_before" != "$gen_after" ]; then
 fi
 echo "$gen regenerates byte-identically from openapi/v1.yaml, carries the ${tool_version} header, and its registrations are readable"
 
-# THE COUNTED SUITE, and it is printed here rather than left to be read out of
-# `go test`'s own per-package lines. Two counts, because one of them cannot catch
-# the failure the other cannot:
-#
-#   `suite:`    `--- PASS:` lines — moves when ANY test is lost, in any package.
-#   `packages:` `ok ` lines — moves when a package stops compiling into the suite.
-#
-# Without `-v` this count would be zero on a wholly green gate, which is a floor
-# that never fires and reads as the strongest kind of proof. The count is of PASS
-# lines and not of tests that did not fail: a red gate still prints every passing
-# test in the failing packages, so a red run's number is high by design — read it
-# WITH this script's exit status and the `--- FAIL:` lines above.
 suite_passed="$(printf '%s\n' "$out" | grep -c '^--- PASS: ' || true)"
 suite_failed="$(printf '%s\n' "$out" | grep -c '^--- FAIL: ' || true)"
 suite_packages="$(printf '%s\n' "$out" | grep -c '^ok  ' || true)"
@@ -904,18 +494,4 @@ echo
 echo "suite: ${suite_passed} passed, ${suite_failed} failed"
 echo "packages: ${suite_packages} with tests"
 
-# TWO LINES, NOT ONE, and that is a decision rather than an oversight: a `proof`
-# in gate.yml may capture exactly ONE group, because `minimum` reads the last one
-# and a second group would make the floor mean whichever number happened to come
-# second. `packages:` is printed for a reader and is NOT proved — a floor on it is
-# worth almost nothing, because losing a package's tests is already caught by
-# `suite` losing its tests, and losing a package from the suite without losing a
-# test means the tests moved. An unused-looking number next to a proved one is
-# still worth printing, and worth saying out loud that it is not proved.
-#
-# A NOTE ON THE FLOOR AND THIS PACKET'S SHAPE. `suite` moves when a test goes
-# missing, which is what a floor is for, and it moves DOWN as well as up: the
-# equivalence tier counts as one test whether it compared 72 things or none. That
-# is why the equivalence tier prints its own comparison count on every green run
-# — the floor says "something ran", and only the tier's own line says how much.
 step "ok"

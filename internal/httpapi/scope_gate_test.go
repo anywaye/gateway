@@ -8,26 +8,7 @@ import (
 	"github.com/anywaye/gateway/internal/testkeys"
 )
 
-// The scope gate: a route that declares what a caller must hold, and a caller
-// that does not hold it.
-//
-// # WHAT THIS PROVES THAT A POSITIVE TEST CANNOT
-//
-// `RequireScope` is implemented and was tested in `internal/auth` before this
-// packet, but it was mounted by nothing — so the capabilities half of what the
-// verifier proves about a caller was parsed, verified and discarded. A test that
-// a caller WITH the scope succeeds would pass against a gateway that never
-// consults the scope at all. The refusal is the property: a route that declared
-// a scope and a caller without it must be a `403`, and the upstream must not be
-// contacted.
-//
-// The gate is mounted after the credential gate and before the limiter, so a
-// caller refused for capability is counted against nothing — the same rule an
-// unverified token gets. That ordering is asserted here too: the refusal is a
-// `403` and not a `429`, and the limiter's bucket is not spent.
 
-// TestARouteThatDeclaresAScopeRefusesACallerWithoutIt is the finding, in the
-// direction that matters.
 func TestARouteThatDeclaresAScopeRefusesACallerWithoutIt(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	verifier, err := authVerifierFor(t, fixture)
@@ -54,7 +35,6 @@ func TestARouteThatDeclaresAScopeRefusesACallerWithoutIt(t *testing.T) {
 		t.Fatalf("building the limiter: %v", err)
 	}
 
-	// The route declares the scope. A caller without it must be refused.
 	options := Options{
 		Verifier: verifier,
 		Limiter:  limiter,
@@ -63,7 +43,6 @@ func TestARouteThatDeclaresAScopeRefusesACallerWithoutIt(t *testing.T) {
 		},
 	}
 
-	// A token WITHOUT the scope.
 	without := fixture.Mint(t, testkeys.Claims{
 		ExpiresIn: testkeys.Valid,
 		Scope:     "invoices:read",
@@ -80,13 +59,10 @@ func TestARouteThatDeclaresAScopeRefusesACallerWithoutIt(t *testing.T) {
 	if got := rec.Body.String(); got == "" {
 		t.Errorf("the refusal wrote no body, so a caller learns nothing about why")
 	}
-	// The upstream must not be contacted: a relayed request is a request gateway
-	// just decided not to make.
 	if service.Count() != 0 {
 		t.Errorf("the upstream received %d request(s) for a caller the scope gate refused. A refusal that still spends an upstream call is a gate mounted after the pass-through.", service.Count())
 	}
 
-	// A token WITH the scope is forwarded.
 	with := fixture.Mint(t, testkeys.Claims{
 		ExpiresIn: testkeys.Valid,
 		Scope:     "pantry:read",
@@ -104,9 +80,6 @@ func TestARouteThatDeclaresAScopeRefusesACallerWithoutIt(t *testing.T) {
 	}
 }
 
-// TestARouteThatDeclaresNoScopeForwardsAnyVerifiedCaller is the additive half: a
-// route with no `scopes` field forwards every verified caller, which is what
-// every deployed route already means and the reason the field is safe to add.
 func TestARouteThatDeclaresNoScopeForwardsAnyVerifiedCaller(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	verifier, err := authVerifierFor(t, fixture)
@@ -126,7 +99,6 @@ func TestARouteThatDeclaresNoScopeForwardsAnyVerifiedCaller(t *testing.T) {
 		},
 	}
 
-	// A token with NO scope at all is still forwarded: the route declared none.
 	token := fixture.Mint(t, testkeys.Claims{
 		ExpiresIn: testkeys.Valid,
 		AccountID: "cd000000-0000-4000-8000-000000000002",
@@ -143,8 +115,6 @@ func TestARouteThatDeclaresNoScopeForwardsAnyVerifiedCaller(t *testing.T) {
 	}
 }
 
-// TestAPublicRouteCannotDeclareScopes holds the boot refusal: a public route has
-// no verified caller, so there is nothing to check a scope against.
 func TestAPublicRouteCannotDeclareScopes(t *testing.T) {
 	_, err := ValidateRouteTable(RouteTable{
 		"/v1/catalog": {BaseURL: "http://catalog:8080", Public: true, Scopes: []string{"catalog:read"}},

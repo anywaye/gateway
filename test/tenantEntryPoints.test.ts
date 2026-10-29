@@ -1,39 +1,3 @@
-// Every account-scoped entry point, derived rather than declared.
-//
-// ## Why a derivation and not a list
-//
-// darkroom-09 enumerated darkroom's account-scoped entry points, wrote a
-// negative test for each, and made the count a number a reader can check. The
-// check worked because the enumeration was derived from the *code* — from the
-// routes Hono registered and the signatures `src/store.rs` declared — so a new
-// entry point that forgot its tenant predicate was a new name and failed here.
-//
-// gateway has the same problem in a smaller, stranger shape. It holds no account's
-// rows: there is no `assets` table and no query that could drop
-// `and account_id = $2`. What gateway holds is **state keyed by account** — a
-// rate-limit bucket, a set of API-key records, a browser session — and the ways
-// to *name* an account, which are the ways a boundary can be crossed:
-//
-//   * a route that echoes the caller's account back (`GET /v1/me`)
-//   * an API-key operation that acts on a record
-//   * the bucket the limiter derives
-//   * the claim the principal is built from
-//   * the store operations that take an account as a parameter
-//
-// Each of those is enumerated below **from the source**, and each one is required
-// to have a negative case named in `tenantIsolation.test.ts`. So the set is not
-// a list somebody maintains: adding a route or a store method that takes an
-// account makes this file fail until the negative case exists, and removing one
-// makes it fail too — because a scoping nobody can find is a scoping nobody has
-// ever run.
-//
-// ## Why this is in the default tier
-//
-// It needs no Redis, no socket and no network, so it runs on every `bin/prime`
-// and in the test image. It is the half that catches the edit *before* a fixture
-// is built, which is the half that matters: the behavioural file proves the
-// scoping holds against a real store, and this one proves there was nothing to
-// forget.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -44,10 +8,9 @@ import { findFiles } from "./dockerStage";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (path: string): string => readFileSync(join(root, path), "utf8");
 
-/** Strips comments and string literals, so prose about a rule is not the rule. */
 function code(text: string): string {
   return text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\*[\s\S]*?\*\
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
     .replace(/`(?:\\.|[^`\\])*`/g, "``")
     .replace(/"(?:\\.|[^"\\])*"/g, '""')
@@ -325,21 +288,12 @@ describe("routes", () => {
   test("the account-scoped routes are exactly the ones the derivation finds", () => {
     const routes = registeredRoutes();
 
-    // The three that carry or act on an account. `/auth/*` needs a `bff` option
-    // the factory is not given here, so it registers nothing in this shape; they
-    // are accounted for in the behavioural file, which builds the browser
-    // surface deliberately.
     const accountScoped = routes.filter((route) => route.startsWith("GET /v1/"));
 
     expect(accountScoped).toEqual(["GET /v1/me"]);
   });
 
   test("every account-scoped route has a negative case", () => {
-    // The check that would notice a routed packet adding an id-addressed tenant
-    // resource. `/v1/invoices/{id}` would land in this set on the next run and
-    // fail here, because the table has no row for it — which is the moment
-    // somebody writes "account A may not read account B's invoice" rather than
-    // shipping the route and trusting it.
     const routes = registeredRoutes().filter((route) => route.startsWith("GET /v1/"));
     const covered = ENTRY_POINTS.filter((entry) => entry.file === "src/index.ts");
 
@@ -347,9 +301,6 @@ describe("routes", () => {
   });
 
   test("the probes serve no account and are exempt from the limiter", () => {
-    // They are the two routes a reader of the table might expect to find
-    // negative cases for, and the reason there are none is worth asserting
-    // rather than leaving to be inferred: neither holds anybody's data.
     expect(registeredRoutes()).toContain("GET /healthz");
     expect(registeredRoutes()).toContain("GET /readyz");
     expect(ENTRY_POINTS.some((entry) => entry.case.includes("healthz"))).toBe(false);
@@ -361,19 +312,11 @@ describe("store operations", () => {
     const derived = accountScopedStoreMethods();
     const text = code(read("src/middleware/apiKey.ts"));
 
-    // `issue` and `list` and `revoke` all name the account. The derived set is
-    // asserted against a literal so that a store method which stopped taking an
-    // account — or a new one added that does — is a failing test rather than a
-    // quieter list.
     expect(derived).toEqual(["src/middleware/apiKey.ts:issue", "src/middleware/apiKey.ts:list", "src/middleware/apiKey.ts:revoke"]);
     expect(text).toContain("revoke(accountId: string, id: string)");
   });
 
   test("the account-scoped operations cover read, list and update, and nothing is unscoped", () => {
-    // The defect this caught, stated as a property of the source rather than as
-    // a behavioural observation: `revoke` used to take an id alone, and an id is
-    // not a tenant. If someone narrows the signature again, this is the check
-    // that says so before a test has to be written for the new shape.
     const text = code(read("src/middleware/apiKey.ts"));
 
     expect(text).not.toMatch(/revoke\(id:\s*string\)/);
@@ -382,10 +325,6 @@ describe("store operations", () => {
   });
 
   test("a cross-tenant refusal in the store is absence, not an error", () => {
-    // `revoke` refuses by *not acting*. A throw here would be a "that key is not
-    // yours" oracle one layer below the wire, which is the same leak as a 403
-    // and harder to notice because it is in a method whose signature says
-    // `Promise<void>`.
     const text = code(read("src/middleware/apiKey.ts"));
     const revoke = text.slice(text.indexOf("async revoke(accountId, id)"), text.indexOf("async list(accountId)"));
 
@@ -398,11 +337,6 @@ describe("403s", () => {
   test("the only 403s in production source are the capability gate and the origin gate", () => {
     const sites = forbiddenSites();
 
-    // Derived from the source, and asserted against a literal. Adding a 403
-    // anywhere else is the finding this packet is for, and a `403` for a
-    // resource the caller cannot see is an enumeration oracle — it tells a
-    // caller the thing is real and belongs to somebody else, which is a
-    // perfectly good way to walk the platform without reading a row of it.
     expect(sites).toHaveLength(2);
     expect(sites.every((site) => site.startsWith("src/middleware/jwt.ts:") || site.startsWith("src/bff/auth.ts:"))).toBe(
       true,
@@ -410,29 +344,15 @@ describe("403s", () => {
   });
 
   test("both 403s are about the caller, not about a resource that exists", () => {
-    // The distinction is load-bearing in both directions and it is the one thing
-    // a reader should not have to take on trust. `requireScope` refuses a token
-    // that authenticated and lacks a capability — a fact about the caller, which
-    // they already know, so reporting it leaks nothing. `requireSameOrigin`
-    // refuses a request that cannot prove its origin — again about the request.
-    // Neither names a resource, so neither can confirm one exists.
-    //
-    // The *raw* source is read here rather than `code()`: the strings below are
-    // the messages, and `code()` deliberately blanks string literals — checking
-    // for one there would be checking for it in the place it cannot be.
     const jwt = read("src/middleware/jwt.ts");
     const bff = read("src/bff/auth.ts");
 
     expect(jwt).toContain("token is missing the");
     expect(bff).toContain("this request is not from the same origin");
-    // And the scope the caller *does* hold is never echoed back, which would tell
-    // a prober what else to try for. Checked on the stripped source, since this
-    // one is about code rather than about a message.
     expect(code(jwt)).not.toMatch(/principal\.scope\.join\(/);
   });
 });
 
-/** Whether a repository-relative path exists, for the table's own file column. */
 function existsInTree(path: string): boolean {
   try {
     readFileSync(join(root, path));

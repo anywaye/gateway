@@ -32,11 +32,7 @@ func InitErrorReporting() {
 		Environment:      environment,
 		AttachStacktrace: true,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			// Keep the exception message so errors are actionable. The message
-			// must not contain user input or secrets; identifiers belong in tags.
 			if event.Request != nil {
-				// Keep the path for reproduction, but drop the query string,
-				// which is where tokens and PII most often leak.
 				if u := event.Request.URL; u != "" {
 					if i := strings.IndexByte(u, '?'); i >= 0 {
 						event.Request.URL = u[:i]
@@ -44,9 +40,6 @@ func InitErrorReporting() {
 				}
 				event.Request.QueryString = ""
 			}
-			// Mark gateway's own frames as in-app so GlitchTip shows the
-			// stack trace in its default (in-app) view instead of hiding
-			// every frame.
 			for i := range event.Exception {
 				if st := event.Exception[i].Stacktrace; st != nil {
 					for j := range st.Frames {

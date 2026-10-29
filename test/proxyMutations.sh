@@ -1,39 +1,4 @@
 #!/usr/bin/env bash
-# The mutation evidence for REPORT-gateway-go-proxy-01.
-#
-# ## WHAT THIS IS FOR
-#
-# The packet asks for every property to have a test "each shown red by mutation and
-# green after". A test that has only ever been observed passing has not been tested —
-# it may be green because the code is right, or because the check never looked. This
-# script settles that by making each property ABSENT, running the named test, and
-# recording whether it went red.
-#
-# It follows `test/assertionMutations.sh`'s rules, which are the standing ones:
-#
-#   1. `git diff` is printed after the edit, so the change that was made is visible
-#      in the transcript rather than trusted.
-#   2. The target line is re-read out of the file and printed, so a substitution that
-#      silently failed to apply cannot be mistaken for a working one. The substitution
-#      REFUSES when the target is not present exactly once, which is the mechanism —
-#      the first draft of the TypeScript script discovered that by having a mutation
-#      pass for the wrong reason.
-#   3. The expected test is run BY NAME, so a red is attributable to one assertion
-#      rather than to a neighbour.
-#   4. The tree is put back by the **inverse substitution**, not by `git checkout`.
-#      `git checkout -- <file>` is the correct way to revert a mutation and also the
-#      fastest way to destroy every uncommitted edit in a file.
-#   5. At the end, `git diff` must be EMPTY. A script that leaves a mutation behind
-#      has not produced a proof, it has produced a broken tree.
-#
-# Every command is bounded by `timeout`. Nothing here runs for hours.
-#
-# ## USAGE
-#
-#     ./test/proxyMutations.sh
-#
-# Exits 0 only when every mutation was observed red on its named test AND the tree
-# is clean at the end.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -44,7 +9,6 @@ note() { printf '\n=====================================================\n=== %s
 ok()   { PASS=$((PASS + 1)); printf 'PROVED (green -> red): %s\n' "$*"; }
 bad()  { FAIL=$((FAIL + 1)); printf 'NOT PROVED: %s\n' "$*"; }
 
-# mutate <label> <source-file> <test-name> <old> <new>
 mutate() {
   local label="$1" src="$2" want="$3" old="$4" new="$5"
   note "$label"
@@ -64,8 +28,6 @@ PY
     return
   fi
 
-  # The diff, then the line itself. Rule 2: an assertion by exit status is not an
-  # assertion, and this is how a mutation is shown to have actually been applied.
   printf -- '--- diff ---\n'
   git --no-pager diff -- "$src" | tail -n 12
   printf -- '--- the line now in the file ---\n'
@@ -79,7 +41,6 @@ PY
     grep -E '^\s+(proxy|table|assertion)_test\.go' /tmp/mutation.out | head -4
   fi
 
-  # Reverted by the inverse substitution. Never `git checkout` — see rule 4.
   if ! python3 - "$src" "$new" "$old" <<'PY'
 import sys
 path, new, old = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -94,8 +55,6 @@ PY
     exit 1
   fi
 
-  # And the revert is itself checked: a green that came back is the proof that the
-  # red was this property and not a broken build.
   if timeout 300 go test ./internal/httpapi/ -count=1 -run "^${want}$" >/tmp/mutation.out 2>&1; then
     printf 'restored: %s is green again\n' "$want"
   else
@@ -105,13 +64,6 @@ PY
   fi
 }
 
-# mutate_pair is `mutate` for a property enforced at TWO places on purpose.
-#
-# It exists because the first version of this script proved "a malformed table is
-# served rather than refused" by removing ONE of the two gates, watched the test stay
-# green, and reported the property unproved — when the property is in fact enforced
-# twice and either gate alone is enough. That is the redundancy working, not a broken
-# test, so the mutation that proves the property has to remove both.
 mutate_pair() {
   local label="$1" src="$2" want="$3" old_a="$4" new_a="$5" old_b="$6" new_b="$7"
   note "$label"
@@ -169,9 +121,6 @@ PY
   fi
 }
 
-# --------------------------------------------------------------------------
-# property 1 — the caller's credential never reaches an internal service
-# --------------------------------------------------------------------------
 
 mutate \
   'property 1: forward the caller Authorization as well as the service token' \
@@ -200,9 +149,6 @@ mutate \
 		headers.Set("Authorization", "Bearer "+strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	}'
 
-# --------------------------------------------------------------------------
-# property 2 — the path is rebuilt, never filtered
-# --------------------------------------------------------------------------
 
 mutate \
   'property 2: rebuild becomes path.Clean, which normalises instead of reconstructing' \
@@ -239,9 +185,6 @@ mutate \
 		return "", false
 	}'
 
-# --------------------------------------------------------------------------
-# property 3 — only content-type and accept cross
-# --------------------------------------------------------------------------
 
 mutate \
   'property 3: the allowlist grows by one name' \
@@ -274,9 +217,6 @@ mutate \
 		}
 	}'
 
-# --------------------------------------------------------------------------
-# property 4 — no redirect is followed, and the call is bounded
-# --------------------------------------------------------------------------
 
 mutate \
   'property 4: CheckRedirect follows' \
@@ -298,9 +238,6 @@ mutate \
   '	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()'
 
-# --------------------------------------------------------------------------
-# properties 5 and 6 — what crosses back
-# --------------------------------------------------------------------------
 
 mutate \
   'property 5: every upstream header is relayed instead of one' \
@@ -324,9 +261,6 @@ mutate \
 		w.Header().Set("Cache-Control", "no-store")
 	}'
 
-# --------------------------------------------------------------------------
-# property 7 — what crosses back depends on the status
-# --------------------------------------------------------------------------
 
 mutate \
   'property 7: isRelayable becomes a range check that relays 5xx' \
@@ -350,19 +284,7 @@ mutate \
 	return status < 400
 }'
 
-# --------------------------------------------------------------------------
-# property 8 — the table is validated at boot
-# --------------------------------------------------------------------------
 
-# BOTH call sites go, because `New` and `Options.validate` each validate the table —
-# `validate` so a bad table is refused at construction, and `New` so the copy it hands
-# the pass-through is the checked one.
-#
-# Removing only ONE of them is not a mutation of the property; it is the redundancy
-# working. The first version of this script proved exactly that by removing
-# `validate`'s copy, watching the test stay green, and reporting the property
-# unproved. So the mutation that proves it removes both, and the redundancy is a
-# deliberate comment in `New` rather than a silent second check.
 mutate_pair \
   'property 8: a malformed table is served rather than refused' \
   internal/httpapi/httpapi.go \
@@ -393,9 +315,6 @@ mutate \
   '		if target.Public && target.Principal != nil {' \
   '		if false {'
 
-# --------------------------------------------------------------------------
-# MD19, all four
-# --------------------------------------------------------------------------
 
 mutate \
   'MD19 1: an assertion is minted for a public entry' \
@@ -477,9 +396,6 @@ mutate \
 	Primes []string `json:"p"`
 }'
 
-# --------------------------------------------------------------------------
-# the standing 401
-# --------------------------------------------------------------------------
 
 mutate \
   'the standing property: a private route stops refusing an anonymous caller' \
@@ -516,9 +432,6 @@ mutate \
 			return
 		}'
 
-# --------------------------------------------------------------------------
-# gateway's own route, the one place Go and Hono differ structurally
-# --------------------------------------------------------------------------
 
 mutate \
   'gateway owns its own route: the exclusion is dropped, so a /v1 entry proxies /v1/me away' \

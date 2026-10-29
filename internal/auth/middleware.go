@@ -1,24 +1,3 @@
-// The two gates, as `net/http` middleware.
-//
-// `requireJwt` and `requireScope` in `src/middleware/jwt.ts` (removed at cutover) are Hono
-// `MiddlewareHandler`s. Their Go spelling is a `func(http.Handler) http.Handler`,
-// because that is what `chi`'s `r.Use` takes, and the shape difference is worth a
-// sentence: Hono's version is handed a context and a `next`, and a refusal is a
-// `Response` the middleware RETURNS. Go's version writes the response and does
-// not call the inner handler. Same decision, same bytes, different control flow.
-//
-// # WHERE THE PRINCIPAL GOES
-//
-// `AuthEnv` in TypeScript is a typed set of Hono context variables. Go's
-// `http.Request` has no per-request context bag a caller can extend without
-// wrapping the request, so the principal travels in the request CONTEXT — which
-// is what a context is for, and which means a handler that forgets to read it
-// gets a nil pointer rather than a fabricated caller.
-//
-// That is the whole argument for it. A package-level `currentPrincipal` would be
-// one answer shared by every in-flight request, and the bug it produces is a
-// tenant seeing another tenant's identity: silent, and it only reproduces under
-// concurrency.
 package auth
 
 import (
@@ -30,7 +9,6 @@ import (
 
 type principalContextKey struct{}
 
-// withPrincipal is the only writer of the principal into a request.
 func withPrincipal(r *http.Request, principal *Principal) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
 }
@@ -65,16 +43,6 @@ func WithPrincipal(r *http.Request, principal *Principal) *http.Request {
 	return withPrincipal(r, principal)
 }
 
-// apiKeyContextKey is the other credential's identity, and it is a separate key
-// rather than a field on `Principal` because `internal/ratelimit` reads them
-// independently: a request can have an account and no key, a key and no account,
-// both, or neither.
-//
-// It is defined here rather than in `internal/ratelimit` because THIS is the
-// package that defines what a credential is. `WithAPIKeyID` is exported and
-// currently has no caller in this repository — the API-key gate is a later
-// packet — and it is here so the limiter does not have to grow a second context
-// key later, in a package that would then own a concept it does not define.
 type apiKeyContextKey struct{}
 
 // WithAPIKeyID records the API key that authenticated a request.
@@ -131,10 +99,6 @@ func (v *Verifier) Require(refuse Refuser) func(http.Handler) http.Handler {
 // it can answer 401 at all: a gate whose wiring mistake is unreachable is a gate
 // whose wiring mistake is unfixed.
 func (v *Verifier) RequireScope(refuse Refuser, scope string) (func(http.Handler) http.Handler, error) {
-	// Validated at construction rather than per request, so a route table with an
-	// empty scope is a refusal to build rather than a gate that refuses everything
-	// with a message naming nothing. `jwt.ts` validates in the same place for the
-	// same reason.
 	required := strings.TrimSpace(scope)
 	if required == "" {
 		return nil, fmt.Errorf("%w: scope must be a non-empty string", ErrNotConfigured)
@@ -153,10 +117,6 @@ func (v *Verifier) RequireScope(refuse Refuser, scope string) (func(http.Handler
 				return
 			}
 
-			// The scope that is missing is gateway's own configuration and is safe
-			// to name. The scopes the caller DOES hold are not echoed back — that
-			// would be a list of what this credential can reach, handed to whoever
-			// presented it.
 			refuse(w, r, forbidden("token is missing the "+required+" scope"))
 		})
 	}, nil

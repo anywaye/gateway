@@ -17,10 +17,6 @@ import (
 	"time"
 )
 
-// ask drives one request through a gateway built from `options`, and returns the
-// recorder. Every assertion in this file goes through it, so there is one place
-// that builds the handler under test and one place that would have to change if
-// `New`'s shape did.
 func ask(t *testing.T, options Options, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -44,20 +40,11 @@ func ask(t *testing.T, options Options, method, path string, headers map[string]
 	return rec
 }
 
-// bare is the gateway with nothing configured, which is the configuration the
-// TypeScript reference is stood up with by `internal/equivalence`. It is a
-// function rather than a shared `Options` value because `Options` holds a slice
-// and a shared slice is one careless `append` away from being mutated across
-// tests.
 func bare(t *testing.T) Options {
 	t.Helper()
 	return Options{}
 }
 
-// decode reads a JSON body into `into`, failing the test with both bodies if it
-// does not fit. The message carries what was actually on the wire, because a
-// failure that says "expected {deps:{}}" and nothing else makes the reader go
-// and print it.
 func decode(t *testing.T, rec *httptest.ResponseRecorder, into any) {
 	t.Helper()
 
@@ -67,9 +54,6 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, into any) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// the two operations this packet serves
-// --------------------------------------------------------------------------
 
 func TestLivenessAnswersOkWithTheDocumentsShape(t *testing.T) {
 	rec := ask(t, bare(t), http.MethodGet, "/healthz", nil)
@@ -77,10 +61,6 @@ func TestLivenessAnswersOkWithTheDocumentsShape(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status is %d, want 200", rec.Code)
 	}
-	// The content type is asserted on every response in this file rather than on
-	// the happy path only, because `AGENTS.md` names this: "`/readyz` returning
-	// 200 with the wrong shape is a failure, not a pass", and a client that
-	// branches on it cannot tell a v0 envelope from core's.
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type is %q, want application/json", got)
 	}
@@ -93,9 +73,6 @@ func TestLivenessAnswersOkWithTheDocumentsShape(t *testing.T) {
 	if body.Status != "ok" {
 		t.Errorf(`body is {"status":%q}, want {"status":"ok"}`, body.Status)
 	}
-	// Byte-for-byte, not field-by-field. The document declares `Health` with
-	// `additionalProperties: false` and one field, so any other key is a document
-	// violation that a struct decode into this shape would silently drop.
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"status":"ok"}` {
 		t.Errorf("body is %s, want {\"status\":\"ok\"} exactly — a field the document does not declare", got)
 	}
@@ -107,8 +84,6 @@ func TestReadinessWithNoProbesAnswersAnEmptyObjectNotNull(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status is %d, want 200", rec.Code)
 	}
-	// `{"deps":null}` would satisfy a client that reads `deps.identity` and get
-	// nothing; the document says an app with no probes answers `{}`.
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"deps":{}}` {
 		t.Errorf("body is %s, want {\"deps\":{}}", got)
 	}
@@ -117,9 +92,6 @@ func TestReadinessWithNoProbesAnswersAnEmptyObjectNotNull(t *testing.T) {
 func TestReadinessNamesTheDependencyThatIsDownAndNotWhyItIsDown(t *testing.T) {
 	rec := ask(t, Options{Probes: []NamedProbe{
 		{Name: "identity", Probe: func(context.Context) error { return nil }},
-		// The message is the finding: it carries a host, a port and a
-		// credential, and an unauthenticated caller must not be a way to learn
-		// that a dependency's host sits at a particular address.
 		{Name: "redis", Probe: func(context.Context) error {
 			return errors.New("dial tcp://db.internal:5432: password=hunter2")
 		}},
@@ -148,18 +120,7 @@ func TestReadinessNamesTheDependencyThatIsDownAndNotWhyItIsDown(t *testing.T) {
 	}
 }
 
-// The ordering case, and it is the reason `Options.Probes` is a slice.
-//
-// `encoding/json` sorts map keys, so a `map[string]ProbeStatus` would answer
-// `{"redis":"unavailable","identity":"ok"}` where the TypeScript reference
-// answers `{"identity":"ok","redis":"unavailable"}`. Both are the same object and
-// `internal/equivalence` compared the bytes, so this is a difference the port
-// would have shipped. The assertion is on the byte string, not on the decoded
-// map, because a decoded map has already thrown the order away.
 func TestReadinessRendersDependenciesInTheOrderTheyWereRegistered(t *testing.T) {
-	// Deliberately not alphabetical: `encoding/json` sorts map keys, so an
-	// alphabetical expectation would be satisfied by the very implementation this
-	// is written against.
 	rec := ask(t, Options{Probes: []NamedProbe{
 		{Name: "redis", Probe: alwaysOK},
 		{Name: "identity", Probe: alwaysOK},
@@ -186,17 +147,11 @@ func TestAProbeThatPanicsIsOneUnavailableDependency(t *testing.T) {
 	}
 }
 
-// The boundedness case. `src/probe.ts` (removed at cutover) puts *hangs* in the list of things a
-// probe may do that mean "unavailable", and a `context.Context` a probe may
-// ignore is not a bound on one — so `runProbe` supplies the deadline. This is
-// the only test that lowers `probeTimeout`, and it restores it.
 func TestAProbeThatIgnoresItsContextIsStillBounded(t *testing.T) {
 	restore := probeTimeout
 	probeTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { probeTimeout = restore })
 
-	// A probe that neither looks at its context nor returns: the shape that
-	// would hang a request forever.
 	blocked := make(chan struct{})
 	t.Cleanup(func() { close(blocked) })
 
@@ -221,10 +176,6 @@ func TestAProbeThatIgnoresItsContextIsStillBounded(t *testing.T) {
 }
 
 func TestTheTimeoutIsOnlyEverLoweredInATest(t *testing.T) {
-	// `probeTimeout` is a variable so one test can run in milliseconds. A
-	// variable is a hole, so this closes it: the only assignment outside the
-	// declaration is in this package's own tests, and one in production code
-	// would be a deadline an operator could not see.
 	assigned := regexp.MustCompile(`(?m)^\s*(probeTimeout\s*=|const probeTimeout)`)
 
 	for _, name := range packageFiles(t) {
@@ -237,16 +188,7 @@ func TestTheTimeoutIsOnlyEverLoweredInATest(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// the refusals
-// --------------------------------------------------------------------------
 
-// Every route refusal answers the v0 envelope, and the three shapes it can take
-// — an unknown path, a path with a trailing segment, and a method the route does
-// not serve — all produce the SAME bytes. The method case is the one that is a
-// decision rather than an inheritance: chi's default is a `405` with an empty
-// body, and the TypeScript reference has no 405 at all, so `New` points
-// `MethodNotAllowed` at the same writer as `NotFound`.
 func TestEveryRouteRefusalIsTheV0NotFoundEnvelope(t *testing.T) {
 	const wantBody = `{"error":"not_found","message":"no such route"}`
 
@@ -285,12 +227,6 @@ func TestEveryRouteRefusalIsTheV0NotFoundEnvelope(t *testing.T) {
 	}
 }
 
-// `HEAD /healthz` answers `200` with an empty body on the TypeScript reference,
-// because Hono routes `HEAD` to the `GET` handler. chi does not, so this is a
-// registration rather than an inheritance, and it is on the two probe paths
-// rather than everywhere: HEAD is how an orchestrator and a health checker ask,
-// and a gateway that answers 404 to `HEAD /healthz` is a process that looks
-// dead to the tool whose job is to notice it is alive.
 func TestHeadOnAProbePathAnswersTheSameAsGet(t *testing.T) {
 	for _, path := range sortedKeys(ProbePaths) {
 		t.Run(path, func(t *testing.T) {
@@ -309,39 +245,22 @@ func TestHeadOnAProbePathAnswersTheSameAsGet(t *testing.T) {
 	}
 }
 
-// The five operations this packet does not serve, and the two it does. Both
-// halves are named lists, which is what makes an operation ADDED to the document
-// a failure rather than a silence: `openapi/v1.yaml` gaining an eighth operation
-// puts a route on the router that appears in neither list, and this test says so.
 func TestEveryOperationIsEitherServedOrDeclined(t *testing.T) {
-	// What each operation answers with a gateway built with nothing configured,
-	// and WHY. `served` is its own answer; `declined` is the reference's answer
-	// for an operation it does not register either.
 	served := map[string]string{
 		"GET /healthz": `{"status":"ok"}`,
 		"GET /readyz":  `{"deps":{}}`,
 	}
 	declined := map[string]string{
-		// `GET /v1/me` — the bearer-token gate is Wave 3, and
-		// `src/index.ts` (removed at cutover) does not register the route without a verifier.
 		"GET /v1/me": `{"error":"not_found","message":"no such route"}`,
-		// The three `/v1/api-keys` routes — the API-key surface needs a store, and a
-		// gateway built with nothing configured has none, so they decline with the
-		// same v0 `404` the other unconfigured operations do.
 		"POST /v1/api-keys":        `{"error":"not_found","message":"no such route"}`,
 		"GET /v1/api-keys":         `{"error":"not_found","message":"no such route"}`,
 		"DELETE /v1/api-keys/{id}": `{"error":"not_found","message":"no such route"}`,
-		// The four `/auth` routes — the BFF and the session store are Wave 3, and
-		// `src/index.ts` (removed at cutover) does not register them without an identity to ask.
 		"POST /auth/register": `{"error":"not_found","message":"no such route"}`,
 		"POST /auth/login":    `{"error":"not_found","message":"no such route"}`,
 		"POST /auth/logout":   `{"error":"not_found","message":"no such route"}`,
 		"GET /auth/me":        `{"error":"not_found","message":"no such route"}`,
 	}
 
-	// `HEAD` is excluded here and held separately by
-	// `TestHeadOnAProbePathAnswersTheSameAsGet` and `TestTheHeadRoutesAreTheProbePaths`:
-	// it is not an operation the document declares, and `New` registers it.
 	routes := servedRoutes(t)
 	for _, route := range routes {
 		if route.method == http.MethodHead {
@@ -364,12 +283,7 @@ func TestEveryOperationIsEitherServedOrDeclined(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// configuration arrives as an argument
-// --------------------------------------------------------------------------
 
-// The property `guard/AGENTS.md` asks for, in the form the Go port can lose: two
-// differently-configured gateways in ONE process, each answering for itself.
 func TestTwoAppsCoexistInOneProcess(t *testing.T) {
 	healthy := Options{Probes: []NamedProbe{
 		{Name: "identity", Probe: alwaysOK},
@@ -385,26 +299,12 @@ func TestTwoAppsCoexistInOneProcess(t *testing.T) {
 	if got := strings.TrimSpace(ask(t, degraded, http.MethodGet, "/readyz", nil).Body.String()); got != `{"deps":{"identity":"unavailable","redis":"ok"}}` {
 		t.Errorf("the second app answered %s", got)
 	}
-	// And the first is unchanged afterwards, which is the part a package-level
-	// global would get wrong.
 	if got := strings.TrimSpace(ask(t, healthy, http.MethodGet, "/readyz", nil).Body.String()); got != `{"deps":{"identity":"ok"}}` {
 		t.Errorf("the first app answered %s on its second call — one app's configuration reached the other", got)
 	}
 }
 
-// The check rather than the promise. Go gives a package no way to say "I do not
-// read the environment", and `os.Getenv` is available to any package at any
-// time — so this reads the sources instead.
-//
-// It is scoped rather than absolute: `env.go` DOES call `os.Getenv`, once, and
-// that is the reader every other value in this package comes from. What has to
-// hold is that no second call site exists anywhere, because the property being
-// protected is not "the environment is never read" — `cmd/gateway` has to read it
-// somewhere — it is that there is exactly one place that does.
 func TestExactlyOneFileInThisPackageTouchesTheProcessEnvironment(t *testing.T) {
-	// `runtime.go`'s own doc comment names `os.Getenv` in prose, and
-	// `env.go`'s header names `Bun.env`, so the pattern matches a line rather
-	// than a call: only an actual invocation counts as a second reader.
 	callers := regexp.MustCompile(`\bos\.(Getenv|LookupEnv|Environ)\s*\(`)
 	const reader = "env.go"
 
@@ -432,23 +332,6 @@ func TestExactlyOneFileInThisPackageTouchesTheProcessEnvironment(t *testing.T) {
 	}
 }
 
-// TestRuntimeOptionsBuildsAnAddressAndHandsNewItsOptions is the reader's "and it
-// produces a gateway" assertion.
-//
-// # WHAT CHANGED HERE, AND WHY IT IS NOT A DELETION
-//
-// The old version asserted `len(config.Options.Probes) == 0` — "nothing has been
-// given a dependency to probe yet". That was true while `RuntimeOptions` built
-// probes for no subsystems, and it is false now that the verifier and the counter
-// store are ported: a gateway built from the environment registers `identity`, and
-// `redis` when there is a `REDIS_URL`. The assertion moved to
-// `TestTheProbeOrderIsIdentityThenRedis` rather than being dropped, because the
-// thing it was actually about — a probe is registered only when a subsystem behind
-// it exists — is still the property, and it is now a positive statement about two
-// named probes rather than a count of zero.
-//
-// The `Routes` and `Assert` assertions stayed, and they are unchanged: an
-// environment that names neither must still configure neither.
 func TestRuntimeOptionsBuildsAnAddressAndHandsNewItsOptions(t *testing.T) {
 	env := mapEnv(map[string]string{"PORT": "9001"})
 
@@ -468,8 +351,6 @@ func TestRuntimeOptionsBuildsAnAddressAndHandsNewItsOptions(t *testing.T) {
 		t.Error("RuntimeOptions configured a minter from an environment that named no signing key")
 	}
 
-	// And the handler built from that configuration answers, which is the point:
-	// the port is how the process is reached and is not a handler option.
 	rec := ask(t, config.Options, http.MethodGet, "/healthz", nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("the gateway built from RuntimeOptions answered %d on /healthz", rec.Code)
@@ -480,7 +361,7 @@ func TestAnUnreadablePortIsARefusalToBoot(t *testing.T) {
 		t.Run(strconv.Quote(raw), func(t *testing.T) {
 			config, err := RuntimeOptions(mapEnv(map[string]string{"PORT": raw}))
 
-			want := raw != "" // empty is unset, and unset is the default
+			want := raw != ""
 			if want == (err == nil) {
 				t.Fatalf("PORT=%q gave err=%v, and %v", raw, err, map[bool]string{true: "it should be a refusal to boot", false: "it should be the default"})
 			}
@@ -494,9 +375,6 @@ func TestAnUnreadablePortIsARefusalToBoot(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// invalid configuration is an error, not a fallback
-// --------------------------------------------------------------------------
 
 func TestAConfigurationItCannotServeIsRefusedAtConstruction(t *testing.T) {
 	cases := []struct {
@@ -542,9 +420,6 @@ func TestAConfigurationItCannotServeIsRefusedAtConstruction(t *testing.T) {
 }
 
 func TestAValidConfigurationIsNotRefused(t *testing.T) {
-	// The other direction, and it is the one that keeps the three refusals above
-	// honest: a checker that only proves the rejections passes a `validate` that
-	// refuses everything.
 	for _, probes := range [][]NamedProbe{
 		nil,
 		{},
@@ -557,24 +432,14 @@ func TestAValidConfigurationIsNotRefused(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// the fixtures
-// --------------------------------------------------------------------------
 
 func alwaysOK(context.Context) error          { return nil }
 func alwaysUnavailable(context.Context) error { return errors.New("unavailable") }
 
-// mapEnv is an `Env` over a table, which is how a test drives the reader without
-// a process environment. This is the whole point of the `Env` argument: the
-// production reader is `OSEnv` and this one is a map, and neither can reach the
-// other.
 func mapEnv(vars map[string]string) Env {
 	return func(key string) string { return vars[key] }
 }
 
-// packageFiles is this package's own `.go` sources, derived from the directory
-// rather than written down. A list in the source would go stale the day a file
-// is added, and a check that reads a stale list reports a green over nothing.
 func packageFiles(t *testing.T) []string {
 	t.Helper()
 
@@ -597,8 +462,6 @@ func packageFiles(t *testing.T) []string {
 	return names
 }
 
-// read reads a file by name, relative to this package's directory. Generated
-// code and fixtures live outside it, so the callers say `../api/api.gen.go`.
 func read(t *testing.T, name string) string {
 	t.Helper()
 

@@ -1,24 +1,4 @@
 #!/bin/sh
-# THE LOCAL, PROD-SHAPED LOOP — identity + gateway + oauth-stub behind *.anywaye.test.
-#
-#   local/run.sh keygen   generate the local CA, the server cert and the key
-#                         material (all under local/.gen/, gitignored)
-#   local/run.sh build    build the four binaries into local/.gen/bin/
-#   local/run.sh migrate  goose up on the packet database (deploy step, run once)
-#   local/run.sh up       start stub x2, identity, gateway, edge; wait for health
-#   local/run.sh proofs   (a)(b)(c): discovery, JWKS, readyz — quoted in the report
-#   local/run.sh down     stop everything this script started
-#
-# WHY THIS FILE LIVES IN GATEWAY: the loop spans identity, gateway and the stub,
-# but the thing it exists to prove is the edge — the api/auth vhost split, the
-# issuer URL, the cookie landing on the app origin — and the edge is this
-# repository's. identity contributes its profile (config/local.env) and the stub
-# contributes nothing but its binary; the composition is gateway's.
-#
-# MACHINE RULES, all honoured: no sudo (names are reached with curl --resolve and
-# the browser's --host-resolver-rules, never /etc/hosts), no mkcert (openssl CA,
-# clients pin it with --cacert), and the parlor-e2e stack is never touched (own
-# ports 19xxx, own redis container, own database).
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,8 +22,6 @@ cmd="${1:-help}"
 
 keygen() {
   mkdir -p "$GEN"
-  # The local CA. Ten years, because its expiry must never be the thing a
-  # developer debugs on a Monday; the server cert is the short one.
   printf 'basicConstraints=critical,CA:true
 keyUsage=critical,keyCertSign,cRLSign,digitalSignature
 subjectKeyIdentifier=hash
@@ -58,8 +36,6 @@ authorityKeyIdentifier=keyid:always
   openssl x509 -req -days 825 -in "$GEN/req.csr" -CA "$GEN/ca.pem" -CAkey "$GEN/ca.key" \
     -CAcreateserial -extfile "$GEN/san.ext" -out "$GEN/cert.pem" 2>/dev/null
   rm -f "$GEN/req.csr" "$GEN/san.ext"
-  # The provider's signing key. 2048-bit RSA, either PEM spelling: the service
-  # accepts PKCS#1 and PKCS#8, and openssl's default here is PKCS#8.
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$GEN/oidc-signing.pem" 2>/dev/null
   head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' > "$GEN/signup.key"; echo >> "$GEN/signup.key"
   head -c 32 /dev/urandom | base64 | tr -d '\n' > "$GEN/oauth-enc.key"; echo >> "$GEN/oauth-enc.key"
@@ -88,7 +64,7 @@ redis_up() {
   echo "redis: l7-redis on 127.0.0.1:$REDIS_PORT"
 }
 
-start_one() { # name, binary, env-file, log
+start_one() {
   name="$1"; bin="$2"; envf="$3"; log="$4"
   if [ -f "$GEN/$name.pid" ] && kill -0 "$(cat "$GEN/$name.pid")" 2>/dev/null; then
     echo "$name: already running (pid $(cat "$GEN/$name.pid"))"
@@ -129,9 +105,6 @@ write_env() {
     echo "OAUTH_GITHUB_USERINFO_URL=http://localhost:$STUB_GITHUB_PORT/github/user"
     echo "OAUTH_GITHUB_EMAILS_URL=http://localhost:$STUB_GITHUB_PORT/github/user/emails"
   } > "$GEN/identity.env"
-  # The signing key is multiline PEM: env-through-xargs cannot carry it, so it
-  # travels in a companion file the shell sources... it cannot either. It is
-  # written here for the record; `up` exports it from the file directly.
   printf '# OIDC_SIGNING_KEY is exported, exported by up from the PEM file, not the env file.\n' >> "$GEN/identity.env"
 
   {
@@ -188,21 +161,17 @@ wait_for() {
   echo "up: edge never answered; logs in $LOG"; tail -5 "$LOG"/*.log 2>/dev/null; return 1
 }
 
-resolve_flags() { # $1 = hostname → curl --resolve flags for this loop's edge port
+resolve_flags() {
   echo "--resolve $1:$EDGE_PORT:127.0.0.1 --cacert $GEN/ca.pem"
 }
 
 proofs() {
   echo "### (a) OIDC discovery through auth.anywaye.test"
-  # shellcheck disable=SC2086
   curl -s $(resolve_flags auth.anywaye.test) "https://auth.anywaye.test:$EDGE_PORT/.well-known/openid-configuration"
   echo; echo "### (b) JWKS"
-  # shellcheck disable=SC2086
   curl -s $(resolve_flags auth.anywaye.test) "https://auth.anywaye.test:$EDGE_PORT/.well-known/jwks.json"
   echo; echo "### (c) gateway readyz through api.anywaye.test"
-  # shellcheck disable=SC2086
   curl -s -o /dev/null -w "HTTP %{http_code}\n" $(resolve_flags api.anywaye.test) "https://api.anywaye.test:$EDGE_PORT/readyz"
-  # shellcheck disable=SC2086
   curl -s $(resolve_flags api.anywaye.test) "https://api.anywaye.test:$EDGE_PORT/readyz"; echo
 }
 

@@ -10,27 +10,7 @@ import (
 	"github.com/anywaye/gateway/internal/auth"
 )
 
-// The three API-key management routes, on the API surface behind the auth gates.
-//
-// # WHY THE ACCOUNT IS NEVER A FIELD
-//
-// Every route here acts on the caller's OWN account, taken from the verified
-// principal. `POST /v1/api-keys` in particular mints a credential, and a document
-// that let a caller name the account it mints for would describe the cross-tenant
-// bug as a feature. So the account is read off the principal the auth gate
-// established and is not a field anywhere.
-//
-// # WHAT HAPPENS WHEN THERE IS NO AUTH SURFACE
-//
-// With neither a verifier nor a key store configured, no gate is mounted on
-// `/v1/*` and an anonymous request reaches these handlers. That is the same
-// "operation not here" shape as `/v1/me` with no verifier and the four `/auth/*`
-// routes with no identity: the honest answer is the v0 `404`, because the route
-// cannot establish the one thing it needs. The shipped binary always configures a
-// verifier, so this is the bare-constructor shape and not a deployed one.
 
-// requireApiKeyStore is the store these routes read, or the v0 `404` when there is
-// none — the same "operation not here" shape as `/v1/me` with no verifier.
 func (s *server) requireApiKeyStore(w http.ResponseWriter, r *http.Request) auth.ApiKeyStore {
 	if s.apiKeys == nil || s.apiKeys.Store == nil {
 		notBuilt(w, r)
@@ -39,8 +19,6 @@ func (s *server) requireApiKeyStore(w http.ResponseWriter, r *http.Request) auth
 	return s.apiKeys.Store
 }
 
-// authenticatedAccount is the account these routes act on, or false when the
-// request cannot be served.
 func (s *server) authenticatedAccount(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if s.verifier == nil && s.apiKeys == nil {
 		notBuilt(w, r)
@@ -49,9 +27,6 @@ func (s *server) authenticatedAccount(w http.ResponseWriter, r *http.Request) (s
 
 	principal := auth.PrincipalOf(r)
 	if principal == nil {
-		// Unreachable while a gate is mounted above these routes on `/v1/*`, and
-		// the check is here because "unreachable" is a claim about code in another
-		// file. A `200` with a null body would be the answer nobody wants to debug.
 		writeProblem(w, r, Problem{
 			Status: http.StatusInternalServerError,
 			Code:   "internal_error",
@@ -63,9 +38,6 @@ func (s *server) authenticatedAccount(w http.ResponseWriter, r *http.Request) (s
 	if principal.AccountID != nil {
 		return *principal.AccountID, true
 	}
-	// A key is the account, and a token with no `account_id` claim belongs to a user
-	// with no workspace — the user *is* the account. The limiter makes the same
-	// fallback (`accountIdOf`), so the bucket and the tenant boundary agree.
 	return principal.Sub, true
 }
 
@@ -87,9 +59,6 @@ func (s *server) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The one field, and it must name at least one scope. An empty list is a
-	// credential with nothing it can do, which is not a machine credential — it is
-	// a mistake, and the refusal is a `422` with the field named.
 	if len(body.Scopes) == 0 {
 		writeProblem(w, r, Problem{Status: 422, Code: api.ProblemCodeValidationFailed, Detail: "scopes must name at least one scope"})
 		return
@@ -158,14 +127,12 @@ func (s *server) RevokeAPIKey(w http.ResponseWriter, r *http.Request, id api.API
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// apiKeyIssued is the mint notice. The plaintext `key` appears exactly once.
 type apiKeyIssued struct {
 	Key    string `json:"key"`
 	Prefix string `json:"prefix"`
 	ID     string `json:"id"`
 }
 
-// apiKeySummary is one key as the listing shows it — never the hash.
 type apiKeySummary struct {
 	ID        string     `json:"id"`
 	Prefix    string     `json:"prefix"`

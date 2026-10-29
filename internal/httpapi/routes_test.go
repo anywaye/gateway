@@ -13,50 +13,11 @@ import (
 	"github.com/anywaye/gateway/internal/api"
 )
 
-// This file holds the ROUTER to the DOCUMENT, in both directions.
-//
-// `test/openapiDocument.test.ts` does the same for the TypeScript implementation
-// by reading `app.routes` — Hono's own table. There is no equivalent to read
-// here, because the chi router this package builds is not the artifact anyone
-// writes by hand: it is `internal/api/api.gen.go`, generated from
-// `openapi/v1.yaml` by `oapi-codegen`. So the two sides of the comparison are
-//
-//	the router chi.Walk reports, and
-//	the route registrations in the GENERATED file,
-//
-// and the generated file is the document's own routing table one translation
-// removed. That is a weaker statement than the TypeScript test's and it is worth
-// saying why rather than pretending otherwise: nothing here reads the YAML. What
-// closes the gap is `bin/prime-go`'s regenerate-and-diff, which fails when
-// `api.gen.go` and the document disagree — so the derived set below cannot go
-// stale without a red gate, and a route can only leave this router when the
-// document stops declaring it.
-//
-// # WHY THE REGISTRATIONS ARE PARSED RATHER THAN TRANSCRIBED
-//
-// A hand-written list of seven routes is a second inventory of the document, and
-// it goes stale silently: an eighth operation lands in the document, the
-// generated file grows a line, and the list still says seven. So it is read out
-// of the file — by content, and with a pattern that fails rather than returning
-// nothing, because a parser that finds no registrations and a document with none
-// produce the same empty set.
 
-// generatedFile is where the registrations are read from, relative to this
-// package's directory.
 const generatedFile = "../api/api.gen.go"
 
-// registration matches the generator's route registrations.
-//
-// The `options.BaseURL+` prefix is absent from the pattern because
-// `internal/api/stripbaseurl` removes it — and that is not cosmetic. The pattern
-// deliberately requires the path literal to be the FIRST thing after `(`, which
-// is the same requirement core's account-scope checker has, and the same reason:
-// `r.Get(options.BaseURL+"/v1/me", …)` is the one shape of Go route registration
-// that checker cannot read, and a parser that could not see a route would report
-// the same count as a document with none.
 var registration = regexp.MustCompile(`(?m)^\s*r\.(Get|Post|Put|Patch|Delete|Head)\("([^"]+)"`)
 
-// route is one `(method, path)` pair on the router.
 type route struct {
 	method string
 	path   string
@@ -64,18 +25,6 @@ type route struct {
 
 func (r route) String() string { return r.method + " " + r.path }
 
-// declaredRoutes reads the route registrations out of the generated file.
-//
-// Two failures are failures rather than empty sets, and the distinction is the
-// whole reason this is a function and not an inline `regexp.FindAllString`:
-//
-//   - the file cannot be read, or
-//   - it registers nothing.
-//
-// The second is the one that matters. A generator that changed how it spells a
-// registration would leave this returning an empty list, every comparison below
-// would pass vacuously, and the suite would be reporting that the router and the
-// document agree because it could read neither.
 func declaredRoutes(t *testing.T) []route {
 	t.Helper()
 
@@ -97,9 +46,6 @@ func declaredRoutes(t *testing.T) []route {
 	return routes
 }
 
-// servedRoutes reads the routes off the live router with `chi.Walk` — the thing
-// `account_scope.yml` cannot do, and the reason `internal/httpapi` holds this
-// contract rather than the manifest being a copy.
 func servedRoutes(t *testing.T) []route {
 	t.Helper()
 
@@ -126,10 +72,6 @@ func servedRoutes(t *testing.T) []route {
 	return routes
 }
 
-// The router serves what the document declares, in both directions. A route on
-// the router that the document does not declare is a gateway answering something
-// nobody contracted for; a declaration the router does not serve is a document
-// promising a 404 that is not what a client gets.
 func TestTheRouterServesExactlyWhatTheGeneratedDocumentDeclares(t *testing.T) {
 	declared := declaredRoutes(t)
 	served := servedRoutes(t)
@@ -143,11 +85,6 @@ func TestTheRouterServesExactlyWhatTheGeneratedDocumentDeclares(t *testing.T) {
 		servedSet[r.String()] = true
 	}
 
-	// `HEAD` is the deliberate exception, and it is removed from the SERVED set
-	// rather than from the declared one: `New` registers the two `HEAD` routes
-	// itself, the document declares neither, and every other difference is a
-	// finding. `TestTheHeadRoutesAreTheProbePaths` is what holds the removed ones
-	// to `ProbePaths`, so they are accounted for rather than excused.
 	for name := range servedSet {
 		if strings.HasPrefix(name, http.MethodHead+" ") {
 			delete(servedSet, name)
@@ -181,12 +118,6 @@ func TestTheRouterServesExactlyWhatTheGeneratedDocumentDeclares(t *testing.T) {
 	}
 }
 
-// The `HEAD` registrations are exactly the probe paths, in both directions.
-//
-// This is the mechanism that makes `ProbePaths` a contract rather than a set
-// somebody typed: a probe path added without its `HEAD` route is a path an
-// orchestrator cannot ask about, and a `HEAD` route added without being a probe
-// path is an operation the limiter's exemption set does not know about.
 func TestTheHeadRoutesAreTheProbePaths(t *testing.T) {
 	var heads []string
 	for _, r := range servedRoutes(t) {
@@ -202,20 +133,9 @@ func TestTheHeadRoutesAreTheProbePaths(t *testing.T) {
 	}
 }
 
-// Every operation in the generated document is implemented by the `api.ServerInterface`
-// this package provides. The generated code will not compile without the whole
-// interface, so this is nearly tautological — and it is here anyway, named as
-// the tripwire for the direction that matters: a NEW operation added to the
-// document arrives as a method this package must implement, and a reader asking
-// "what happens to it?" gets an answer from the compiler first and from
-// `TestEveryOperationIsEitherServedOrDeclined` second.
 func TestTheServerImplementsEveryOperationTheDocumentDeclares(t *testing.T) {
 	var _ api.ServerInterface = (*server)(nil)
 
-	// And the document's own count, so the two lists in
-	// `TestEveryOperationIsEitherServedOrDeclined` are checked against the
-	// generator rather than against a number typed into a test. Anything a new
-	// operation adds appears in neither list and is named as undecided there.
 	declared := declaredRoutes(t)
 	if len(declared) != 10 {
 		t.Errorf("the generated file registers %d operation(s); the two lists in TestEveryOperationIsEitherServedOrDeclined describe ten, so one of them is stale", len(declared))
