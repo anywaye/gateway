@@ -1,27 +1,3 @@
-// RESP2, hand-rolled.
-//
-// `src/middleware/rateLimitRedis.ts` (removed at cutover) writes its own encoder and parser and gives
-// the reason: "this is forty lines of RESP2, and the client half of it is covered
-// by the pure `encodeCommand`/`parseReply` tests". The reason it is worth repeating
-// here is that a general-purpose Redis client would be a dependency this repository
-// does not have — and, more to the point, the whole of this package's distributed
-// half is ONE script and ONE ping. Every command a client library would add is a
-// command whose reply shape has to be reasoned about, and this limiter only ever
-// asks two questions of Redis.
-//
-// # `ReplyError` IS THE POINT OF THIS FILE
-//
-// `-ERR` is a REPLY, not a broken stream: Redis sends one deliberately, keeps the
-// connection in sync, and answers the next command normally. So the socket reader
-// has to be able to tell "this reply said no" — which fails ONE command — from
-// "these bytes are half a reply" — which means wait for more.
-//
-// A bare `error` carries no such distinction, and a reader that treats both the
-// same re-parses the same `-ERR` on every subsequent chunk and wedges the
-// connection for the life of the process. `rateLimitRedis.ts` records that this was
-// a real defect, found by running against a real server: "one `-ERR` reply used to
-// wedge this connection permanently". `ReplyError` carries the byte count so the
-// reader can consume exactly the reply it failed on and carry on.
 package ratelimit
 
 import (
@@ -67,8 +43,6 @@ type Value any
 type ReplyError struct {
 	Message string
 
-	// How many bytes this reply occupied. The reader consumes exactly this many
-	// and keeps going; that is the whole difference from a broken stream.
 	Read int
 }
 
@@ -91,26 +65,25 @@ func ParseReply(buf []byte, at int) (value Value, read int, err error) {
 	}
 
 	switch marker {
-	case '+': // simple string
+	case '+':
 		return line, after - at, nil
 
-	case '-': // error
+	case '-':
 		return nil, 0, &ReplyError{Message: "ratelimit: redis said " + line, Read: after - at}
 
-	case ':': // integer
+	case ':':
 		value, err := integer(line)
 		if err != nil {
 			return nil, 0, err
 		}
 		return value, after - at, nil
 
-	case '$': // bulk string
+	case '$':
 		length, err := integer(line)
 		if err != nil {
 			return nil, 0, err
 		}
 		if length < 0 {
-			// `$-1` is the null bulk string.
 			return nil, after - at, nil
 		}
 
@@ -120,7 +93,7 @@ func ParseReply(buf []byte, at int) (value Value, read int, err error) {
 		}
 		return string(buf[start : start+length]), after - at + length + 2, nil
 
-	case '*': // array
+	case '*':
 		length, err := integer(line)
 		if err != nil {
 			return nil, 0, err
@@ -146,13 +119,6 @@ func ParseReply(buf []byte, at int) (value Value, read int, err error) {
 	}
 }
 
-// readLine is the text after the marker, up to and including the CRLF, and the
-// offset just past it.
-//
-// The loop bound is `len(buf)-1` rather than `len(buf)`, because a CRLF needs two
-// bytes and the reference's `readLine` has the same bound — a reply whose CRLF is
-// split across two reads is "wait for more", which is the case the whole design
-// turns on.
 func readLine(buf []byte, at int) (line string, after int, err error) {
 	for i := at + 1; i < len(buf)-1; i++ {
 		if buf[i] == '\r' && buf[i+1] == '\n' {

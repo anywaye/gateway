@@ -1,11 +1,3 @@
-// The Redis password, through a real dial.
-//
-// `Connect` used to discard the URL's userinfo and hand out an unauthenticated
-// connection, so a password-protected Redis answered every command with NOAUTH
-// and `/readyz` reported `redis: unavailable` forever. These tests drive
-// `Connect` against a scripted TCP server — a real dial, a real RESP2 exchange,
-// no `redis-server` — and pin the three AUTH shapes: bare password, named user,
-// and none at all.
 package ratelimit
 
 import (
@@ -18,25 +10,17 @@ import (
 	"time"
 )
 
-// authFake is a scripted Redis: one socket, a recorded transcript, and a strict
-// bouncer. Anything before a successful AUTH is answered NOAUTH when the script
-// requires one, which is what makes the "no AUTH was sent" fixture fail rather
-// than pass quietly.
 type authFake struct {
 	listener net.Listener
 	mu       sync.Mutex
 	commands [][]string
-	expect   []string // the AUTH arguments required after the name; nil means none
+	expect   []string
 	authed   bool
 }
 
 func newAuthFake(t *testing.T, expect []string) *authFake {
 	t.Helper()
 
-	// `(*net.ListenConfig).Listen` rather than `net.Listen`, because the fleet's
-	// noctx lint forbids the net.Listen call and this file is not exempt: the
-	// listener is opened per test and closed in a t.Cleanup below, which is the
-	// context-free call the rule exists to catch.
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not open a port for the scripted Redis: %v", err)
@@ -86,7 +70,6 @@ func (f *authFake) serve() {
 	}
 }
 
-// parseCommand reads one client command: an array of bulk strings, or "truncated".
 func parseCommand(buffered []byte) (any, int, error) {
 	value, read, err := ParseReply(buffered, 0)
 	if err != nil {
@@ -149,10 +132,6 @@ func (f *authFake) transcript() [][]string {
 	return append([][]string(nil), f.commands...)
 }
 
-// TestConnectSendsAuthPasswordBeforeAnythingElse is the live-box shape:
-// kit writes `redis://:password@host`, an EMPTY username with a password, and
-// the first command after the dial must be `AUTH <password>` — not a bare AUTH,
-// and not a PING that the server answers NOAUTH.
 func TestConnectSendsAuthPasswordBeforeAnythingElse(t *testing.T) {
 	fake := newAuthFake(t, []string{"s3cret"})
 
@@ -175,8 +154,6 @@ func TestConnectSendsAuthPasswordBeforeAnythingElse(t *testing.T) {
 	}
 }
 
-// TestConnectSendsAuthUserAndPassword is the Redis 6+ ACL shape: a named user
-// in the URL authenticates as `AUTH <user> <password>`, not as a bare password.
 func TestConnectSendsAuthUserAndPassword(t *testing.T) {
 	fake := newAuthFake(t, []string{"app", "s3cret"})
 
@@ -195,8 +172,6 @@ func TestConnectSendsAuthUserAndPassword(t *testing.T) {
 	}
 }
 
-// TestConnectSendsNoAuthWhenTheURLCarriesNone keeps the unauthenticated Redis a
-// supported deployment: a URL with no userinfo must not gain an AUTH.
 func TestConnectSendsNoAuthWhenTheURLCarriesNone(t *testing.T) {
 	fake := newAuthFake(t, nil)
 
@@ -216,10 +191,6 @@ func TestConnectSendsNoAuthWhenTheURLCarriesNone(t *testing.T) {
 	}
 }
 
-// TestConnectRefusedPasswordNamesAuthenticationAndHidesTheSecret is the
-// operator-facing half: a wrong password is an authentication problem said in
-// those terms, and the secret appears nowhere — not in the message, not in the
-// URL quoted by it.
 func TestConnectRefusedPasswordNamesAuthenticationAndHidesTheSecret(t *testing.T) {
 	fake := newAuthFake(t, []string{"the-right-password"})
 
@@ -236,9 +207,6 @@ func TestConnectRefusedPasswordNamesAuthenticationAndHidesTheSecret(t *testing.T
 	}
 }
 
-// TestParseRedisURLReadsTheUserinfo pins the parse: username and password ride
-// alongside host, port and tls, and the kit spelling — an empty username with a
-// password — stays exactly that.
 func TestParseRedisURLReadsTheUserinfo(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -269,8 +237,6 @@ func TestParseRedisURLReadsTheUserinfo(t *testing.T) {
 	}
 }
 
-// TestParseRedisURLStillRefusesAPath says adding auth must not weaken the path
-// refusal: a database path is still a startup error, with or without userinfo.
 func TestParseRedisURLStillRefusesAPath(t *testing.T) {
 	for _, url := range []string{
 		"redis://redis.data.svc.cluster.local:6379/1",
@@ -282,9 +248,6 @@ func TestParseRedisURLStillRefusesAPath(t *testing.T) {
 	}
 }
 
-// TestRedactRedisURLHidesThePassword is the redaction guarantee: the password
-// never survives into a quoted URL, and a URL without one passes through
-// unchanged so refusal messages stay readable.
 func TestRedactRedisURLHidesThePassword(t *testing.T) {
 	redacted := redactRedisURL("redis://:s3cret@redis.data.svc.cluster.local:6379")
 	if strings.Contains(redacted, "s3cret") {
@@ -297,7 +260,6 @@ func TestRedactRedisURLHidesThePassword(t *testing.T) {
 		t.Errorf("redactRedisURL rewrote a URL with no credentials: %q", got)
 	}
 
-	// The parse refusals quote the URL, so they must quote the redacted one.
 	if _, err := parseRedisURL("redis://:s3cret@redis.data.svc.cluster.local:notaport"); err == nil {
 		t.Fatal("parseRedisURL accepted a non-numeric port")
 	} else if strings.Contains(err.Error(), "s3cret") {

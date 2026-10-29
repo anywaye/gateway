@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Mutation proof for gateway-go-bff-01.
-#
-#   ./mutation-gate.sh    apply each mutation, run the suite, revert
-#
-# A test that passes proves nothing about the thing it is testing unless you have
-# seen it fail. So each mutation below breaks ONE property, the suite is run, the
-# result is recorded, and the mutation is reverted. Every entry is verified to
-# HAVE APPLIED by grepping the file for the mutated text before running — a
-# mutation that silently failed to apply produces a passing recipe that proves
-# nothing and is indistinguishable from a working one until somebody reads the
-# diff.
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -18,16 +7,6 @@ export PATH="$HOME/.local/share/mise/shims:$PATH"
 PASSED=0
 FAILED=0
 
-# # THE SNAPSHOT, AND WHY IT IS NOT `git checkout --`
-#
-# The first version of this script restored a mutated file with `git checkout --
-# "$file"`. That restores the LAST COMMIT, so running the script with uncommitted
-# work in the tree silently DELETED that work — three files' worth, on the run that
-# found the problem-envelope ordering.
-#
-# So the restore is a COPY, taken once before anything is mutated and put back after
-# every mutation, and it is VERIFIED BY CHECKSUM. `git checkout --` is banned here
-# and the reason is written down rather than left as a scar.
 SNAPSHOT="$(mktemp -d)"
 trap 'rm -rf "$SNAPSHOT"' EXIT
 
@@ -43,10 +22,6 @@ restore_file() {
   fi
 }
 
-# Taken over EVERY .go file under cmd/ and internal/, derived by walking rather than
-# listed, so a mutation that reaches further than its label still restores cleanly.
-# Derived because a hardcoded list would be a list that goes stale the day a file is
-# added, and the failure mode is silent data loss.
 while IFS= read -r file; do
   mkdir -p "$SNAPSHOT/$(dirname "$file")"
   cp "$file" "$SNAPSHOT/$file"
@@ -54,7 +29,6 @@ while IFS= read -r file; do
 done < <(find cmd internal -name '*.go' -type f)
 echo "snapshot: $(find "$SNAPSHOT" -name '*.cksum' | wc -l | tr -d ' ') file(s) under cmd/ and internal/, to be restored by copy"
 
-# mutate <file> <old> <new> <label>
 mutate() {
   local file="$1" from="$2" to="$3" label="$4"
 
@@ -65,8 +39,6 @@ mutate() {
     FAILED=$((FAILED + 1))
     return
   fi
-  # Confirm the mutation is IN the file after the edit, not merely that the edit
-  # exited zero.
   python3 - "$file" "$from" "$to" <<'PY'
 import sys
 path, frm, to = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -81,8 +53,6 @@ PY
     return
   fi
 
-  # Confine the blast radius: the assertion names the property, so the run names
-  # which one, but an unrelated compile error is not a pass either.
   local out
   out="$(go test -count=1 -run "$5" ./internal/... 2>&1)"
   if printf '%s' "$out" | grep -qE '^(FAIL|# )' ; then
@@ -96,12 +66,6 @@ PY
   restore_file "$file"
 }
 
-# mutate2 <file> <from1> <to1> <from2> <to2> <label> <run-pattern>
-#
-# Two edits in one mutation, for a property that needs both halves broken to be
-# observable: an ALLOWLIST is "the struct has only the two fields AND the reader
-# only fills those two", and mutating either half alone leaves the property
-# holding. Both are applied and both are verified before the suite runs.
 mutate2() {
   local file="$1" from1="$2" to1="$3" from2="$4" to2="$5" label="$6"
 
@@ -264,11 +228,6 @@ mutate internal/httpapi/bff.go \
   'TestTwoRefusalCausesProduceIdenticalResponses|TestTheTwoRefusalsAgreeOnStatusAndContentType'
 
 echo "=== login: a refused credential still mints a session ==="
-# The run pattern has to reach BOTH places the property is asserted: the 401's
-# store is checked in `TestTwoRefusalCauses…` and the 423's in the lockout test.
-# The first version of this mutation named only the lockout test and the suite
-# stayed green — because the mutation it made was in the 401 branch. A recipe that
-# only proves one of the two is a recipe that proves half a thing.
 mutate internal/httpapi/bff.go \
   'writeProblem(w, r, Problem{
 			Status: api.N401,
@@ -285,10 +244,6 @@ mutate internal/httpapi/bff.go \
   'TestALockedAccountIs423AndItsRetryAfterTravels|TestTwoRefusalCausesProduceIdenticalResponses'
 
 echo "=== register: forward identity's whole user document ==="
-# Both halves, and the reason is stated: an allowlist is "the type has only these
-# fields" AND "the reader only fills these". Breaking one leaves it holding, which
-# is what the first version of this mutation did — it added three omitempty fields
-# the reader never fills, and the suite stayed green.
 mutate2 internal/httpapi/bff.go \
   'func userOf(document any) (*user, bool) {' \
   'func userOf(document any) (any, bool) {' \
@@ -343,11 +298,6 @@ mutate internal/httpapi/bff.go \
   'TestMalformedBodiesAreRefusedAndIdentityIsNeverAsked|TestABodyJustInsideTheCapIsForwarded'
 
 echo "=== body: the cap is gone ==="
-# BOTH bounds, because there are two and either one catches the common case. The
-# first version of this recipe broke only the header's bound — and
-# `httptest.NewRequest` always sets `Content-Length`, so the reader's bound caught
-# it and the suite stayed green. Two honest bounds and one observable property is
-# a fact about the TEST, and both have to go for the property to fail.
 mutate2 internal/httpapi/bff.go \
   'if n, ok := parseContentLength(declared); ok && n > maxBodyBytes {' \
   'if n, ok := parseContentLength(declared); ok && n > 0 {' \
@@ -484,14 +434,6 @@ mutate internal/httpapi/httpapi.go \
   'TestWithoutABrowserSurfaceTheFourRoutesAre404'
 
 echo "=== a down dependency is reported as ready ==="
-# NOT "the probe's error names the host". That mutation does not bite, and the
-# reason is the property rather than a gap in it: `runProbe` collapses every
-# non-nil error to the closed two-value `unavailable` and the error never reaches
-# `/readyz`'s body at all, so there is no byte to change. The observable half of
-# "the reason never reaches the caller" is therefore enforced by
-# `TestADownDependencyIsUnavailableAndNamesNoReason` reading the body, and the only
-# mutation available here is the one below — a probe that says `ok` for a
-# dependency that is down.
 mutate internal/httpapi/bff.go \
   'if answer.StatusCode != http.StatusOK {
 			return fmt.Errorf("identity answered %d on %s", answer.StatusCode, identityHealthz)
@@ -503,9 +445,6 @@ mutate internal/httpapi/bff.go \
   'TestARegisteredIdentityProbeReportsByNameAndNeverByReason'
 
 echo "=== a BFF auto-registers an identity probe (it must not) ==="
-# The reference's `createApp({bff})` answers `{"deps":{}}`; `runtimeOptions`
-# registers the probe, and `runtimeOptions` reads `IDENTITY_URL`. Auto-registering
-# it here made `/readyz` differ at byte 9 in all six browser scenarios.
 mutate internal/httpapi/httpapi.go \
   'svc := &server{probes: options.Probes, bff: bff}' \
   'svc := &server{probes: append([]NamedProbe{{Name: "identity", Probe: bff.IdentityProbe()}}, options.Probes...), bff: bff}' \
@@ -513,9 +452,6 @@ mutate internal/httpapi/httpapi.go \
   'TestABrowserSurfaceRegistersNoProbeAndTheReferenceAgrees'
 
 echo "=== a logout identity could not revoke is answered unusable ==="
-# The reference's logout is `revoked ? 204 : unreachable()`. The port answered
-# `unusable()`, which is a different detail and a log line, and the equivalence
-# check found it with both answers printed.
 mutate internal/httpapi/bff.go \
   '		drain(answer)
 		writeProblem(w, r, unreachable())' \
@@ -525,8 +461,6 @@ mutate internal/httpapi/bff.go \
   'TestANonRevokingLogoutIsUnreachableNotUnusable'
 
 echo "=== the problem envelope is rendered in alphabetical order ==="
-# `api.Problem` declares its fields alphabetically and the reference does not, so
-# every problem document differed at byte 2. Found by the equivalence check.
 mutate internal/httpapi/problem.go \
   '	b.WriteString(`,"status":`)
 	b.WriteString(strconv.Itoa(int(p.Status)))
@@ -542,8 +476,6 @@ mutate internal/httpapi/problem.go \
   'TestTheProblemEnvelopeIsTheReferencesFieldOrder|TestAValidationFailureKeepsFieldBeforeCodeAndIsLast'
 
 echo "=== a problem document is served as application/json ==="
-# `writeRawJSON` set the content type unconditionally, overwriting the
-# `application/problem+json` `writeProblem` had just set. The body was identical.
 mutate internal/httpapi/httpapi.go \
   '	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -555,15 +487,7 @@ mutate internal/httpapi/httpapi.go \
   'TestTheTwoRefusalsAgreeOnStatusAndContentType|TestTheProblemEnvelopeIsTheReferencesFieldOrder'
 
 echo "=== a doubled header is joined rather than taking the first value ==="
-# Measured: the reference answers 200 to `Sec-Fetch-Site: same-origin` twice. The
-# WHATWG `Headers` rule would refuse it. Refusing looks stricter and diverges.
 echo "=== a doubled header is joined rather than taking the first value ==="
-# NOT in `isSameOrigin`. The first version of this mutation changed
-# `firstValue(r.Header.Values(…))` to `strings.Join(…)` and the suite stayed green,
-# because `collapseRepeatedHeaders` has already reduced the header to one value by
-# the time the gate reads it — so the mutation was unreachable, and "unreachable" is
-# a fact about the middleware rather than about the gate. The observable half is
-# below.
 mutate internal/httpapi/bff.go \
   '			if values := r.Header[name]; len(values) > 1 {
 				r.Header[name] = values[:1]

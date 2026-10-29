@@ -13,17 +13,7 @@ import (
 	"github.com/anywaye/gateway/internal/api"
 )
 
-// This file holds core's error envelope — the one every rejection in gateway
-// goes through, ported from `src/problem.ts` (removed at cutover).
-//
-// Nothing in this packet writes a problem yet: the two refusals the substrate
-// serves are the v0 `404` and the v0 `500`, both of which are the other
-// envelope (`V0Error`). So every case here drives the writer directly, and that
-// is worth saying plainly rather than letting a reader assume the suite is
-// covering a live path — it is covering the floor the first Wave 3 handler
-// stands on, and the first thing that handler must not get wrong is the shape.
 
-// write drives one problem through the writer and returns what it wrote.
 func write(t *testing.T, p Problem) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -32,8 +22,6 @@ func write(t *testing.T, p Problem) *httptest.ResponseRecorder {
 	return rec
 }
 
-// A problem is RFC 9457 with core's two extensions, and the whole envelope is
-// asserted rather than the fields a struct happens to decode.
 func TestAProblemIsTheDocumentedEnvelope(t *testing.T) {
 	rec := write(t, Problem{
 		Status: 401,
@@ -65,11 +53,6 @@ func TestAProblemIsTheDocumentedEnvelope(t *testing.T) {
 		}
 	}
 
-	// And nothing else: the document's `Problem` has seven required fields and
-	// one optional `errors`, so an eighth key is a field the contract does not
-	// declare. Key-by-key equality is the assertion; a decode into a struct would
-	// have dropped the extra silently. `trace_id` is the seventh and is asserted
-	// by the next test, so it is counted here rather than listed above.
 	var keys []string
 	for name := range body {
 		keys = append(keys, name)
@@ -81,11 +64,7 @@ func TestAProblemIsTheDocumentedEnvelope(t *testing.T) {
 	}
 }
 
-// The trace id is the correlation handle, and the two halves have to agree: a
-// support engineer starts from the header and searches the log, and a body
-// carrying an id the header does not have sends them nowhere.
 func TestTheTraceIdHeaderEqualsTheBodyAndLooksLikeOne(t *testing.T) {
-	// Ten of them, because one that matches by luck is not a check.
 	shape := regexp.MustCompile(`^[0-9a-f]{32}$`)
 	seen := map[string]bool{}
 
@@ -111,19 +90,9 @@ func TestTheTraceIdHeaderEqualsTheBodyAndLooksLikeOne(t *testing.T) {
 	}
 }
 
-// `errors` is scoped to a 422 by core's convention, and the renderer has to hold
-// that on its own: a caller that passes field errors at a 401 must not widen the
-// rule. The key is ABSENT rather than empty for the same reason — a client
-// rendering `errors` must be able to tell "no fields failed" from "this response
-// is not about fields".
 func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 	fields := []api.FieldError{{Field: "password", Code: "too_short"}}
 
-	// A FRESH map per case, every time. Decoding into one map declared above the
-	// loop merges rather than replaces, so an `errors` key left by the 422 case
-	// would still be there for the 401 case and this test would report every
-	// status as carrying field errors. It did, until it was caught by the 422
-	// case itself — which is the argument for asserting on decoded shapes at all.
 	for _, status := range []int{400, 401, 403, 409, 413, 423, 429, 503} {
 		var body map[string]any
 		decode(t, write(t, Problem{Status: status, Code: api.ProblemCodeValidationFailed, Detail: "no", Errors: fields}), &body)
@@ -139,7 +108,6 @@ func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 		t.Errorf("a 422 with field errors has no errors[]: %v", body)
 	}
 
-	// And an empty list on a 422 is also absent, for the same reason.
 	body = nil
 	decode(t, write(t, Problem{Status: 422, Code: api.ProblemCodeValidationFailed, Detail: "no"}), &body)
 	if _, present := body["errors"]; present {
@@ -147,11 +115,6 @@ func TestFieldErrorsAppearOnlyOnA422(t *testing.T) {
 	}
 }
 
-// `detail` is written by the caller and is never an internal reason. This is the
-// one assertion in the file that is about a property rather than a shape, and it
-// is the reason `Problem.Detail` has no constructor: a caller that interpolated
-// an error into it would be writing a dependency's host into a document an
-// unauthenticated caller reads.
 func TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeProblem(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me?token=caf_secret_value&x=1", nil), Problem{
@@ -171,14 +134,6 @@ func TestTheInstanceIsThePathAndTheQueryNeverReachesTheBody(t *testing.T) {
 	}
 }
 
-// A code with no title is a defect in this repository, and the writer refuses
-// rather than rendering a document the contract does not describe.
-//
-// The alternative — a lookup with a fallback, which is what `src/problem.ts` (removed at cutover)
-// does and which renders `title: undefined` into the JSON — produces a body that
-// looks like a problem document and is not one. So an unknown code is rewritten
-// to a code this file can justify, with the status that code is for, and
-// `TestEveryProblemCodeHasATitle` below is what makes the branch unreachable.
 func TestACodeWithNoTitleIsRefusedRatherThanRendered(t *testing.T) {
 	rec := write(t, Problem{Status: 401, Code: api.ProblemCode("invented_here"), Detail: "no"})
 
@@ -198,13 +153,6 @@ func TestACodeWithNoTitleIsRefusedRatherThanRendered(t *testing.T) {
 	}
 }
 
-// The titles map is total over the document's `Problem.code` enum, and this is
-// what makes the branch above unreachable.
-//
-// The enum is read out of the GENERATED file rather than transcribed: the list is
-// `api.ProblemCode`'s constants, and a hand-written copy is a second inventory of
-// the document that goes stale silently — a code added to `openapi/v1.yaml`
-// would produce a problem document with no title and no failing test.
 func TestEveryProblemCodeHasATitle(t *testing.T) {
 	declared := declaredProblemCodes(t)
 
@@ -214,9 +162,6 @@ func TestEveryProblemCodeHasATitle(t *testing.T) {
 		}
 	}
 
-	// The other direction. A title for a code the document does not name is a
-	// title nothing can reach, and `TestACodeWithNoTitleIsRefusedRatherThanRendered`
-	// is the only place it could be reached — through a code that does not exist.
 	for code := range titles {
 		if !declared[code] {
 			t.Errorf("problem.go has a title for %q, which the document does not declare", code)
@@ -224,7 +169,6 @@ func TestEveryProblemCodeHasATitle(t *testing.T) {
 	}
 }
 
-// declaredProblemCodes reads `ProblemCode`'s constants out of the generated file.
 var problemCodeConst = regexp.MustCompile(`(?m)^\s*ProblemCode([A-Za-z]+)\s+ProblemCode = "([a-z_]+)"$`)
 
 func declaredProblemCodes(t *testing.T) map[api.ProblemCode]bool {
@@ -237,8 +181,6 @@ func declaredProblemCodes(t *testing.T) map[api.ProblemCode]bool {
 		codes[api.ProblemCode(match[2])] = true
 	}
 
-	// A reader that found nothing would make the loop above vacuous, which is the
-	// failure mode `noSkips.test.ts` calls "a check that covers nothing".
 	if len(codes) != 9 {
 		t.Fatalf("this test reads %d problem codes and openapi/v1.yaml declares nine. If the generator changed how it writes them, this test has stopped checking anything.", len(codes))
 	}
@@ -249,8 +191,6 @@ func declaredProblemCodes(t *testing.T) map[api.ProblemCode]bool {
 	return codes
 }
 
-// The v0 envelope is the OTHER shape, and holding it to the document's `V0Error`
-// is what stops a second error body being invented.
 func TestTheV0EnvelopeCarriesOnlyTheTwoFieldsTheDocumentDeclares(t *testing.T) {
 	rec := ask(t, bare(t), http.MethodGet, "/nope", nil)
 
@@ -261,23 +201,15 @@ func TestTheV0EnvelopeCarriesOnlyTheTwoFieldsTheDocumentDeclares(t *testing.T) {
 		t.Errorf("body is %s, want exactly {\"error\":\"not_found\",\"message\":\"no such route\"}", rec.Body.String())
 	}
 
-	// And it is `application/json`, not the problem media type: that difference is
-	// how a client tells the two envelopes apart, and open decision 5 in the
-	// document's header says nothing else does.
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type is %q, want application/json", got)
 	}
 
-	// The generated type is what makes the third slug unreachable.
 	if !api.V0ErrorErrorNotFound.Valid() || api.V0ErrorError("something_else").Valid() {
 		t.Error("V0ErrorError does not validate its own enum, so the body could carry a slug the document does not declare")
 	}
 }
 
-// json.Marshal is used by `orderedDeps`, so this file's import is not decorative:
-// a key that needed escaping would otherwise be a byte-corrupting bug nobody had
-// tested. Names are validated non-empty at construction, but a name with a quote
-// in it is not refused, and it should not corrupt the document either.
 func TestADependencyNameWithAwkwardCharactersIsEscaped(t *testing.T) {
 	const name = `we"ird\name`
 
@@ -292,9 +224,6 @@ func TestADependencyNameWithAwkwardCharactersIsEscaped(t *testing.T) {
 		t.Errorf("deps is %v; the name did not survive a round trip through the hand-written JSON", rec.Body.String())
 	}
 
-	// And the raw bytes are still one object, not two: a missing escape would
-	// have split the key and made this unmarshal fail rather than produce a
-	// wrong map.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("the body is not a single JSON object: %v\n%s", err, rec.Body.String())

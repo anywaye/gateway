@@ -1,16 +1,3 @@
-// `test/openapiPaths.ts`, held to its own contract.
-//
-// The drift check in `openapiDocument.test.ts` is only as trustworthy as the two
-// readers underneath it, and a reader's interesting behaviour is almost entirely
-// what it does when the file is not what it expected. Every case below is a way
-// the reader could come back with less than it should, and every one of them is a
-// raised error rather than a smaller set — because a reader that finds nothing
-// and a document that describes nothing always agree, and a check over nothing
-// passes.
-//
-// The line between the two tests is the courier one: this file is about whether
-// the readers understand their inputs, and the other is about whether the
-// document and the router understand each other.
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { Handler, MiddlewareHandler } from "hono";
@@ -26,7 +13,6 @@ import {
   surfaceOf,
 } from "./openapiPaths";
 
-/** A document with two paths, three operations and a path item field. */
 const DOCUMENT = [
   "openapi: 3.1.0",
   "",
@@ -56,15 +42,10 @@ describe("the document reader", () => {
     const operations = documentOperations(DOCUMENT, "openapi/v1.yaml");
 
     expect([...operations.keys()].sort()).toEqual(["GET /healthz", "POST /auth/login"]);
-    // The line the *path* starts on, which is what a failure message needs: a
-    // client reading `openapi/v1.yaml:8` looks for the path, not the method.
     expect(operations.get("GET /healthz")?.line).toBe(8);
   });
 
   test("a path-item field under a path is not an operation", () => {
-    // `summary:` sits one level below a path item and belongs to the path, not to
-    // a `SUMMARY` method. A reader that treated any key at that level as an
-    // operation would report a route Hono never serves.
     expect(documentOperations(DOCUMENT, "v1.yaml").has("SUMMARY /healthz")).toBe(false);
   });
 
@@ -74,8 +55,6 @@ describe("the document reader", () => {
       "      requestBody:\n        content:\n          application/json:\n            schema:\n              properties:\n                delete:\n                  type: string\n      responses:",
     );
 
-    // A schema property called `delete` is a field, not a `DELETE`. Only a key at
-    // the operation level counts, which is what makes depth part of the reading.
     expect(documentOperations(withBody, "v1.yaml").has("DELETE /healthz")).toBe(false);
   });
 
@@ -89,8 +68,6 @@ describe("the document reader", () => {
   test("a path item with no operation under it is an error, not a skipped path", () => {
     const empty = ["openapi: 3.1.0", "", "paths:", "  /healthz:", "    summary: nothing here", ""].join("\n");
 
-    // Skipping it would leave the check comparing a document that says nothing
-    // about this route against a router that serves it, and agreeing with it.
     expect(() => documentOperations(empty, "v1.yaml")).toThrow(/no operation/);
   });
 });
@@ -115,8 +92,6 @@ describe("the document reader refuses rather than under-reads", () => {
       "\n",
     );
 
-    // A misspelled `paths` sibling is a document that describes no route, and an
-    // empty result would read as a document that describes every route correctly.
     expect(() => documentOperations(typo, "v1.yaml")).toThrow(/not a valid OpenAPI path/);
   });
 
@@ -148,17 +123,12 @@ describe("the response-status reader", () => {
       "",
     ].join("\n");
 
-    // A `$ref`'d response is still a response the document declares, and a 429
-    // written unquoted is still a 429. The reader is about which statuses an
-    // operation can answer, not how the document spells them.
     expect(responseStatuses(withStatuses, "v1.yaml").get("GET /v1/me")).toEqual(["200", "401", "429"]);
   });
 
   test("an operation with no `responses:` block is an error rather than an empty list", () => {
     const bare = ["paths:", "  /healthz:", "    get:", "      operationId: liveness", ""].join("\n");
 
-    // An empty status list would read as "this operation answers nothing", which
-    // is the same shape as a check that compared two empty sets.
     expect(() => responseStatuses(bare, "v1.yaml")).toThrow(/no `responses:`/);
   });
 
@@ -175,9 +145,6 @@ describe("the document's own metadata", () => {
       "\n",
     );
 
-    // The header is the only thing a reader of the document has to go on, so it
-    // has to be the part above the document rather than the `info.description`
-    // buried inside it.
     expect(documentHeader(header)).toBe("# a note\n# > DECISION NEEDED (guard-06): something\n");
   });
 
@@ -189,18 +156,12 @@ describe("the document's own metadata", () => {
   test("a document with no `info.version` says so rather than reporting null", () => {
     const unversioned = DOCUMENT.replace("  version: 1.0.0\n", "");
 
-    // core's conventions require `info.version`, and a null here would be a
-    // reader that agrees with a document that forgot it.
     expect(() => infoVersion(unversioned, "v1.yaml")).toThrow(/info.version/);
   });
 });
 
 describe("path normalisation", () => {
   test("a path parameter reads the same whichever side spells it", () => {
-    // A client substitutes a path parameter positionally, so `:id`, `{id}` and
-    // `{id}.json` are one route with three spellings. Both sides go through the
-    // same function — a normaliser that treated them differently is a normaliser
-    // that can hide a difference.
     expect(normalisePath("/v1/users/:id")).toBe("/v1/users/{}");
     expect(normalisePath("/v1/users/{id}")).toBe("/v1/users/{}");
     expect(normalisePath("/v1/users/{id}.json")).toBe("/v1/users/{}");
@@ -212,9 +173,6 @@ describe("path normalisation", () => {
   });
 
   test("a `*` segment is left alone, because it is a different shape", () => {
-    // `/v1/*` matches an arbitrary tail of a path and `{param}` matches one
-    // segment. Rewriting a glob into a parameter would make the one thing this
-    // repository mounts as middleware look like a route.
     expect(normalisePath("/v1/*")).toBe("/v1/*");
   });
 
@@ -225,7 +183,6 @@ describe("path normalisation", () => {
 });
 
 describe("the router reader", () => {
-  /** A Hono app shaped like gateway's, with one route and one middleware. */
   const app = new Hono();
   app.get("/healthz", (c) => c.text("ok"));
   app.use("/v1/*", async (_c, next) => next());
@@ -234,17 +191,12 @@ describe("the router reader", () => {
     const surface = routerSurface(app.routes);
 
     expect([...surface.operations.keys()]).toEqual(["GET /healthz"]);
-    // The distinction is Hono's own: `app.get` registers a method, `app.use`
-    // registers `"ALL"`. A glob path is not a route, and a method name is.
     expect([...surface.mounts.keys()]).toEqual(["ALL /v1/*"]);
   });
 
   test("every entry the app registered is reported, in order", () => {
     const surface = routerSurface(app.routes);
 
-    // Element for element against the program's own array, which is the thing
-    // this whole packet is about. A reader that filtered, reordered or retyped an
-    // entry would be agreeing with a smaller version of the truth.
     expect(surface.entries).toEqual([
       { method: "GET", path: "/healthz", kind: "operation" },
       { method: "ALL", path: "/v1/*", kind: "mount" },
@@ -252,9 +204,6 @@ describe("the router reader", () => {
   });
 
   test("a route mounted behind middleware is one operation, not two", () => {
-    // `app.post(path, gate, handler)` registers one entry per handler in the
-    // chain. Reading those as two routes would invent a method the router does
-    // not serve, which is the same class of error as the other direction.
     const chained = new Hono();
     const gate: MiddlewareHandler = async (_c, next) => next();
     const handler: Handler = (c) => c.text("ok");
@@ -267,9 +216,6 @@ describe("the router reader", () => {
   });
 
   test("a method this reader does not know is raised on, not filed", () => {
-    // Filing it as an operation would put a route in the comparison set nothing
-    // can serve; filing it as a mount would hide it inside a carve-out. Both are
-    // quieter than saying so, which is why this raises.
     expect(() => surfaceOf([{ method: "PROPFIND", path: "/v1/me" }], "a Hono app")).toThrow(
       /neither one of GET, HEAD, POST/,
     );
@@ -278,7 +224,6 @@ describe("the router reader", () => {
 
 describe("surfaceOf", () => {
   test("an app with no routes at all is an error, not an empty set", () => {
-    // Two readers that both find nothing agree. This is what stops that.
     expect(() => surfaceOf(new Hono().routes, "gateway")).toThrow(/serves no routes/);
   });
 });

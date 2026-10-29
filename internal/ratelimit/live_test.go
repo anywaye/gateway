@@ -1,45 +1,3 @@
-// The GCRA script, executed by a real redis-server.
-//
-// # WHAT THIS FILE IS FOR, AND WHY A TRANSCRIPTION IS NOT ENOUGH
-//
-// Every other test in this package drives the Redis path without a server:
-// `parity_test.go` transcribes `GCRALua` into Go and runs the transcript, and
-// requires the two backends to agree over one behavior table. That proves the
-// CLIENT — key names, argument marshaling, reply decoding — and it leaves the
-// SCRIPT covered by review. A Lua body no test has run is a body that is correct
-// by assertion rather than by evidence, and it is the body that decides whether a
-// deployment with `REDIS_URL` set limits at all.
-//
-// This file closes that gap. It is the counterpart of
-// `src/middleware/rateLimitRedisLive.test.ts` (removed at cutover), and it exists because two things
-// about a real server are invisible from here:
-//
-//  1. REDIS TRUNCATES A LUA NUMBER TOWARD ZERO on the way out. `math.ceil` in the
-//     script is load-bearing for exactly that reason, and no transcription can find
-//     it, because a transcription is free to return a float.
-//  2. AN ERROR REPLY IS PART OF RESP, NOT A DESYNC. `-ERR` from `EVAL` means the
-//     script did not run; reading it as "no quota used" is a limiter that opens
-//     exactly when its dependency is broken.
-//
-// # GATED ON `GATEWAY_REDIS_URL`, AND THE GATE IS COUNTED
-//
-//	GATEWAY_REDIS_URL=redis://127.0.0.1:6379 go test ./internal/ratelimit/   # runs
-//	go test ./internal/ratelimit/                                            # skips, and says so
-//	GATEWAY_REDIS_REQUIRED=1 …                                               # the skip is a failure
-//
-// The skip PRINTS a line beginning `ratelimit: DID NOT RUN` and `bin/prime-go`
-// counts it, for the same reason it counts the equivalence tier's: `go test`
-// discards a passing package's output, so a tier that skips silently verifies
-// nothing and reports the strongest-looking green there is. `TestMain` refuses to
-// register a single test when `GATEWAY_REDIS_REQUIRED=1` and there is no URL, so an
-// escalated run fails on its first line rather than in a summary of zero passes.
-//
-// # EVERYTHING GOES THROUGH `Connect`, THE TRANSPORT PRODUCTION USES
-//
-// `Commands` is deliberately two methods wide, and widening it for a test would
-// trade a reviewed interface for a second, divergent way of talking to Redis. The
-// commands the store does not expose — `TTL`, `GET`, `LPUSH`, `DEL` — are run
-// through `Connection.Do`, which is the same `EVAL`-shaped call the store makes.
 package ratelimit
 
 import (
@@ -54,41 +12,20 @@ import (
 	"time"
 )
 
-// liveWindow is the window every case here counts in. Sixty seconds because that
-// is the deployment's default and because a `PX` an order of magnitude larger
-// makes a leaked key harmless for the length of a test run.
 const liveWindow = time.Minute
 
-// liveRedisURL and liveRedisRequired are read ONCE, at TestMain, and never again.
-// A test that re-read the environment could see a different answer on its
-// hundredth case than on its first, which is the shape of a flaky test nobody can
-// reproduce.
 var (
 	liveRedisURL      string
 	liveRedisRequired bool
 )
 
-// liveRun is one namespace per run, so two runs against one server — a
-// developer's leftover daemon and a CI container, or two worktrees — cannot read
-// each other's buckets and turn stale state into a red suite.
-//
-// The store's own charset check is exercised by the value put in front of it: a
-// UUID is `[A-Za-z0-9-]`, all of which `AssertBucket` accepts.
 var liveRun = "live-" + randomToken()
 
-// randomToken is 16 hex characters off the clock, which is enough to separate two
-// runs that start in the same second and does not need a dependency for it.
-//
-// `crypto/rand` rather than `time.Now().UnixNano()` because two worktrees started
-// in the same nanosecond is not as unlikely as it looks, and a shared bucket
-// between them is a red suite in a file that would otherwise be green.
 func randomToken() string {
 	const alphabet = "0123456789abcdef"
 	seed := uint64(time.Now().UnixNano())
 	var out strings.Builder
 	for i := 0; i < 16; i++ {
-		// xorshift64: enough spread for a namespace, and the loop is four lines
-		// rather than an import of a package that exists for this.
 		seed ^= seed << 13
 		seed ^= seed >> 7
 		seed ^= seed << 17
@@ -97,40 +34,11 @@ func randomToken() string {
 	return out.String()
 }
 
-// # TESTMAIN IS NOT THE GATE, AND IT WAS, AND IT ATE THE PACKAGE
-//
-// This function used to `os.Exit(0)` when `GATEWAY_REDIS_URL` was unset — before
-// `m.Run()`, so before a single test in the package was registered. That made
-// `go test ./internal/ratelimit/` on a machine with no Redis report `ok` for a
-// package that had run NO tests: not the live tier, not the parity table, not the
-// instant grid, not `key_test.go`, not `limiter_test.go`. All of them.
-//
-// It was found the least interesting way possible. `TestTheInstantsAreWhereTheArithmeticPutsThem`
-// was left with expectations that had just been transcribed by hand, two of them
-// wrong, and it passed without Redis and failed with Redis — which cannot both be
-// true of a test whose arithmetic is deterministic. The explanation was that the
-// "passing" run had executed nothing.
-//
-// # THE GATE BELONGS ON THE TIER, NOT ON THE BINARY
-//
-// `liveTier` is the gate now: it skips the test that asked for a server, and every
-// test in this file asks for one, so the file is gated as a unit while the rest of
-// the package runs unconditionally. The escalation is still here, and still refuses
-// before anything runs, because `GATEWAY_REDIS_REQUIRED=1` means "a run that cannot
-// run this tier is a failure" and that is a statement about the RUN, not about one
-// test in it.
-//
-// The countable skip line moved with it — `liveTier` prints `ratelimit: DID NOT
-// RUN` once, before the first skip, and sets a flag so the rest stay quiet. One line
-// is countable; N is not, which is the whole reason this lived in `TestMain` to
-// begin with.
 func TestMain(m *testing.M) {
 	liveRedisURL = strings.TrimSpace(os.Getenv("GATEWAY_REDIS_URL"))
 	liveRedisRequired = os.Getenv("GATEWAY_REDIS_REQUIRED") == "1"
 
 	if liveRedisURL == "" && liveRedisRequired {
-		// Exit before a single test is registered, so an escalated run says so in
-		// its first line rather than in a summary of zero passes.
 		fmt.Fprintln(os.Stderr,
 			"ratelimit: GATEWAY_REDIS_REQUIRED=1 and GATEWAY_REDIS_URL is unset. The live Redis tier"+
 				" cannot run, and a run that cannot run it proves nothing about GCRALua. Point"+
@@ -142,32 +50,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// liveTierSkipped keeps the DID NOT RUN line to one per run.
 var liveTierSkipped bool
 
-// # NOTHING HERE DELETES ANYTHING IT DID NOT WRITE
-//
-// The first draft ran `FLUSHDB` before and after, which is convenient and wrong:
-// `GATEWAY_REDIS_URL` points at a SERVER, and a developer who sets it to the Redis
-// they are already using would watch this file empty their database. The keys go
-// instead, and only the ones under this run's prefix — which is what makes the
-// namespace worth having in the first place.
-//
-// Every bucket carries a `PX` equal to its window, so Redis would reclaim them on
-// its own; deleting them leaves the server as it was found and doubles as a check
-// that the namespace is ours alone.
 const liveCleanup = `
 local found = redis.call('KEYS', ARGV[1] .. '*')
 for i = 1, #found do redis.call('DEL', found[i]) end
 return #found
 `
 
-// liveTier opens two independent connections to the server and registers the
-// cleanup that takes this run's keys with it.
-//
-// TWO connections, because "two replicas share one bucket" is only a fact about
-// Redis if the two sides are on separate sockets. One connection serialized behind
-// its own mutex would prove the mutex, not the server.
 func liveTier(t *testing.T) (a, b *Connection) {
 	t.Helper()
 
@@ -199,7 +89,6 @@ func liveTier(t *testing.T) (a, b *Connection) {
 	return a, b
 }
 
-// liveCall is one `redis.call` for a single key, over the production transport.
 func liveCall(t *testing.T, connection *Connection, script, key string) Value {
 	t.Helper()
 
@@ -210,11 +99,6 @@ func liveCall(t *testing.T, connection *Connection, script, key string) Value {
 	return value
 }
 
-// liveStore is a store over `connection`, in a bucket namespace of its own.
-//
-// The namespace is per CALL rather than per run on purpose: two cases in one file
-// that share a bucket share its debt, and a case that starts with a bucket already
-// spent fails for a reason that has nothing to do with what it is checking.
 func liveStore(t *testing.T, connection *Connection, name string) *RedisStore {
 	t.Helper()
 
@@ -226,12 +110,7 @@ func liveStore(t *testing.T, connection *Connection, name string) *RedisStore {
 	return store
 }
 
-// -----------------------------------------------------------------------------
-// the transport
-// -----------------------------------------------------------------------------
 
-// TestARealServerAnswersPingWithPong is the floor: if this fails, everything below
-// it failed for the same reason and reporting fifteen failures says less than one.
 func TestARealServerAnswersPingWithPong(t *testing.T) {
 	a, b := liveTier(t)
 
@@ -246,12 +125,6 @@ func TestARealServerAnswersPingWithPong(t *testing.T) {
 	}
 }
 
-// TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce pins what the server
-// SENDS, before the store is trusted to read it.
-//
-// `verdictOf` refuses any shape it does not recognize rather than inferring
-// `allowed` from it, so what arrives is worth pinning: a bulk string, an integer,
-// an array, and — the one that matters most — the error reply.
 func TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce(t *testing.T) {
 	a, _ := liveTier(t)
 	key := liveRun + ":shapes"
@@ -266,7 +139,6 @@ func TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce(t *testing.T) {
 		t.Errorf("an integer came back as %s (%T), want 42", render(got), got)
 	}
 
-	// The array the script itself returns, through the real decoder.
 	reply, err := a.Eval("return {1, 2, 3}", []string{key}, nil)
 	if err != nil {
 		t.Fatalf("EVAL returning an array: %v", err)
@@ -276,9 +148,6 @@ func TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce(t *testing.T) {
 		t.Fatalf("an array came back as %s (%T), want three elements", render(reply), reply)
 	}
 
-	// The error reply is the fourth shape, and it is the one that matters most: a
-	// `-ERR` from EVAL means the script did not run, and reading it as "no quota
-	// used" would be a limiter that opens exactly when its dependency is broken.
 	var replyErr *ReplyError
 	_, err = a.Eval("return redis.call('INCR', KEYS[1])", []string{key}, nil)
 	if !errors.As(err, &replyErr) {
@@ -286,13 +155,6 @@ func TestTheReplyDecoderReadsTheThreeShapesTheScriptCanProduce(t *testing.T) {
 	}
 }
 
-// TestTheScriptAnswersFourIntegers is the claim `math.ceil` exists to make.
-//
-// Redis converts a Lua number to an integer reply by TRUNCATING toward zero, so
-// every one of these four is a whole number on the wire no matter what the script
-// computed. A float in the reply is a shape this client does not see, and its
-// absence here would mean the script's arithmetic had stopped producing the values
-// the client reads.
 func TestTheScriptAnswersFourIntegers(t *testing.T) {
 	a, _ := liveTier(t)
 	key := liveRun + ":shape4"
@@ -318,19 +180,6 @@ func TestTheScriptAnswersFourIntegers(t *testing.T) {
 	}
 }
 
-// TestAnErrorReplyFailsOneCommandAndNotTheConnection is the regression.
-//
-// A single `-ERR` used to wedge the socket permanently: the reader caught every
-// parse failure, consumed no bytes and resolved no waiter, so the same `-ERR` was
-// re-parsed on every later chunk and every later command on that connection timed
-// out — for the life of the process. `LazyRedis` caches a connection, so a gateway
-// hit once would fail open on every request until it restarted, and `/readyz`
-// would say `redis: unavailable` with nothing in the log saying why.
-//
-// An error reply is part of RESP, not a desync: Redis sends one deliberately and
-// the stream stays in sync. So it has to fail the command that asked for it and
-// leave the connection usable, which is what this asserts — including that the
-// next command gets the RIGHT answer and not merely any answer.
 func TestAnErrorReplyFailsOneCommandAndNotTheConnection(t *testing.T) {
 	a, _ := liveTier(t)
 	key := liveRun + ":err"
@@ -344,7 +193,6 @@ func TestAnErrorReplyFailsOneCommandAndNotTheConnection(t *testing.T) {
 		t.Fatalf("INCR on a string key answered %v, want a *ReplyError", err)
 	}
 
-	// The connection still answers, and still answers in order.
 	if answered, err := a.Ping(context.Background()); err != nil || !answered {
 		t.Fatalf("after an error reply PING answered (%v, %v), want (true, nil)", answered, err)
 	}
@@ -356,15 +204,6 @@ func TestAnErrorReplyFailsOneCommandAndNotTheConnection(t *testing.T) {
 	}
 }
 
-// TestAnErrorReplyLeavesAStoreThatKeepsCounting is the same wedge seen through the
-// store rather than the transport, because "the limiter stopped counting and
-// nothing said so" is the failure that matters.
-//
-// The store's script is broken the way a key collision with another subsystem would
-// break it: a LIST where the script expects a string, so its own `GET` answers
-// `-WRONGTYPE` and `EVAL` hands that back. That is a real failure mode, not a mock
-// — it needs the server to refuse, which is the only way to produce the reply at
-// all.
 func TestAnErrorReplyLeavesAStoreThatKeepsCounting(t *testing.T) {
 	a, _ := liveTier(t)
 	store := liveStore(t, a, "errored")
@@ -388,8 +227,6 @@ func TestAnErrorReplyLeavesAStoreThatKeepsCounting(t *testing.T) {
 	liveCall(t, a, "return redis.call('DEL', KEYS[1])", key)
 	liveCall(t, a, "return redis.call('LPUSH', KEYS[1], 'not-a-string')", key)
 
-	// Both must fail. One failing and one succeeding would mean the reply was
-	// consumed on the first and the second read a stale one.
 	for i := 0; i < 2; i++ {
 		_, err := store.Hit("acct:1", request)
 		var replyErr *ReplyError
@@ -401,8 +238,6 @@ func TestAnErrorReplyLeavesAStoreThatKeepsCounting(t *testing.T) {
 		}
 	}
 
-	// The connection is unharmed by the two that threw, and the store counts again
-	// the moment the key is the type the script expects.
 	if answered, err := a.Ping(context.Background()); err != nil || !answered {
 		t.Fatalf("after two failed scripts PING answered (%v, %v), want (true, nil)", answered, err)
 	}
@@ -416,16 +251,7 @@ func TestAnErrorReplyLeavesAStoreThatKeepsCounting(t *testing.T) {
 	}
 }
 
-// TestAnUnreachableServerThrowsRatherThanResolving is what makes failing open
-// honest.
-//
-// Failing open costs the whole limit for as long as the store is down, and that
-// trade is only defensible if the store really does throw when Redis is gone. A
-// connection that resolved on a refused port would turn an outage into a limiter
-// answering "allowed" with no error anywhere.
 func TestAnUnreachableServerThrowsRatherThanResolving(t *testing.T) {
-	// The port is opened and released here, so the check cannot collide with a
-	// developer's own Redis.
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not open a port to close: %v", err)
@@ -433,17 +259,10 @@ func TestAnUnreachableServerThrowsRatherThanResolving(t *testing.T) {
 	dead := listener.Addr().String()
 	_ = listener.Close()
 
-	// `Connect` is eager, so it refuses to hand back a client at all.
 	if _, err := Connect(RedisConnectionOptions{URL: "redis://" + dead, Timeout: 500 * time.Millisecond}); err == nil {
 		t.Error("Connect answered a client for a port nothing is listening on. A client that resolves against a dead server turns an outage into a limiter answering \"allowed\" with no error anywhere.")
 	}
 
-	// `LazyRedis` is what production builds, and its contract is the interesting
-	// one: a Redis that is DOWN is not a refusal to boot, it is an unavailable
-	// dependency the first command reports and the next one RETRIES. Two attempts
-	// rather than one, because the second is what proves the failure is not cached
-	// forever — a remembered failure is an outage a long-lived process never
-	// recovers from.
 	lazy, err := NewLazyRedis(RedisConnectionOptions{URL: "redis://" + dead, Timeout: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("NewLazyRedis on a dead port: %v. A malformed URL is a startup error and an unreachable server is not; a lazy client that refuses to build for the second is a gateway that will not boot because its counter store is down.", err)
@@ -457,22 +276,7 @@ func TestAnUnreachableServerThrowsRatherThanResolving(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// the script
-// -----------------------------------------------------------------------------
 
-// TestTheScriptAndTheMemoryStoreAnswerTheSameRequest is the tier's reason for
-// existing.
-//
-// The oracle is `count()` — the implementation the memory store is built from —
-// and NOT the transcription in `parity_test.go`. That is deliberate: if the
-// transcription and the script were both wrong the same way, the
-// transcription-based parity suite would stay green, and only a comparison against
-// `count()` can tell.
-//
-// 24 requests at 700ms with a limit of 5 over a 10s window, so the table spends
-// its allowance, refuses for a while, and repays — all three regimes, rather than
-// only the first.
 func TestTheScriptAndTheMemoryStoreAnswerTheSameRequest(t *testing.T) {
 	a, _ := liveTier(t)
 
@@ -506,19 +310,11 @@ func TestTheScriptAndTheMemoryStoreAnswerTheSameRequest(t *testing.T) {
 		expectSameVerdict(t, received, expected, fmt.Sprintf("#%d", i))
 	}
 
-	// The table has to have refused something, or it has proved that nothing
-	// happens rather than that the two agree.
 	if refusals == 0 {
 		t.Error("24 requests against a limit of 5 over 10s refused nothing, so this proved that the two backends agree about admitting and not that they agree about refusing.")
 	}
 }
 
-// TestTheScriptAndTheMemoryStoreAgreeAcrossRandomisedLimits is the same comparison
-// with the boundaries spread out.
-//
-// A fixed seed, generated not slept: no wall clock, nothing to flake. A 32-bit LCG
-// is enough — this needs a spread of shapes, not statistical quality, and a seeded
-// sequence is reproducible on a machine and in CI.
 func TestTheScriptAndTheMemoryStoreAgreeAcrossRandomisedLimits(t *testing.T) {
 	a, _ := liveTier(t)
 
@@ -566,13 +362,6 @@ func TestTheScriptAndTheMemoryStoreAgreeAcrossRandomisedLimits(t *testing.T) {
 	}
 }
 
-// TestABurstFiredAtOnceAdmitsExactlyTheLimit is the single-key atomicity claim,
-// through a real server.
-//
-// `Connection` carries one command at a time on one connection and the limiter
-// sends exactly one per request, so 512 requests in flight on it is the real shape
-// of a gateway burst rather than a synthetic one. A read-then-write script — GET,
-// yield, SET — admits all 512.
 func TestABurstFiredAtOnceAdmitsExactlyTheLimit(t *testing.T) {
 	a, _ := liveTier(t)
 	store := liveStore(t, a, "burst")
@@ -611,12 +400,6 @@ func TestABurstFiredAtOnceAdmitsExactlyTheLimit(t *testing.T) {
 	}
 }
 
-// TestTwoStoresOnTwoConnectionsShareOneBucket is the property the Redis backend
-// exists for, and the v0 hole it plugs — stated against two real sockets rather
-// than one fake.
-//
-// If the counter lived in either process this would be two allowances of two, and
-// the memory half below is what says so.
 func TestTwoStoresOnTwoConnectionsShareOneBucket(t *testing.T) {
 	a, b := liveTier(t)
 	first := liveStore(t, a, "replica")
@@ -636,22 +419,6 @@ func TestTwoStoresOnTwoConnectionsShareOneBucket(t *testing.T) {
 		}
 	}
 
-	// The memory pair, which cannot do it. One allowance of two, two processes.
-	// The bucket is exhausted on the FIRST store after two requests, not three:
-	// the third is the one past the limit, and a limit of two admits two. So the
-	// pair below admits FOUR where the replica pair above admitted two, and that
-	// gap is the v0 hole — why the keyspace is a deployment decision rather than
-	// an implementation detail.
-	//
-	// # THE EXPECTATION THIS USED TO STATE, AND WHY IT WAS WRONG
-	//
-	// It read `{localA, true}, {localA, false}, {localB, true}` — two requests on
-	// one memory store, the second expected to be refused. A limit of two admits
-	// two, so the second is the second of the burst and the expectation was false.
-	// Nothing noticed for as long as this file had never met a Redis, because a
-	// tier behind a skip reports the same green whether its expectations are right
-	// or wrong. The assertion that names the deployment decision was not the one
-	// being checked.
 	localA, err := NewMemoryStore(0)
 	if err != nil {
 		t.Fatalf("NewMemoryStore: %v", err)
@@ -674,10 +441,6 @@ func TestTwoStoresOnTwoConnectionsShareOneBucket(t *testing.T) {
 	}
 }
 
-// TestABucketSurvivesLosingTheConnectionItWasCountedIn is the other half of "per
-// process": every in-memory bucket is lost on restart, so a deploy is a fresh
-// allowance for every caller at once. Redis is the only reason that is not true,
-// and only a real server can show it.
 func TestABucketSurvivesLosingTheConnectionItWasCountedIn(t *testing.T) {
 	a, b := liveTier(t)
 	request := Request{Limit: 1, Window: liveWindow, Now: time.Unix(0, 0)}
@@ -691,8 +454,6 @@ func TestABucketSurvivesLosingTheConnectionItWasCountedIn(t *testing.T) {
 		t.Fatal("the first request on a fresh bucket was refused")
 	}
 
-	// A DIFFERENT connection, so this is the server's memory rather than a cached
-	// client-side count.
 	after := liveStore(t, b, "survives")
 	verdict, err = after.Hit("acct:1", request)
 	if err != nil {
@@ -703,12 +464,6 @@ func TestABucketSurvivesLosingTheConnectionItWasCountedIn(t *testing.T) {
 	}
 }
 
-// TestTheScriptExpiresItsOwnKey is a memory leak with a business-sized keyspace.
-//
-// A Redis that accumulates a bucket for every client that has ever connected is
-// exactly that, and the only thing standing between it and production is the `PX`
-// on the `SET` inside the script. Read the TTL back FROM THE SERVER, not from the
-// transcription of the script — which is the entire reason this file exists.
 func TestTheScriptExpiresItsOwnKey(t *testing.T) {
 	a, _ := liveTier(t)
 	store := liveStore(t, a, "ttl")
@@ -722,9 +477,6 @@ func TestTheScriptExpiresItsOwnKey(t *testing.T) {
 	if numberErr != nil {
 		t.Fatalf("PTTL answered %s (%T), want a number: %v", render(reply), reply, numberErr)
 	}
-	// `PTTL` rather than `TTL` because the question is "is there an expiry, and is
-	// it about a window", and a millisecond answer states that without a ceiling
-	// the second-granularity `TTL` would need. A key with no expiry answers -1.
 	if milliseconds <= 0 {
 		t.Errorf("PTTL is %v, want a positive number. A key with no expiry answers -1, so this bucket is kept until something deletes it — a Redis that accumulates a bucket for every client that has ever connected is a memory leak with a business-sized keyspace.", milliseconds)
 	}
@@ -733,13 +485,6 @@ func TestTheScriptExpiresItsOwnKey(t *testing.T) {
 	}
 }
 
-// TestARefusedRequestLeavesTheStoredDebtWhereAnAdmittedOneLeftIt reads the debt
-// back THROUGH THE SERVER, so this is what Redis HOLDS rather than what the client
-// was told.
-//
-// The refusal branch writes nothing, and a version that did would let a caller
-// that keeps hammering while throttled lock itself out for as long as it keeps
-// trying.
 func TestARefusedRequestLeavesTheStoredDebtWhereAnAdmittedOneLeftIt(t *testing.T) {
 	a, _ := liveTier(t)
 	store := liveStore(t, a, "debt")
@@ -769,12 +514,6 @@ func TestARefusedRequestLeavesTheStoredDebtWhereAnAdmittedOneLeftIt(t *testing.T
 	}
 }
 
-// TestTheBucketCharsetIsEnforcedAgainstARealServer is the refusal the store makes
-// BEFORE it talks to Redis.
-//
-// A key that trips the check throws, and the middleware fails open on that throw —
-// so a deployment with a bad bucket name has a limiter that is silently off.
-// Asserting it throws is what keeps that visible.
 func TestTheBucketCharsetIsEnforcedAgainstARealServer(t *testing.T) {
 	a, _ := liveTier(t)
 	store := liveStore(t, a, "charset")
@@ -792,26 +531,7 @@ func TestTheBucketCharsetIsEnforcedAgainstARealServer(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// the comparison itself
-// -----------------------------------------------------------------------------
 
-// expectSameVerdict is `expectSameVerdict` from
-// `src/middleware/rateLimitRedisLive.test.ts` (removed at cutover), in Go.
-//
-// # THE TIMESTAMPS ARE COMPARED, AND NOT WITH A TOLERANCE
-//
-// Redis returns a Lua number as an **integer, truncated toward zero** — `2.5` comes
-// back as `2`, `-0.5` as `0`. That is a property of the server's Lua-to-RESP
-// conversion, not of `GCRALua`, and it is why the two implementations agree on what
-// they DECIDE and not on the last decimal of a timestamp.
-//
-// So this is an exact comparison, not a tolerance: the decision fields are integral
-// on both sides and must be identical, and the two instants must equal the memory
-// store's truncated toward zero. A blanket "close enough" would let a regression of
-// any size through under the name of a rounding difference; this states the
-// mechanism, so a server that changed its conversion fails the test instead of
-// quietly widening what passes.
 func expectSameVerdict(t *testing.T, received Verdict, expected Verdict, label string) {
 	t.Helper()
 

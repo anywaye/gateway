@@ -1,15 +1,3 @@
-// The per-route allowance table, as the SHIPPED BINARY enforces it.
-//
-// `internal/ratelimit/limits_test.go` holds the table and the resolution rule. This
-// file exists because that table is data, and data nothing reads is the exact shape
-// the audit found: `Options.Policy` and `Options.Resolve` were already on the
-// limiter, nothing set them, and `/auth/login` was served at 600/min. Everything
-// here goes through `RuntimeOptions` and `New` -- the path `cmd/gateway` takes --
-// because a test that built the resolver itself would have kept passing after the
-// wiring was removed.
-//
-// The assertions name the POLICY, not just "a limit was applied". "Some limit was
-// applied" passes with the table absent, and the table being absent is the bug.
 package httpapi
 
 import (
@@ -22,12 +10,6 @@ import (
 	"github.com/anywaye/gateway/internal/testkeys"
 )
 
-// limitPolicy is the `RateLimit-Policy` value as a gateway builds it: the policy
-// name as a structured-field String, then `q` and `w`.
-//
-// The name is PARSED rather than the whole header compared, so a failure says which
-// half went wrong: "drew policy gateway-api, want gateway-auth-login" is a finding,
-// and "header was not `"gateway-auth-login";q=10;w=60`" is a rerun.
 func limitPolicy(t *testing.T, w http.Header) (name, quota, window string) {
 	t.Helper()
 
@@ -50,10 +32,6 @@ func limitPolicy(t *testing.T, w http.Header) (name, quota, window string) {
 	return name, quota, window
 }
 
-// gatewayFromEnv is the shipped assembly: read the environment, build the router.
-//
-// There is no `Limiter` constructed by hand anywhere in this file, because a
-// hand-built one is a test that cannot tell a wired gateway from an unwired one.
 func gatewayFromEnv(t *testing.T, extra map[string]string) (Options, http.Handler) {
 	t.Helper()
 
@@ -70,42 +48,6 @@ func gatewayFromEnv(t *testing.T, extra map[string]string) (Options, http.Handle
 	return config.Options, handler
 }
 
-// The AUTHENTICATED gateway, and the two reasons it is a separate helper. Both were
-// found by running the assertion, not by reading the code.
-//
-// # ONE: THE LIMITER IS MOUNTED AFTER THE CREDENTIAL GATE, AND THAT IS THE DESIGN
-//
-// `httpapi.go` mounts the verifier on `/v1/` and the limiter after it, so an
-// ANONYMOUS `/v1` request is answered 401 with no `RateLimit-*` header on it at
-// all. That is `limiter.go`'s own stated reason: a request refused by the auth gate
-// is never counted, because a token that does not verify must not become a
-// rate-limit key.
-//
-// The consequence for this file is worth spelling out. Asserting a `/v1` allowance
-// needs a token that verifies, and reading `RateLimit-Policy` off an anonymous
-// `/v1` request finds no header and reads as "the table does not apply to `/v1`",
-// which is the opposite of what is true.
-//
-// # TWO: NO TOKEN THIS REPOSITORY CAN MINT VERIFIES AGAINST THE RUNTIME
-//
-// `testkeys` anchors every `exp` at `testkeys.Clock` (2026-01-02) and
-// `RuntimeOptions` builds the verifier on the real clock with no way to inject one.
-// A token minted by `testkeys` for a RuntimeOptions-built gateway is therefore
-// expired by construction and always answers 401. `authVerifierFor` in
-// `fixture_test.go` sidesteps this by injecting the fixed clock, which a gateway
-// built from the environment has no way to do.
-//
-// So the VERIFIER is swapped and nothing else is. The limiter used below is the one
-// `RuntimeOptions` built from the shipped table -- the thing under test, enforced
-// for real by `TestTheLoginAllowanceIsEnforcedAndNotJustAnnounced` -- and only the
-// credential check is replaced, so that a token can exist. Building the limiter here
-// instead would be the test that keeps passing after the wiring is removed, which is
-// the exact shape of the gap this packet closed.
-//
-// For whoever owns the fixtures: a clock injectable through the environment would
-// remove the need for this seam entirely. That is a change to `RuntimeOptions`,
-// whose variable list is asserted by `TestTheRuntimeReaderReadsExactlyTheseVariables`,
-// and it is not this packet's to make.
 func authenticatedGateway(t *testing.T) (http.Handler, string) {
 	t.Helper()
 
@@ -129,18 +71,6 @@ func authenticatedGateway(t *testing.T) (http.Handler, string) {
 	return handler, tokenValid(t, fixture)
 }
 
-// EVERY SHIPPED ENTRY, BY NAME, THROUGH THE RUNTIME.
-//
-// The order is the reference's, and the row that matters most is the first: a
-// gateway that resolved `/auth/login` to `gateway-api` would be 60x more
-// permissive on the most attacked surface it serves, and it would still announce
-// `q=600` and look configured.
-//
-// `/v1` needs the token `authenticatedGateway` mints; `/auth` and unrecognized
-// paths do not, because the credential gate is mounted on `/v1/` only. Nothing
-// asserts the STATUS here -- which route a path resolves to is the route table's
-// business and is tested there -- because a `404` from an unmounted route still
-// says which allowance was drawn, which is the whole question here.
 func TestEveryShippedRouteDrawsItsOwnNamedAllowance(t *testing.T) {
 	_, gateway := gatewayFromEnv(t, nil)
 	secured, token := authenticatedGateway(t)
@@ -184,13 +114,6 @@ func TestEveryShippedRouteDrawsItsOwnNamedAllowance(t *testing.T) {
 	}
 }
 
-// THE ASSERTION THAT KILLS THE ACTUAL GAP, in one test.
-//
-// `/auth/login` must not be answered under the default allowance. Both facts are
-// asserted separately on purpose: a gateway that announced `gateway-auth-login`
-// while enforcing `q=600` is the failure a header-only check cannot see, and a
-// gateway that enforced 10 while announcing `gateway-api` is the one a caller
-// cannot self-diagnose.
 func TestLoginIsNotAnsweredUnderTheDefaultAllowance(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
@@ -215,18 +138,6 @@ func TestLoginIsNotAnsweredUnderTheDefaultAllowance(t *testing.T) {
 	}
 }
 
-// THE NUMBERS ARE ENFORCED, NOT ANNOUNCED. This is the test a header assertion
-// cannot replace.
-//
-// Ten requests are admitted and the eleventh is refused on `/auth/login`, five and
-// the sixth on `/auth/register`. Under the pre-port wiring all of them were
-// admitted and every response carried `q=600`, so this is the assertion that
-// distinguishes a table that is WIRED from a table that is merely PRESENT, and it
-// is why the quota is asserted by exhausting it rather than only by reading it back.
-//
-// Every request comes from the same peer, so every request shares one bucket: the
-// counter is keyed on the strongest identity the request has, and an anonymous
-// request's strongest identity is its address.
 func TestTheLoginAllowanceIsEnforcedAndNotJustAnnounced(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
@@ -263,17 +174,6 @@ func TestTheLoginAllowanceIsEnforcedAndNotJustAnnounced(t *testing.T) {
 	}
 }
 
-// The two are SEPARATE BUCKETS, and this is the property that makes the four auth
-// entries worth having.
-//
-// Login and register share a prefix family and are two entries precisely so they are
-// two policies. A caller who has burned the registration budget must not be able to
-// lock out every legitimate sign-up from that address, and a caller brute-forcing
-// logins must not be spending the registration allowance while they do it.
-// Exhausting one must leave the other admitting.
-//
-// The counter key leads with the policy name, so this is a property of the key and
-// not of the counting.
 func TestExhaustingOneAuthBudgetLeavesTheOtherSpendingItsOwn(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
@@ -285,7 +185,6 @@ func TestExhaustingOneAuthBudgetLeavesTheOtherSpendingItsOwn(t *testing.T) {
 		}
 	}
 
-	// Registration is spent. Login is a different policy and is untouched.
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/auth/login", nil))
 
@@ -297,13 +196,6 @@ func TestExhaustingOneAuthBudgetLeavesTheOtherSpendingItsOwn(t *testing.T) {
 	}
 }
 
-// The boundary rule, through the runtime, in the PERMISSIVE direction, which is
-// the direction that is a bug.
-//
-// `/auth/loginfoo` shares a name with `/auth/logout` and is not under it. It draws
-// the auth-adjacent entry, and a matcher using a raw string prefix would hand it the
-// 30/min logout budget. The assertion names the policy, so the failure says which
-// entry answered rather than only that something was wrong.
 func TestARouteThatMerelySharesANameDoesNotInheritItsAllowance(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
@@ -322,21 +214,6 @@ func TestARouteThatMerelySharesANameDoesNotInheritItsAllowance(t *testing.T) {
 	}
 }
 
-// The probes are exempt, and that exemption is the only thing standing between the
-// table and a restart loop.
-//
-// `Options.Exempt` was already wired; this asserts the table did not quietly take
-// over from it. An orchestrator polling `/readyz` is metered at 60/min on the
-// auth-adjacent default if the exemption is lost, and a throttled probe is an
-// orchestrator that cannot see a healthy process.
-//
-// NO STATUS IS ASSERTED, and that is deliberate rather than lazy. This gateway is
-// built with no identity to ask, so `/readyz` correctly answers `503` and `/healthz`
-// correctly answers `200`. The property under test is that neither is ever a `429`,
-// and asserting `200` on `/readyz` would be asserting something about dependency
-// reachability that has nothing to do with rate limiting. The paths are read from
-// `ProbePaths` rather than typed here, so a probe added later fails this test
-// rather than quietly ceasing to be covered.
 func TestTheProbePathsAreStillNeverCounted(t *testing.T) {
 	_, handler := gatewayFromEnv(t, nil)
 
@@ -357,19 +234,6 @@ func TestTheProbePathsAreStillNeverCounted(t *testing.T) {
 	}
 }
 
-// The window is per ENTRY, and the limiter's constructor values still govern
-// anything no entry claims.
-//
-// `RATE_LIMIT_REQUESTS` and `RATE_LIMIT_WINDOW_MS` set the limiter's fallback, and
-// the reference's `rateLimit.ts` keeps them as the allowance for a policy the table
-// does not name. The shipped table names every policy it enforces, so these are the
-// fallback for a table that has been replaced -- and the point of the case is that
-// the per-route table did not make them inert.
-//
-// The `/auth/login` assertion is the load-bearing half. Setting `RATE_LIMIT_REQUESTS`
-// must NOT widen `/auth/login` back to the constructor's number, or the pre-port bug
-// arrives through a different door: a table that is wired but overridden by an
-// environment variable that still works.
 func TestTheConstructorAllowanceDoesNotOverrideAnEntryTheTableNames(t *testing.T) {
 	_, handler := gatewayFromEnv(t, map[string]string{
 		"RATE_LIMIT_REQUESTS":  "7",

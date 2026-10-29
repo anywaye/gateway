@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# Measure each of the five findings in REPORT-gateway-go-bff-01 §3 — before and
-# after — with the equivalence check as the instrument.
-#
-#   ./measure-findings.sh
-#
-# The report says "13 comparisons differing at byte 2" and "29 differences in
-# total". Those numbers have to come from a run, not from a memory of a run, so
-# this applies each fix's INVERSE mutation and asks the equivalence check how many
-# of its comparisons differ. Restore is by copy, for the reason written down in
-# mutation-gate.sh: `git checkout --` restores the last commit and silently
-# deletes uncommitted work.
-#
-# A finding whose "before" is 0 differences is not a finding, and this says so
-# rather than printing a row.
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -26,8 +12,6 @@ for f in $FILES; do mkdir -p "$SNAPSHOT/$(dirname "$f")"; cp "$f" "$SNAPSHOT/$f"
 
 restore() { for f in $FILES; do cp "$SNAPSHOT/$f" "$f"; done; }
 
-# differences prints the equivalence check's own count, or NOTHING-IF-IT-DID-NOT-RUN
-# rather than a zero. A tier that skipped has not measured anything.
 differences() {
   local out
   out="$(go test -count=1 -v -run TestTheGoGatewayAnswersAsTheTypeScriptOneDoes ./internal/equivalence/ 2>&1)"

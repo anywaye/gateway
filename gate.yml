@@ -161,244 +161,41 @@ version: 1
 name: gateway
 
 gate:
-  # The command a person or a tool runs, as an argv and never a shell string, so
-  # the exit code is the gate's own. This fleet's one recorded false green was
-  # `… | tail -45; echo "PRIME EXIT=$?"` under zsh, where `$?` is tail's.
   command: [bin/prime]
-  # The task `mise run prime` resolves to, and `check_mise_task` holds
-  # `[tasks.prime].run` against `entrypoint` below, so pointing `miseTask` at a
-  # task that runs a DIFFERENT file is `gate.task-entrypoint-mismatch` rather
-  # than a divergence nobody notices.
   miseTask: prime
-  # The file behind the command. It is `./bin/prime-go` plus a final line, and
-  # it is still a separate file from the tier rather than a symlink to it —
-  # `entrypoint` and `ci.invokes` both name this path, and the checker reads
-  # both textually.
   entrypoint: bin/prime
-  # The suite's own budget rather than the gate's. It was 900s when a cold
-  # checkout had to resolve and fetch hono, jose and typescript from npm before
-  # a single test ran, and it is left there deliberately: a warm gate measures
-  # ~6s, so 900s cannot fire on this gate, and tightening it buys a detector
-  # that would only ever report a hang it has already learned to report. The
-  # number is now describing headroom that is not needed rather than a bound
-  # that is; that is a worse reason to keep a number than the one it replaced.
   timeoutSeconds: 900
   proof:
-    # ---------------------------------------------------------------------
-    # The load-bearing one, and the only line carrying a floor.
-    #
-    # `gate.proof-missing` is a FAILURE, so a gate that exits zero without
-    # emitting this is a red rather than a green. That is the defect the format
-    # exists to catch: a script whose last line became `exit 0` would satisfy
-    # the exit code and nothing else.
-    #
-    # IT REPLACES `pass`, and the two are not the same line in the same place.
-    # `bun test` printed `428 pass` as its own last summary; `bin/prime-go`
-    # prints `suite: 232 passed, 0 failed` after everything else has run,
-    # having counted `--- PASS:` lines out of `go test -count=1 -v`'s output.
-    # Counting is deliberate: `go test` discards a passing package's output
-    # entirely, so a package that prints its own `skip:` row prints it into a
-    # void on every green run, and a summary that nobody can see is not a
-    # summary.
-    #
-    # The single capture group is load-bearing twice over: `minimum` is read
-    # from it, and a second group is `gate.proof-invalid` — the checker read the
-    # last match, so a run that printed 232 and then something smaller is still
-    # caught. `0 failed` is deliberately NOT in the pattern: it is a lower bound
-    # that fires on `0 failed` and never on the failure itself, and a gate that
-    # printed `suite: 232 passed, 9 failed` is caught by the exit code and by
-    # every other proof in this file, not by a floor on a number that cannot go
-    # negative.
     - id: suite
       match: '^suite: ([0-9]+) passed'
-      # 227, against a measured 252. The margin is deliberate and small, and it
-      # is the same rule the deleted `pass` floor used (560 against 565): a
-      # floor at exactly today's number has to be moved by hand before a
-      # single test can be added, and a ratchet nobody can move is a ratchet
-      # that gets deleted. It is still a detector — a suite that quietly lost
-      # five tests is `gate.floor`, which is a failure.
-      #
-      # 232 is the number for a run with NO Redis, which is what `bin/prime`
-      # does: it never sets `GATEWAY_REDIS_URL`, so the live tier's 13 tests
-      # are always skipped here. Those 13 are NOT in the 232 — `--- SKIP:`
-      # lines are counted separately — so the floor is stable across both
-      # environments, which the old `pass` floor was not obliged to be and did
-      # not document. Set from the measured number, not from the measured
-      # number plus the skipped tier.
-      #
-      # WHERE IT CAME FROM, so the size of the drop is not a mystery: the
-      # deleted `pass` floor of 560 counted 565 `bun test` tests. This counts
-      # 232 `go test` tests. The two suites never had the same size and were
-      # never meant to; rebasing 560 onto a Go suite would have been a floor
-      # that could not be satisfied, and quietly dropping it to 227 without
-      # saying the suite changed would have been a floor that says nothing about
-      # how much was lost. It is 232 now, measured, and the drop is here.
       minimum: 227
-    # ---------------------------------------------------------------------
-    # The step markers. They are presence proofs with no `minimum`, so all they
-    # assert is that the banner was printed — which is what catches a gate that
-    # exits 0 having done less than it appears to.
-    #
-    # THE FOUR MECHANICAL STEPS ARE ONE ALTERNATION, and the fold is this file's
-    # own comment made good: it said "the one to fold, if a ninth is ever
-    # needed, is `go-build`... folding `gofmt`/`go-build`/`go-vet`/`go-test`
-    # into ONE alternation". The ninth arrived — the `publish` proof below —
-    # the schema caps `proof` at 8, and this is the fold it prescribed. What is
-    # lost is only the attribution of WHICH step stopped, which the exit code
-    # and the step that never printed its banner both already report.
     - id: go-mechanical
       match: '^==> (gofmt -l|go build \./\.\.\.|go vet \./\.\.\.|go test \./\.\.\.)$'
     - id: publish
-      # THE PUBLISH LOOP'S SERVICE HALF, proved at the gate. `.github/workflows/
-      # publish.yml` must call kit's composed publish workflow, grant
-      # `packages: write`, pass `push: true`, and pass `chart-dir:
-      # charts/gateway/` — and that directory's Chart.yaml must carry the
-      # version the substrate's Application pulls (`targetRevision: 0.1.0`),
-      # because the chart version IS the OCI tag. Each fact is one that makes
-      # the loop work; a caller that inlines the steps, omits the grant, omits
-      # the opt-in, or points at the wrong directory publishes nothing or
-      # publishes a chart the substrate never finds.
       match: '^==> the publish caller publishes the image and the chart$'
     - id: chart-image
-      # THE IMAGE THE DEPLOYMENT PULLS IS THE IMAGE THE LOOP PUSHES, and this is
-      # the fact the loop was open at on the other end. `charts/gateway/
-      # values.yaml` named `image.repository: anywaye/gateway` with no registry
-      # host, so containerd resolved it against Docker Hub and the pod reached
-      # image-pull and failed forever ("pull access denied, repository does not
-      # exist"). The step derives the published path from go.mod's module path
-      # and requires the chart's value to equal it, so the two cannot drift
-      # again. A proof slot earned the way the publish one was: a fact that
-      # makes a deploy work, not a file that exists.
       match: '^==> the chart names the image the publish loop pushes$'
     - id: go-generated
-      # The contract is current. This is the step that regenerates
-      # `internal/api/api.gen.go` from `openapi/v1.yaml` and fails when the
-      # committed file differs — and the property is load-bearing in a way it is
-      # not for most gates, because the Go router IS the generated file: a stale
-      # one does not fail to compile, it answers the old routes with the new
-      # contract's promises.
-      #
-      # It also has no `|| true` and no "warn and continue": `set -euo pipefail`
-      # is already in force, so a missing generator or an empty module cache
-      # fails the step. A gate that cannot run is not a gate that passed.
       match: '^==> the generated server matches the OpenAPI document$'
     - id: ratelimit
-      # THE ONE TIER IN THIS REPOSITORY THAT CAN STILL SKIP, counted at the
-      # gate. `internal/ratelimit`'s live tier runs the GCRA script against a
-      # real `redis-server` and is gated on `GATEWAY_REDIS_URL`, which
-      # `bin/prime` never sets: 13 `--- SKIP:` lines on every run here.
-      #
-      # `bin/prime-go` looks for `ratelimit: DID NOT RUN` in the `-v` output and
-      # prints either that or `ratelimit: the live Redis tier RAN`. It does not
-      # skip silently, which matters because `go test` discards a passing
-      # package's output: without `-v` and without this block, a tier that ran
-      # no tests at all would print `ok`. That has happened on this repository
-      # before, and the reason it took a debugging session is written into
-      # `internal/ratelimit/live_test.go`.
-      #
-      # IT REPLACES the `go-equivalence` proof, which matched `^equivalence: `
-      # for a tier that stood the TypeScript reference up. At cutover that tier
-      # printed neither its summary nor its counted skip, so the proof could
-      # only ever fail; it is deleted and this takes its slot. Same reason for
-      # the proof: the line carries a count only on a machine that has Redis, so
-      # a `minimum` on it would turn every developer without one into a red gate.
       match: '^ratelimit: '
     - id: ok
-      # The gate reached its own last line. With the six step markers above it,
-      # the markers bracket the run: the toolchain was asserted, four mechanical
-      # steps started, the contract was regenerated, the one skippable tier
-      # reported, the suite was counted, the gate completed. Cheap, and it is
-      # what distinguishes "the suite printed its summary" from "the gate
-      # completed".
-      #
-      # `== prime ok`, not `== prime ok (bun 1.3.12)` — there is no bun to
-      # report. It is printed by `bin/prime` and not by `bin/prime-go`, because
-      # prime-go's `==> ok` is the TIER finishing and this is the GATE
-      # finishing.
       match: '^== prime ok$'
-    #
-    # SEVEN OF EIGHT, and the counting changed to get here. The schema caps
-    # `proof` at 8; this file has 7. It was at the cap — eight — until the
-    # `publish` proof above arrived as the ninth, and the fold this comment
-    # prescribed was made: `gofmt`/`go-build`/`go-vet`/`go-test` are now ONE
-    # alternation (`go-mechanical`), which is what "the one to fold, if a ninth
-    # is ever needed" said to do. What the fold loses is only the attribution
-    # of WHICH step stopped, which the exit code and the step that never
-    # printed its banner both already report. The `chart-image` proof above took
-    # one of the two free slots; one remains, and the next occupant should earn
-    # it the same way both of these did — a fact that makes a loop work, not a
-    # file that exists.
-    #
-    # WHAT IS NOT HERE, AND WHY:
-    #   * a proof on `==> toolchain: go`. `bin/prime-go` compares mise.toml's
-    #     pin against go.mod's own `go` directive as its FIRST step and exits
-    #     127 on a mismatch, so a wrong toolchain cannot reach a green run — the
-    #     assertion cannot lie, only exit. And the requirement is named in
-    #     `external.requirements` below, where a reader looking for the
-    #     toolchain looks.
-    #   * a floor on the SKIP COUNT, which the format cannot express.
-    #     `minimum` is a LOWER bound and the failure guard cares about is the
-    #     skip count going UP (13 → 232, which is what deleting the live tier's
-    #     tests, or converting them to `t.Skip`, would look like). A lower bound
-    #     cannot catch an increase. So the skip count is stated in prose here
-    #     and enforced in the three places that CAN see it, all pre-existing:
-    #       - `GATEWAY_REDIS_REQUIRED=1` turns "no Redis" from a skip into a
-    #         failure, asserted by the tier itself and escalated by
-    #         `bin/prime-go` (exit 3);
-    #       - the `redis` CI job runs the tier against a real server;
-    #       - the `ratelimit` proof above asserts that the skip was COUNTED at
-    #         all, which is what makes a reader notice a tier that went quiet.
 
 external:
-  # NOT self-contained, and saying so is the point — but the REASON changed in
-  # this commit and the old one no longer holds. It used to be "bun on PATH and
-  # an npm fetch on a cold checkout". There is no npm fetch: nothing in this
-  # gate resolves a JavaScript package any more. What remains is the Go
-  # toolchain, which the repository pins rather than ships, and — on a machine
-  # with an empty module cache — `go mod download` for the generated-code step.
   selfContained: false
   requirements:
     - kind: toolchain
-      # WHY THIS IS A REQUIREMENT AND NOT A DETAIL. `bin/prime` runs
-      # `./bin/prime-go`, whose first action is `require go`, which exits 127
-      # with a sentence naming `mise install` when the runtime is absent — so
-      # without this the gate does not run at all, and a reader who has only
-      # ever run it on a configured machine does not know that.
-      #
-      # IT REPLACES the bun requirement, which named "bun 1.3.12 on PATH, the
-      # pin in mise.toml, package.json's packageManager, and the oven/bun base
-      # image". All four of those copies are gone; nothing in this repository
-      # invokes bun, so the requirement went with them rather than being
-      # rebased.
       name: >-
         go 1.26.1 on PATH, the pin in mise.toml, go.mod's own go directive, and
         the Dockerfile's ARG GO_VERSION. Without it bin/prime exits 127 in
         ./bin/prime-go before any Go test runs.
       satisfy:
-        # A bare command, so this is a claim about THIS MACHINE and the checker
-        # reports it as `gate.requirement-unproven` without moving the exit
-        # code. That severity is correct: the alternative is a checker that is
-        # red on a laptop and green on CI. `go version` is precisely the check
-        # `bin/prime-go` performs itself, so satisfying this requirement and
-        # satisfying the gate's own precondition are the same command.
         command: [go, version]
         unmet: >-
           bin/prime-go exits 127 with "mise.toml pins no go toolchain" or "go is
           not on PATH" in the message, and no Go step banner is printed at all
     - kind: network
-      # WHY IT IS HERE AT ALL, when a warm gate is offline, and it is a much
-      # smaller claim than the one it replaces. The old requirement was
-      # registry.npmjs.org on a cold checkout, because `bun install
-      # --frozen-lockfile` fetched four packages before a test could run. There
-      # is no install step any more.
-      #
-      # What is left is the generated-code step: `bin/prime-go` runs `go
-      # generate ./internal/api/`, which `go run`s `oapi-codegen` v2.8.0. That
-      # resolves from the module cache, and on a machine with an empty cache it
-      # is a fetch. The step does NOT skip when it cannot run — there is no `||
-      # true` and no warning path — so on a cold machine the gate fails rather
-      # than reporting a green that verified nothing, and this requirement is
-      # what says so in advance rather than leaving it to the failure message.
       name: >-
         proxy.golang.org, ONCE, on a machine whose module cache is empty —
         `go mod download` for the build and for oapi-codegen v2.8.0, which the
@@ -409,74 +206,7 @@ external:
           bin/prime-go's "the generated server matches the OpenAPI document"
           step exits 1 with "regeneration FAILED" and names
           `go mod download` as the one command that fixes a cold machine
-  # NOT required, and named so nobody goes going for them:
-  #
-  #   * no credential, of any kind. The suite is hermetic by construction: the
-  #     tests mint their own keys (`internal/testkeys`), no anywaye service is
-  #     contacted, and nothing in this declaration's proof would print a token,
-  #     a key or a JWT if it did. Measured, not read off the workflow:
-  #     `bin/prime` was run to green with no environment variable of any kind
-  #     set. A gate that could print one is a defect to fix rather than a
-  #     threshold to raise.
-  #   * no Redis, and this one is worth reading twice. The live tier
-  #     (`internal/ratelimit/live_test.go`, 13 tests) needs a real
-  #     `redis-server` and is gated on `GATEWAY_REDIS_URL`. It is NOT a
-  #     requirement of THIS gate: `bin/prime` never sets that variable, so the
-  #     tier skips by design and the gate is green. Only the `redis` CI job sets
-  #     `GATEWAY_REDIS_URL` and `GATEWAY_REDIS_REQUIRED` and forces it.
-  #     Declaring it as a requirement would be over-claiming a dependency the
-  #     gate does not have, and would make `selfContained: false` assert
-  #     something false. It is named in the proof block above with the three
-  #     mechanisms that do police it, and it is the one thing a developer
-  #     running `bin/prime` locally is not exercising.
-  #   * no service, no database, and no filesystem path outside the repository.
-  #     The generated-code step writes `internal/api/api.gen.go` inside the
-  #     tree, which is why `bin/prime-go` takes its checksum first and reports
-  #     if it had to overwrite anything.
 
 ci:
-  # THE FILE CI RUNS, AND WHY IT IS NOT A WORKFLOW ANY MORE.
-  #
-  # The paragraphs below describe the GitHub Actions workflow this repository
-  # used to have. That workflow is gone: the fleet's CI is no longer GitHub
-  # Actions. The gate runs in a dev sandbox — the same sandbox the work
-  # happens in — and what the runner executes is `ci/pipeline.sh`.
-  #
-  # The pipeline is this repository's own: its gate, its build and its ship,
-  # in one script, in the repository, where a person can run it by hand as
-  # well as a sandbox. The CI runs it with CI_DRY_RUN=1, so a CI run gates
-  # the tree and stops before the ship; the ship is a deliberate act and not
-  # a side effect of a push.
-  #
-  # WHAT FOLLOWS IS KEPT, AND WHY. The notes below were written about the
-  # workflow this repository used to have. The claims they make about the GATE
-  # — which command it is, which flag it carries, which tier is deliberately
-  # not declared here — are still true and are still the reason this block is
-  # what it is. The claims they make about the workflow's shape (its job names,
-  # its `run:` bodies, the line numbers in a file that no longer exists) are
-  # how the workflow was, and the workflow is gone. Nothing here is a
-  # declaration about a file CI runs.
-  #
-  # The workflow, and the argv it runs. Checked TEXTUALLY against the workflow's
-  # `run:` bodies, so a workflow that stops calling the gate becomes
-  # `gate.ci-disagrees` rather than a quiet divergence.
   workflow: ci/pipeline.sh
-  # `bin/prime`, verbatim and unmodified — the `prime` job's step is literally
-  # `run: bin/prime`, and the repository's own rule is that the CI gate is the
-  # same command rather than a CI variant of it.
-  #
-  # WHAT THIS BLOCK DELIBERATELY DOES NOT CLAIM, because `check_ci` reads one
-  # workflow's `run:` bodies and nothing else: the `redis`, `manifest` and
-  # `image` jobs are outside what this block can see, and all three check things
-  # `bin/prime` does not. That residue is the finding, and
-  # REPORT-guard-09-gate is where it was written down; a declaration that
-  # implied CI and the local gate verify the same set would be the false green
-  # this format exists to remove.
-  #
-  # WHAT THIS BLOCK COVERS: `check_ci` reads one workflow's `run:` bodies, and
-  # the `prime` job's is literally `run: bin/prime` — so the whole gate,
-  # generated-code currency included, is inside what this block can see.
-  # There is no `prime-go` CI job and that is a decision rather than an
-  # omission: a second job running the same tier would be the gate existing
-  # twice, and the two could disagree about what "green" means.
   invokes: [bin/prime]

@@ -1,23 +1,3 @@
-// The rate-limit middleware.
-//
-// Everything about *which* bucket a request belongs to is `key.go`, and everything
-// about *how* a bucket is counted is `store.go` behind `Store`. What is left here
-// is the part only this file can decide:
-//
-//   - the policy, which is half the key and the name in `RateLimit-Policy`,
-//   - what a client is told — RFC 9651's `RateLimit-Policy` and `RateLimit`, the
-//     `RateLimit-Limit`/`-Remaining`/`-Reset` trio every deployed client already
-//     reads, and `Retry-After` on a refusal,
-//   - and what happens when the counter store is unreachable.
-//
-// # IT IS MOUNTED AFTER AUTHENTICATION, ON PURPOSE
-//
-// The key is the strongest identity the request has, and the strongest identity is
-// only known once a token has been verified or a key has been looked up. The cost
-// of that ordering is stated rather than hidden: a request refused by the auth gate
-// is never counted, because a token that does not verify must not become a
-// rate-limit key, and a rejected credential is cheap to reject — the algorithm is
-// read off the header before any key is fetched.
 package ratelimit
 
 import (
@@ -39,46 +19,20 @@ import (
 // per request. `src/middleware/rateLimit.ts` (removed at cutover) validates the same three numbers in
 // the same place and says why.
 type Options struct {
-	// Requests allowed per window. An integer >= 1.
 	Limit int
 
-	// Window length. Zero means the reference's default of 60s; see
-	// `DefaultWindow`.
 	Window time.Duration
 
-	// Where buckets are counted. Required — a limiter with no store applies no
-	// limit, and `internal/httpapi` expresses that by not mounting one at all,
-	// which is a shape a reader can see rather than a nil the limiter invents.
 	Store Store
 
-	// How many proxies stand in front of gateway, which is how much of
-	// `X-Forwarded-For` may be believed. Zero — the default — believes none of it.
-	// See `ClientIP`.
 	TrustedProxies int
 
-	// The policy in force for a path, and the numbers it stands for.
-	//
-	// A function of the PATH rather than of the request, and that is a narrowing
-	// the port is explicit about: the reference reads `policy(c)` per request
-	// because a per-route table is resolved from the path, and with only the
-	// default table ported there is exactly one answer. The `Resolve` hook below is
-	// how the per-route packet gets at the same numbers without this type
-	// changing shape.
 	Policy func(path string) string
 
-	// The numbers a policy name stands for, when a route carries its own.
-	//
-	// A name the table does not carry falls back to the allowance above rather
-	// than failing, so a typo in a table costs the default allowance and nothing
-	// else. This is `resolve` in `rateLimit.ts` and the fallback is its documented
-	// behavior.
 	Resolve func(policy string) (limit int, window time.Duration, ok bool)
 
-	// Clock, injected so a test can cross a window boundary without sleeping.
 	Now func() time.Time
 
-	// Paths that are never throttled. Required to be non-nil-safe: nil means
-	// nothing is exempt, and `internal/httpapi` passes `ProbePaths`.
 	Exempt func(path string) bool
 }
 
@@ -110,22 +64,10 @@ type Limiter struct {
 	defaultWindow  time.Duration
 	refuse         Refuser
 
-	// Policy name -> that policy's own numbers, memoised.
-	//
-	// The reference memoises the same map and for the same reason: a policy is
-	// read PER REQUEST, so validating the name once per request is validating it
-	// on every request, and the map also means a name's numbers are decided once
-	// rather than re-resolved per request.
-	//
-	// The lock is because Go reads this from every goroutine and the reference's
-	// single loop did not have to. `sync.Map` was the other candidate and a plain
-	// mutex is the honest one: the map holds one entry per distinct policy name,
-	// which is a handful, and a `sync.Map` optimizes for a case this does not have.
 	mu     sync.Mutex
 	limits map[string]allowance
 }
 
-// allowance is a policy name and the numbers it stands for.
 type allowance struct {
 	Limit  int
 	Window time.Duration
@@ -158,10 +100,6 @@ func NewLimiter(options Options, refuse Refuser) (*Limiter, error) {
 		window = DefaultWindow
 	}
 	if window < time.Millisecond {
-		// One millisecond, not one nanosecond: `count` divides the window by the
-		// limit to get the interval, and an interval that truncates to zero is a
-		// division by zero on every request. A window shorter than a millisecond
-		// cannot express "600 per second" and is not a rate anybody asked for.
 		return nil, fmt.Errorf("%w: windowMs must be at least 1ms, got %v — an interval that truncates to zero is a limiter that cannot count", ErrNotConfigured, window)
 	}
 
@@ -196,15 +134,6 @@ func NewLimiter(options Options, refuse Refuser) (*Limiter, error) {
 	}, nil
 }
 
-// allow is the policy name's numbers, resolved once and remembered.
-//
-// The name is VALIDATED here rather than escaped and truncated, and the reference
-// says why: a name that cannot be serialized into a structured field is a
-// configuration mistake to surface, and the one way it could be *not* surfaced is
-// a header carrying a second field item that a client reads as a second policy.
-//
-// That is RFC 9651 §3.1.1.3's key grammar: `lcalpha / DIGIT / "_" / "-" / "." /
-// "*"`, opening on a letter or `*`, at most 64 characters.
 func (l *Limiter) allow(name string) (allowance, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -242,8 +171,6 @@ func assertStructuredKey(value string) error {
 		switch {
 		case r >= 'a' && r <= 'z':
 		case r == '*':
-			// Only legal as the FIRST character, and the loop below enforces that
-			// by rejecting it anywhere else.
 			if i != 0 {
 				return fmt.Errorf("%w: policy must be a structured-field key, got %q", ErrNotConfigured, value)
 			}
@@ -274,10 +201,6 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 
 		active, err := l.allow(l.policy(r.URL.Path))
 		if err != nil {
-			// A policy name that cannot be a structured-field key is gateway's own
-			// configuration being wrong, and the middleware's answer is the same
-			// as `createJwtVerifier`'s: refuse the request rather than serve it
-			// with headers nobody can parse. The reason goes to the log.
 			l.failedOpen(r, err)
 			next.ServeHTTP(w, r)
 			return
@@ -295,9 +218,6 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 		l.announce(w, active, verdict, at)
 
 		if !verdict.Allowed {
-			// A whole second at minimum. `Retry-After: 0` tells a client to come
-			// back immediately, and a client that obeys it is a hot loop against a
-			// bucket that cannot open for another few hundred milliseconds.
 			w.Header().Set("Retry-After", strconv.FormatInt(secondsUntil(at, verdict.RetryAt, true), 10))
 			l.refuse(w, r, http.StatusTooManyRequests, "rate_limited", "too many requests for this window")
 			return
@@ -307,66 +227,10 @@ func (l *Limiter) Wrap(next http.Handler) http.Handler {
 	})
 }
 
-// failedOpen is a counter store that is not there.
-//
-// # FAILS OPEN, AND THE COST IS NAMED RATHER THAN HIDDEN
-//
-// For as long as Redis is unreachable, gateway applies no limit at all. The
-// alternative — failing closed — hands an outage in the counter store to every
-// caller as a 429, which is the same class of mistake as restarting the process on
-// a dependency blip, and much harder to notice. A store that cannot answer has
-// told us nothing about whether the caller has spent anything, and guessing "no" is
-// guessing in the direction that keeps the edge serving.
-//
-// The headers are left off rather than guessed at, because a client told
-// `RateLimit-Limit: 600` and then never refused is worse than a client told
-// nothing. The store is a registered readiness probe, so `/readyz` says so.
-//
-// The message can name a host, a port and a bucket; the caller gets a request with
-// no rate-limit headers on it and no idea why, and the log is where that goes.
 func (l *Limiter) failedOpen(r *http.Request, cause error) {
 	Logf("gateway: the rate-limit store is unavailable; this request is not counted (%s %s): %v", r.Method, r.URL.Path, cause)
 }
 
-// announce is the header family, on every answered request.
-//
-// Two shapes, because clients in the field read two shapes and a gateway that
-// sends only one of them throttles nobody. There is no RFC for these fields yet;
-// the citation is the IETF HTTPAPI working group's Standards Track draft,
-// `draft-ietf-httpapi-ratelimit-headers-11` (Polli, Martinez Ruiz, Miller; 23 May
-// 2026), which builds on **RFC 9651** (Structured Field Values for HTTP) — not
-// RFC 9331, which is L4S/ECN and has nothing to do with rate limiting.
-//
-//   - §3 `RateLimit-Policy` — the quota policy, as a List of Items: the policy
-//     name as a String, `q` for the quota, `w` for the window in seconds.
-//     RateLimit-Policy: "gateway-api";q=600;w=60
-//   - §4 `RateLimit` — the quota currently available under that policy: `r` for the
-//     available quota and, per §4.1.2, `t` for the *effective window*, "the number
-//     of seconds within which the client can use no more than the available quota".
-//     That is a countdown to the replenishment, not a copy of `w`: the draft's own
-//     examples show it moving. Sending the window here would tell a client its
-//     remaining quota lasts twice as long as it does.
-//     RateLimit: "gateway-api";r=12;t=44
-//   - The un-prefixed `RateLimit-Limit`, `RateLimit-Remaining` and
-//     `RateLimit-Reset` trio, which the same draft dropped in -08 and which
-//     deployed clients and proxies still parse. `RateLimit-Reset` counts down in
-//     seconds, like `t`, so the two agree by construction.
-//   - This repository's own `X-RateLimit-*`, which is what gateway sent before the
-//     draft existed: same numbers, and `X-RateLimit-Reset` as an absolute epoch
-//     instant, because a client that wants a wall-clock deadline should not have to
-//     reconstruct one from a delta.
-//
-// §6 lets a server return these regardless of status code, so they go on the 429 as
-// well; §7 makes `Retry-After` take precedence when both are present, and that is
-// the order they are meant to be read in.
-//
-// # THE NUMBERS ARE FORMATTED LIKE JAVASCRIPT, DELIBERATELY
-//
-// `remaining` is a whole number of quota units in the reference because `Verdict`
-// there is typed as numbers coming out of Lua's integer arithmetic, and Go's
-// `%.0f` of a float64 is what a client reads either way. `internal/equivalence`
-// compares these header VALUES byte for byte, and `strconv.FormatFloat(v, 'f',
-// -1, 64)` is `String(v)` in JavaScript for every value a limiter can produce.
 func (l *Limiter) announce(w http.ResponseWriter, active allowance, verdict Verdict, at time.Time) {
 	windowSeconds := int64(math.Ceil(active.Window.Seconds()))
 	effective := secondsUntil(at, verdict.ResetAt, false)
@@ -405,12 +269,6 @@ var RateLimitHeaders = []string{
 	"X-RateLimit-Reset",
 }
 
-// secondsUntil is `Math.max(0, Math.ceil((until - at) / 1000))`, and `atLeastOne`
-// is the `Math.max(1, …)` the `Retry-After` line adds.
-//
-// `Ceil` and not a truncation, and that is the reference's arithmetic: a reset 400
-// milliseconds away is `t=1`, not `t=0`, because `RateLimit-Reset` counts in whole
-// seconds and rounding down would tell a client its budget is back before it is.
 func secondsUntil(at, until time.Time, atLeastOne bool) int64 {
 	seconds := int64(math.Ceil(until.Sub(at).Seconds()))
 	if seconds < 0 {
@@ -422,10 +280,6 @@ func secondsUntil(at, until time.Time, atLeastOne bool) int64 {
 	return seconds
 }
 
-// number is `String(n)` for a whole quota count.
-//
-// `%.0f` rounds; a quota count is always a whole number by construction — it is
-// `limit - ceil(used)` — so there is nothing to round and this is exact.
 func number(value float64) string {
 	if value == math.Trunc(value) {
 		return strconv.FormatInt(int64(value), 10)

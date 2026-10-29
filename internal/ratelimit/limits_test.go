@@ -1,19 +1,3 @@
-// The limit table, and the rule that decides which entry a path draws on.
-//
-// `src/middleware/limits.test.ts` (removed at cutover) is the specification for what follows, and its
-// cases are ported one for one rather than paraphrased: a per-entry table whose
-// tests do not name every entry is a table that can lose one silently, which is
-// the whole failure this port exists to close. The Go tree drew every request on
-// the default allowance and nothing said so.
-//
-// # WHAT THESE TESTS ARE FOR, AND THE MUTATION EACH ONE KILLS
-//
-//   - a per-entry assertion, because "some limit was applied" passes with the
-//     table absent, which is the failure the audit found and called silent;
-//   - the segment boundary, because getting it wrong in the PERMISSIVE direction
-//     is the same class of bug as the missing table;
-//   - validation, because a limit of `0` is a startup failure, not a surprise on
-//     the first request of the week.
 package ratelimit
 
 import (
@@ -22,8 +6,6 @@ import (
 	"time"
 )
 
-// -----------------------------------------------------------------------------
-// The shipped table.
 
 func TestTheShippedTableIsWholeAndStrict(t *testing.T) {
 	table := DefaultLimitTable()
@@ -36,9 +18,6 @@ func TestTheShippedTableIsWholeAndStrict(t *testing.T) {
 		if entry.Window < time.Millisecond {
 			t.Errorf("policy %q has window %v, which is under a millisecond", entry.Policy, entry.Window)
 		}
-		// The shipped names are stricter than the structured-field key they have to
-		// be: no `_`, no `.`, no `*`. A shipped name that needed one of those would
-		// be a wire-visible decision, and it should not happen by accident.
 		if strings.ContainsAny(entry.Policy, "_.*") {
 			t.Errorf("policy %q is outside the plain lowercase-hyphen shape the shipped names use", entry.Policy)
 		}
@@ -59,11 +38,6 @@ func TestEveryShippedPrefixIsAPathAndNotAPattern(t *testing.T) {
 	}
 }
 
-// The shipped table is the contract the README's endpoint table prints, so the
-// NAMES and the NUMBERS are both asserted here rather than only through
-// `ResolveLimit`. A policy name is half the counter key: renaming one silently
-// gives every caller a fresh allowance on every deployment, which is a much nicer
-// way to lose a rate limit than to widen it.
 func TestTheShippedTableIsTheOneTheReferenceShips(t *testing.T) {
 	for _, tc := range []struct {
 		prefix string
@@ -109,10 +83,6 @@ func TestNoTwoShippedPrefixesAreTheSameString(t *testing.T) {
 	}
 }
 
-// The default row is the limiter's own fallback, and one number in one place is
-// the point: a `DefaultLimitTable` that restated 600 while `NewLimiter` defaulted
-// to something else would answer the same path two different ways depending on
-// which entry matched it.
 func TestTheDefaultRowIsTheLimitersOwnDefault(t *testing.T) {
 	entry := DefaultLimitTable().Default
 
@@ -127,9 +97,6 @@ func TestTheDefaultRowIsTheLimitersOwnDefault(t *testing.T) {
 	}
 }
 
-// Two calls, two tables. An exported package-level map would be mutable by every
-// package in the program, and a caller that inserted a route into the shipped table
-// would change the allowance of the next gateway built in the same process.
 func TestTheShippedTableIsNotSharedBetweenCallers(t *testing.T) {
 	first := DefaultLimitTable()
 	first.Routes["/v1/injected"] = Limit{Limit: 1, Window: minute, Policy: "injected"}
@@ -139,8 +106,6 @@ func TestTheShippedTableIsNotSharedBetweenCallers(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// ResolveLimit — one assertion per shipped entry.
 
 func TestLoginIsTheStrictestThingGatewayServes(t *testing.T) {
 	limit := ResolveLimit(DefaultLimitTable(), "/auth/login")
@@ -168,10 +133,6 @@ func TestRegisterIsStrictInItsOwnRightNotTheLoginBudget(t *testing.T) {
 }
 
 func TestBruteForcingALoginDoesNotSpendTheRegistrationAllowance(t *testing.T) {
-	// Same prefix family, different policy — so a separate bucket. A shared one
-	// would let a caller who has exhausted registration also lock out every
-	// legitimate sign-up from that address, which is the whole reason these are two
-	// entries and not two numbers under `gateway-auth`.
 	table := DefaultLimitTable()
 
 	if ResolveLimit(table, "/auth/login").Policy == ResolveLimit(table, "/auth/register").Policy {
@@ -226,19 +187,9 @@ func TestAnythingUnrecognisedFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// ResolveLimit — the segment boundary.
-//
-// THE DIRECTION OF THE ERROR IS THE POINT. A prefix that matches too eagerly gives
-// `/v1alpha` the `/v1` allowance, so a new top-level route inherits a budget by
-// sharing a name with an old one — which is exactly how a table that looks right
-// keeps being right until a route lands that it is not.
 func TestAPrefixMustEndAtAPathSegmentBoundary(t *testing.T) {
 	table := DefaultLimitTable()
 
-	// `/auth/loginfoo` shares a NAME with `/auth/logout` and is not under it. It
-	// lands on `/auth/` — the auth-adjacent entry — and not on the 30/min logout
-	// budget and not on the default.
 	limit := ResolveLimit(table, "/auth/loginfoo")
 	if limit.Policy != "gateway-auth" {
 		t.Errorf("/auth/loginfoo resolved to %q, want gateway-auth", limit.Policy)
@@ -252,17 +203,6 @@ func TestAPrefixMustEndAtAPathSegmentBoundary(t *testing.T) {
 	}
 }
 
-// A SUBDIAGONAL PATH IS STILL UNDER ITS PREFIX, and this is the reference's
-// behavior rather than a reading of it.
-//
-// The packet for this port asked for a test that `/auth/login/extra` does NOT
-// match the `/auth/login` entry. It does match, and porting that is correct: the
-// reference's `claims` accepts `path === prefix || path.startsWith(prefix + "/")`,
-// and its own table test asserts the same shape (`/v1/deep/thing` resolves to
-// `deep`, not to `api`). Inverting it here would make the Go gateway draw a
-// different allowance from the service it is meant to replace, on exactly the
-// surface this packet exists to tighten — and a subpath under `/auth/login` is
-// login work whatever it is named.
 func TestASubpathUnderAPrefixDrawsThatPrefix(t *testing.T) {
 	table := DefaultLimitTable()
 
@@ -275,8 +215,6 @@ func TestASubpathUnderAPrefixDrawsThatPrefix(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// ResolveLimit — the matching rule, on a table chosen to make the rule visible.
 
 func testTable() LimitTable {
 	return LimitTable{
@@ -303,12 +241,6 @@ func TestTheLongestMatchingPrefixWins(t *testing.T) {
 	}
 }
 
-// A Go map iterates in no order at all, so the reference's "the choice does not
-// depend on the order the entries were written in" is structural here rather than
-// testable. What is NOT structural is that the LONGER prefix wins, which is the
-// property the order-independence was protecting — so `/v1/deep/` is asserted to
-// beat `/v1/` above, and this case pins the tie: two prefixes of equal length
-// cannot both claim a path, and one of them is chosen.
 func TestTwoPrefixesOfEqualLengthCannotBothClaimAPath(t *testing.T) {
 	table := LimitTable{
 		Default: Limit{Limit: 100, Window: time.Second, Policy: "default"},
@@ -330,10 +262,6 @@ func TestTwoPrefixesOfEqualLengthCannotBothClaimAPath(t *testing.T) {
 }
 
 func TestDefaultIsTheFallbackAndRootDoesNotTakeThatJobAway(t *testing.T) {
-	// A `/` entry in `routes` is an ordinary prefix: it claims the root path and
-	// nothing else. Making it a catch-all would leave `Default` unreachable, and an
-	// operator who lowered `Default` to stop something would find it doing nothing
-	// at all.
 	table := testTable()
 
 	if got := ResolveLimit(table, "/").Policy; got != "root" {
@@ -360,19 +288,11 @@ func TestAnEmptyTableIsTheDefaultAndDoesNotFail(t *testing.T) {
 	if got := ResolveLimit(table, "/anything"); got.Policy != "only" {
 		t.Errorf("resolved to %q, want only", got.Policy)
 	}
-	// A nil map is the empty table. Reading it is fine; only writing to it is not,
-	// which is why `ValidateLimitTable` always hands back a non-nil map.
 	if _, ok := table.Routes["/anything"]; ok {
 		t.Error("a nil map returned an entry")
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Validation.
-//
-// `limitTable()` throws a `RangeError` in the reference. Go returns an error, and
-// the tests assert the error is wrapped in `ErrNotConfigured` — the sentinel a
-// caller uses to tell its own operator's mistake from a defect in this package.
 
 func TestValidationAcceptsTheShippedTable(t *testing.T) {
 	checked, err := ValidateLimitTable(DefaultLimitTable())
@@ -473,12 +393,6 @@ func TestValidationRefusesAPrefixThatIsAPattern(t *testing.T) {
 	}
 }
 
-// A table an operator is allowed to build: a prefix outside `/v1` is refused by
-// `internal/httpapi`'s route table because a pass-through could never reach it.
-// Here it is FINE, because `/auth/` is the entry doing the most work on the most
-// attacked surface. The two `checkPrefix` functions are deliberately not one
-// function, and this is the case that would break if they were merged the other
-// way round.
 func TestValidationAcceptsAPrefixOutsideTheV1Surface(t *testing.T) {
 	table := LimitTable{
 		Default: Limit{Limit: 1, Window: time.Second, Policy: "default"},
@@ -490,9 +404,6 @@ func TestValidationAcceptsAPrefixOutsideTheV1Surface(t *testing.T) {
 	}
 }
 
-// The validated table is a COPY. Validating in place would hand back the map the
-// caller passed in, so a later insert would skip the check above — the same
-// half-validated table the validator exists to prevent.
 func TestValidationReturnsACopyRatherThanTheCallersMap(t *testing.T) {
 	original := LimitTable{
 		Default: Limit{Limit: 1, Window: time.Second, Policy: "default"},
@@ -508,8 +419,6 @@ func TestValidationReturnsACopyRatherThanTheCallersMap(t *testing.T) {
 		t.Error("an insert into the returned table reached the caller's map")
 	}
 
-	// And the empty table still returns a writable map, so a caller adding its own
-	// entries does not have to check for nil first.
 	empty, err := ValidateLimitTable(LimitTable{Default: Limit{Limit: 1, Window: time.Second, Policy: "only"}})
 	if err != nil {
 		t.Fatalf("validating an empty table failed: %v", err)
@@ -519,13 +428,6 @@ func TestValidationReturnsACopyRatherThanTheCallersMap(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// PolicyResolver — the table as the two hooks the limiter wants.
-//
-// The limiter reads a NAME and then the NUMBERS behind it, in two steps, so a table
-// keyed by PREFIX has to be indexed by name. That index is `PolicyResolver`, and it
-// is what `internal/httpapi/runtime.go` hands to `Options.Policy` and
-// `Options.Resolve`.
 
 func TestTheResolverGivesTheLimiterANameAndTheNumbersBehindIt(t *testing.T) {
 	policy, resolve, err := PolicyResolver(DefaultLimitTable())
@@ -567,12 +469,6 @@ func TestTheResolverGivesTheLimiterANameAndTheNumbersBehindIt(t *testing.T) {
 	}
 }
 
-// The fallback is FALLIBLE, and that is the point.
-//
-// A name the index does not carry answers `false`, and `Limiter.allow` then uses its
-// constructor allowance. This is the reference's documented behavior rather than a
-// convenience: a typo in a table costs the default allowance and nothing else, which
-// is a failure a gateway mid-cutover can absorb.
 func TestANameTheTableDoesNotCarryIsNotResolved(t *testing.T) {
 	_, resolve, err := PolicyResolver(DefaultLimitTable())
 	if err != nil {
@@ -586,18 +482,6 @@ func TestANameTheTableDoesNotCarryIsNotResolved(t *testing.T) {
 	}
 }
 
-// A NAME CLAIMED TWICE WITH DIFFERENT NUMBERS IS REFUSED.
-//
-// The reference's `byPolicy` is a `Map` written default-first and then routes in
-// insertion order, so the last write wins — silently, and in a language where that
-// order exists. A Go map has no insertion order, so the same loop would pick per
-// iteration and a request could draw `q=5` on one call and `q=60` on the next.
-//
-// The port refuses rather than arbitrates, because the reference's own model says
-// sharing a name means sharing an allowance: `limits.ts` says it twice, and it is
-// why `/auth/login` and `/auth/register` are separate policies. Two entries sharing a
-// name while disagreeing about the numbers are a table that contradicts itself, and
-// a startup failure is the only answer that does not depend on iteration order.
 func TestTwoEntriesSharingANameMustAgreeOnTheirNumbers(t *testing.T) {
 	table := LimitTable{
 		Default: Limit{Limit: 100, Window: time.Second, Policy: "shared"},
@@ -619,9 +503,6 @@ func TestTwoEntriesSharingANameMustAgreeOnTheirNumbers(t *testing.T) {
 	}
 }
 
-// The shipped `/v1/` row REUSES the default's policy name with the default's
-// numbers, and that has to keep working: it is the case where sharing a name is the
-// model working rather than a contradiction.
 func TestARouteReusingTheDefaultsNameWithTheSameNumbersIsAccepted(t *testing.T) {
 	table := DefaultLimitTable()
 	fallback := table.Default
@@ -639,8 +520,6 @@ func TestARouteReusingTheDefaultsNameWithTheSameNumbersIsAccepted(t *testing.T) 
 	}
 }
 
-// routeEntries is the shipped table's entries as a slice, so a table-wide property
-// can be asserted over the default row and the routes together.
 func routeLimits(table LimitTable) []Limit {
 	entries := make([]Limit, 0, len(table.Routes))
 	for _, entry := range table.Routes {
