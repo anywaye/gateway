@@ -115,11 +115,13 @@ func (c *jwksCache) fetch(ctx context.Context) ([]jwk, error) {
 
 	response, err := c.client.Do(request)
 	if err != nil {
+		CaptureError(fmt.Errorf("gateway: JWKS fetch failed: %s: %w", c.url, err), nil)
 		return nil, fmt.Errorf("%w: %s did not answer: %w", errKeySetUnavailable, c.url, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < 200 || response.StatusCode > 299 {
+		CaptureError(fmt.Errorf("gateway: JWKS fetch returned %d from %s", response.StatusCode, c.url), nil)
 		return nil, fmt.Errorf("%w: %s answered %d", errKeySetUnavailable, c.url, response.StatusCode)
 	}
 
