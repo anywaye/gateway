@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# Print the DOWN section of one migration, on stdout, for psql to run.
+#
+# Mirror of migration-up-section: extracts everything AFTER the `-- +goose Down`
+# marker. If there is no Down marker, prints nothing (forward-only migration).
+#
+# Usage: bin/migration-down-section <migration.sql>
+
+set -uo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: bin/migration-down-section <migration.sql>" >&2
+  exit 2
+fi
+
+migration="$1"
+if [ ! -r "$migration" ]; then
+  echo "bin/migration-down-section: $migration is not readable" >&2
+  exit 2
+fi
+
+# Print everything after the Down marker, excluding the marker itself.
+awk 'found { print } /^--[[:space:]]*\+goose[[:space:]]+Down/ { found=1 }' "$migration"

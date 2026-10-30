@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#
+# Roll back the last deploy (or a specific commit) and republish.
+#
+# Usage: bin/rollback [--commit <sha>] [--dry-run] [--no-publish] [--flag <name>]
+#
+# Modes:
+#   (default)        Revert the last commit on master, publish, deploy.
+#   --commit <sha>   Revert a specific commit instead of HEAD.
+#   --flag <name>    Instant rollback: flip a feature flag off (no redeploy).
+#                    Sets <SVC>_FEATURE_<NAME>=false via the env and prints
+#                    the command to run on prod. Does not touch git.
+#   --no-publish     Revert + push but skip publish/deploy (for manual review).
+#   --dry-run        Print what would happen without doing it.
+#
+# Examples:
+#   bin/rollback                          # revert last commit, publish, deploy
+#   bin/rollback --commit abc1234          # revert a specific commit
+#   bin/rollback --flag new_dashboard      # instant: disable the flag
+#   bin/rollback --dry-run                # show what would happen
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SERVICE="$(basename "$ROOT")"
+SVC_UPPER="$(echo "$SERVICE" | tr '[:lower:]' '[:upper:]')"
+
+COMMIT=""
+DRY_RUN=0
+NO_PUBLISH=0
+FLAG=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --commit) COMMIT="$2"; shift 2 ;;
+    --commit=*) COMMIT="${1#*=}"; shift ;;
+    --flag) FLAG="$2"; shift 2 ;;
+    --flag=*) FLAG="${1#*=}"; shift ;;
+    --no-publish) NO_PUBLISH=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --help|-h)
+      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) echo "rollback: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+# --- instant flag rollback ---
+if [ -n "$FLAG" ]; then
+  flag_var="${SVC_UPPER}_FEATURE_${FLAG^^}"
+  echo "rollback: instant flag rollback"
+  echo "  Set $flag_var=false in the service environment and restart."
+  echo "  Dev:  $flag_var=false in start-dev-services.sh or .env"
+  echo "  Prod: kubectl set env deployment/$SERVICE -n $SERVICE $flag_var=false"
+  echo "  (No redeploy needed — the code is already deployed, just disabled.)"
+  exit 0
+fi
+
+cd "$ROOT"
+
+# --- determine target commit ---
+if [ -z "$COMMIT" ]; then
+  COMMIT="$(git rev-parse HEAD)"
+fi
+
+if ! git cat-file -e "$COMMIT" 2>/dev/null; then
+  echo "rollback: commit $COMMIT not found" >&2
+  exit 1
+fi
+
+COMMIT_SHORT="$(git rev-parse --short "$COMMIT")"
+COMMIT_MSG="$(git log -1 --format=%s "$COMMIT")"
+
+echo "rollback: target commit $COMMIT_SHORT — $COMMIT_MSG"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "rollback: (dry-run) would revert $COMMIT_SHORT"
+  echo "rollback: (dry-run) would push to master"
+  if [ "$NO_PUBLISH" -eq 0 ]; then
+    echo "rollback: (dry-run) would run bin/publish + bin/deploy"
+  fi
+  exit 0
+fi
+
+# --- revert ---
+echo "rollback: reverting $COMMIT_SHORT"
+git revert --no-edit "$COMMIT"
+echo "rollback: reverted"
+
+# --- push ---
+echo "rollback: pushing to master"
+git push origin master
+
+# --- publish + deploy ---
+if [ "$NO_PUBLISH" -eq 0 ]; then
+  if [ -x ./bin/publish ]; then
+    echo "rollback: publishing"
+    ./bin/publish
+  else
+    echo "rollback: WARN no bin/publish found; skipping publish" >&2
+  fi
+  if [ -x ./bin/deploy ]; then
+    echo "rollback: deploying"
+    ./bin/deploy --no-restart
+  else
+    echo "rollback: WARN no bin/deploy found; skipping deploy" >&2
+  fi
+fi
+
+echo "rollback: done — $SERVICE rolled back to before $COMMIT_SHORT"
+echo "rollback: prod will sync via Argo CD within ~2 min"

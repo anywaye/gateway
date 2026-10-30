@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#
+# Run the Down section of a migration (reverse a schema change).
+#
+# Usage: bin/migrate-down <migration.sql|last> [--dry-run]
+#
+# Defaults to the last migration file (by filename sort). Extracts the Down
+# section with bin/migration-down-section and runs it via psql.
+#
+# WARNING: Down migrations are not always safe. Some (like dropping a column)
+# are irreversible. Review the Down section before running.
+#
+# Idempotent: Down sections should use IF EXISTS / DROP IF EXISTS where possible.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MIGRATIONS="$ROOT/migrations"
+
+DRY_RUN=0
+TARGET=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    *) TARGET="$arg" ;;
+  esac
+done
+
+if [ -z "$TARGET" ] || [ "$TARGET" = "last" ]; then
+  # Find the last migration by filename
+  last=""
+  for f in "$MIGRATIONS"/*.sql; do
+    [ -e "$f" ] || continue
+    last="$f"
+  done
+  if [ -z "$last" ]; then
+    echo "bin/migrate-down: no migrations found" >&2
+    exit 1
+  fi
+  TARGET="$(basename "$last")"
+fi
+
+MIGRATION="$MIGRATIONS/$TARGET"
+if [ ! -r "$MIGRATION" ]; then
+  echo "bin/migrate-down: $MIGRATION is not readable" >&2
+  exit 1
+fi
+
+DATABASE_URL="${SHIP_DATABASE_URL:-${DATABASE_URL:-}}"
+if [ -z "$DATABASE_URL" ]; then
+  echo "bin/migrate-down: DATABASE_URL (or SHIP_DATABASE_URL) is not set" >&2
+  exit 1
+fi
+
+echo "bin/migrate-down: target=$TARGET"
+down_sql="$(bin/migration-down-section "$MIGRATION")"
+
+if [ -z "$down_sql" ]; then
+  echo "bin/migrate-down: no Down section found in $TARGET (forward-only migration)" >&2
+  exit 1
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "bin/migrate-down: (dry-run) would run:"
+  echo "$down_sql"
+  exit 0
+fi
+
+echo "$down_sql" | psql "$DATABASE_URL" --quiet --variable ON_ERROR_STOP=1
+echo "bin/migrate-down: done"
