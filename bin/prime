@@ -11,7 +11,12 @@ for arg in "$@"; do
     *)
       echo "bin/prime: unknown argument: $arg" >&2
       echo "  bin/prime takes no flags. The Go tier is the whole gate; run" >&2
-      echo "  './bin/prime-go' for the tier alone and 'mise run prime' for this." >&2
+      echo "  '# comment ban enforcement
+if [ -f ../platform/scripts/commentlint.py ]; then
+  python3 ../platform/scripts/commentlint.py . || exit 1
+fi
+
+./bin/prime-go' for the tier alone and 'mise run prime' for this." >&2
       exit 2
       ;;
   esac

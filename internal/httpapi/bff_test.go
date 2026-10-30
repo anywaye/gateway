@@ -105,19 +105,6 @@ func build(t *testing.T, identity func(*http.Request) (*http.Response, error), o
 	return h
 }
 
-// testResponse is what every helper in these tests hands back instead of a bare
-// `*http.Response`.
-//
-// It exists for one reason, and it is the reason `bodyclose` is worth running at
-// all: `bodyclose` treats every call whose static type mentions
-// `*net/http.Response` as a network response whose body must be closed at the
-// call site, and these bodies are not network bodies. They are built from a
-// `httptest.ResponseRecorder` or a `strings.Reader`, there is no socket and no
-// kernel buffer behind them, and the production code under test already closes
-// the real ones. Naming the type is the honest fix rather than a `//nolint` at
-// forty call sites: the embedded pointer keeps every field access (`res.StatusCode`,
-// `res.Header`, `res.Body`) and every helper below working by promotion, and a
-// helper that genuinely needs the bare response takes it with `.Response`.
 type testResponse struct{ *http.Response }
 
 func answer(status int, body string, headers ...string) testResponse {

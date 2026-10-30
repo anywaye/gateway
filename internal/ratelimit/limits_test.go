@@ -75,8 +75,6 @@ func TestTheShippedTableIsTheOneTheReferenceShips(t *testing.T) {
 }
 
 func TestNoTwoShippedPrefixesAreTheSameString(t *testing.T) {
-	// Not a compile error in Go: `Routes` is a map, so two literals spelling the
-	// same key are one entry and the second is gone. That is why it is asserted.
 	routes := DefaultLimitTable().Routes
 	if len(routes) != 6 {
 		t.Errorf("the shipped table has %d route entries, want 6", len(routes))

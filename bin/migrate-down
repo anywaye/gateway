@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-#
-# Run the Down section of a migration (reverse a schema change).
-#
-# Usage: bin/migrate-down <migration.sql|last> [--dry-run]
-#
-# Defaults to the last migration file (by filename sort). Extracts the Down
-# section with bin/migration-down-section and runs it via psql.
-#
-# WARNING: Down migrations are not always safe. Some (like dropping a column)
-# are irreversible. Review the Down section before running.
-#
-# Idempotent: Down sections should use IF EXISTS / DROP IF EXISTS where possible.
 
 set -euo pipefail
 
@@ -28,7 +16,6 @@ for arg in "$@"; do
 done
 
 if [ -z "$TARGET" ] || [ "$TARGET" = "last" ]; then
-  # Find the last migration by filename
   last=""
   for f in "$MIGRATIONS"/*.sql; do
     [ -e "$f" ] || continue

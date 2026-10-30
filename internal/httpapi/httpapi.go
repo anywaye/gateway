@@ -349,30 +349,6 @@ type mount struct {
 
 func (m *mount) ServeHTTP(w http.ResponseWriter, r *http.Request) { m.handler.ServeHTTP(w, r) }
 
-// onPrefix runs a middleware only on paths under a prefix, and nowhere else.
-//
-// # WHY IT EXISTS RATHER THAN `r.Group`
-//
-// `src/index.ts` (removed at cutover) writes `app.use("/v1/*", …)` and Hono scopes the mount to that
-// pattern. chi's `Mux.Use` takes middleware with no pattern, and `Group` returns a
-// NEW router — so the gate would have to be mounted on a group the generated
-// registrations are not on, and `api.gen.go` is a `//go:generate` output this
-// repository may not hand-edit. A path test inside the middleware is the only
-// spelling that puts the gate in front of a route nobody here registers by hand.
-//
-// # THE PREFIX IS `/v1/`, WITH THE SLASH
-//
-// Because Hono's `/v1/*` does not match `/v1` itself, and neither does this. A
-// bare `/v1` is an operation nobody declared and answers the v0 `404` on both
-// sides; a gate that answered `401` there would be a difference on a path the
-// contract does not have.
-//
-// # IT IS NOT A NORMALISATION
-//
-// A request to `/v1/../healthz` does NOT reach the handler: chi cleans the path
-// before routing and `http.Request.URL.Path` is the cleaned one, so the prefix
-// test reads the path the router matched. A traversal that reaches a probe is a
-// probe, and a probe is never authenticated.
 func onPrefix(prefix string, middleware func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		guarded := middleware(next)

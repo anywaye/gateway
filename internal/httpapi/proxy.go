@@ -148,9 +148,6 @@ func (p *routeProxy) call(r *http.Request, route ResolvedRoute, target string) *
 	}
 	outgoing.Header = headers
 
-	// `Host` is deliberately left unset, which is what makes `net/http` send the
-	// target's own host. The caller's `Host` header would otherwise be the one
-	// reaching the upstream, and it is caller-chosen.
 	response, err := upstreamClient.Do(outgoing) //nolint:bodyclose // the body is carried in upstreamAnswer and closed by relayUpstream.
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "gateway: upstream %s could not be reached: %v\n", target, err)

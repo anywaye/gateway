@@ -41,9 +41,6 @@ const TenantVariable = "GATEWAY_TENANT_ID"
 
 const shutdownWait = 5 * time.Second
 
-// exportTimeout bounds one export. The collector is a container on the compose
-// network, and a slow export is a latency bug in development caused by an
-// observability tool.
 const exportTimeout = 5 * time.Second
 
 // Resource is this process's identity, attached once per process rather than once

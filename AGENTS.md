@@ -535,3 +535,17 @@ files**. The written reports were removed on 2026-10-20: duplicated across
 repositories, owned by nobody, rotting faster than they were read. What
 survives of a packet is its entry in `CHANGELOG.md` and, where a decision was
 made, in `DECISIONS.md`. A citation to a packet id points at that entry.
+
+
+## Code comments policy
+
+Comments are banned except for the allowlisted set enforced by `bin/prime` via
+`platform/scripts/commentlint.py`:
+
+- License/copyright headers (top of file)
+- Doc comments on exported/public symbols
+- `TODO`/`FIXME`/`XXX` referencing a tracked issue: `TODO(#123)`
+- Compiler/linter directives (`//go:build`, `//nolint`, `# noqa`, etc.)
+
+All other comments (narration, restatements, "why" rationale, agent-added notes)
+are prohibited. `bin/prime` fails if any non-allowlisted comment is present.
