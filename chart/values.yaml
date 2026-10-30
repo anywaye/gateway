@@ -83,7 +83,7 @@ image:
   # The chart VERSION does not move (Chart.yaml's `version` is the OCI tag
   # and the substrate's Application targetRevision), so the chart's content
   # changes under a fixed tag and the diff fires on refresh.
-  digest: "sha256:8e2609e70118ffc46f1887abf4f26857ac4e2a440d7e70e5921ba23947a9f556"
+  digest: "sha256:12b2f50402bf171253e8d6af73be7e84b43d6a58e025c4294c9b12d93499dd31"
   # A value, never `latest`: a floating tag is a deploy that changes when
   # somebody else pushes. Kept, and kept EQUAL to Chart.yaml's appVersion —
   # kit's publish seam asserts the pair — because the tag is the
@@ -118,6 +118,7 @@ ingress:
   # The platform's front-door name: `api.anywaye.com`, the plan's public door
   # (PLAN-names-urls-rollout.md §1). Per-tenant deployments override it.
   host: api.anywaye.com
+  hostname: ""
   # The cert-manager ClusterIssuer that fills `ingress.tls.secretName`:
   # `letsencrypt-prod`, the issuer the substrate's install creates
   # (DEPLOYMENT.md, "The ACME solver"). The chart NAMES the issuer and never

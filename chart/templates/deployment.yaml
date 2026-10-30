@@ -64,9 +64,13 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
+          {{- if .Values.ingress.hostname }}
+          # preview mode: skip configMapRef
+          {{- else }}
           envFrom:
             - configMapRef:
                 name: {{ include "gateway.fullname" . }}-env
+          {{- end }}
           env:
             # REDIS_URL, and the only secret this chart references. A
             # required secretKeyRef: the pod does not start without the
