@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
-#
-# Roll back the last deploy (or a specific commit) and republish.
-#
-# Usage: bin/rollback [--commit <sha>] [--dry-run] [--no-publish] [--flag <name>]
-#
-# Modes:
-#   (default)        Revert the last commit on master, publish, deploy.
-#   --commit <sha>   Revert a specific commit instead of HEAD.
-#   --flag <name>    Instant rollback: flip a feature flag off (no redeploy).
-#                    Sets <SVC>_FEATURE_<NAME>=false via the env and prints
-#                    the command to run on prod. Does not touch git.
-#   --no-publish     Revert + push but skip publish/deploy (for manual review).
-#   --dry-run        Print what would happen without doing it.
-#
-# Examples:
-#   bin/rollback                          # revert last commit, publish, deploy
-#   bin/rollback --commit abc1234          # revert a specific commit
-#   bin/rollback --flag new_dashboard      # instant: disable the flag
-#   bin/rollback --dry-run                # show what would happen
 
 set -euo pipefail
 
@@ -46,7 +27,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# --- instant flag rollback ---
 if [ -n "$FLAG" ]; then
   flag_var="${SVC_UPPER}_FEATURE_${FLAG^^}"
   echo "rollback: instant flag rollback"
@@ -59,7 +39,6 @@ fi
 
 cd "$ROOT"
 
-# --- determine target commit ---
 if [ -z "$COMMIT" ]; then
   COMMIT="$(git rev-parse HEAD)"
 fi
@@ -83,16 +62,13 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-# --- revert ---
 echo "rollback: reverting $COMMIT_SHORT"
 git revert --no-edit "$COMMIT"
 echo "rollback: reverted"
 
-# --- push ---
 echo "rollback: pushing to master"
 git push origin master
 
-# --- publish + deploy ---
 if [ "$NO_PUBLISH" -eq 0 ]; then
   if [ -x ./bin/publish ]; then
     echo "rollback: publishing"

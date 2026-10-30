@@ -15,10 +15,6 @@ services:
 
     environment:
       PORT: "8080"
-      # Where gateway's spans go: the collector's gRPC receiver on the `platform`
-      # network above. See the paragraph at the top of this file for why it is a
-      # literal, why unsetting it does not turn telemetry off, and which variables
-      # do.
       GATEWAY_OTEL_ENDPOINT: "http://otel-collector:4317"
       IDENTITY_ISSUER: "https://identity.localhost"
       IDENTITY_URL: "http://identity:8080"

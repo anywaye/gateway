@@ -128,7 +128,6 @@ up() {
   write_env
   start_one stub-google "$BIN/oauth-stub" "$GEN/stub-google.env" "$LOG/stub-google.log"
   start_one stub-github "$BIN/oauth-stub" "$GEN/stub-github.env" "$LOG/stub-github.log"
-  # Multiline PEM cannot cross xargs: export it in this shell for identity only.
   OIDC_SIGNING_KEY="$(cat "$GEN/oidc-signing.pem")"
   export OIDC_SIGNING_KEY
   if [ -f "$GEN/identity.pid" ] && kill -0 "$(cat "$GEN/identity.pid")" 2>/dev/null; then

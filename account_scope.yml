@@ -1,61 +1,6 @@
 version: 1
 service: gateway
 
-# account_scope.yml — every entry point `gateway` mounts, and which of them can
-# reach another account's data.
-#
-# Checked by anywaye/core's contract harness:
-#
-#     /Users/kaka/Code/any/anywaye/core/harness/bin/account-scope-check .
-#
-# `gateway` holds NO customer rows: a sweep of every TypeScript service in the
-# fleet for a driver import, a driver declaration and a `.sql` file found none in
-# any of them. What it DOES hold
-# is the caller's identity: gateway verifies the bearer token, puts the principal on
-# the request context, keys the rate limiter by the account in it, and forwards.
-#
-# So this file is not empty and it is not all-false either: one route DOES resolve
-# an account and return it, and it is declared as such — `me`, `accountScoped:
-# true` — and it is the only row here that says so. It is ALSO the only row that
-# is red, permanently, for a reason that has nothing to do with whether the route
-# is scoped. Read the block above that row before reading this as a complete
-# enumeration or "fixing" the red.
-#
-# ONE FILE NOW, AND IT IS A GENERATED FILE WITH A HAND-EDITED LINE IN IT.
-#
-# `f87c891` deleted `src/`. This used to declare two sources because there were
-# two implementations registering the same seven operations — `src/index.ts` (the
-# TypeScript reference) and `internal/api/api.gen.go` (the Go implementation that
-# replaced it) — and a declaration naming only one was declaring half the surface.
-# There is one implementation now, so there is one source, and the `me` row has
-# exactly one registration to describe rather than one it cannot reach.
-#
-# THE GO FILE STILL NEEDS A WORD, because `oapi-codegen` emits
-#
-#     r.Get(options.BaseURL+"/v1/me", wrapper.GetCurrentPrincipal)
-#
-# and core's chi recogniser requires a `/`-prefixed string literal as the FIRST
-# term after `(`. Concatenation is resolved in the other direction — a literal, a
-# `+`, then more — because identity's own router writes paths that way. So every
-# generated registration is INVISIBLE, `route_defs` reads 0 over a surface the
-# checker saw none of, and 0 over nothing prints exactly like 0 over everything.
-#
-# `internal/api/stripbaseurl` removes the token as the second `//go:generate`
-# line, and `bin/prime-go` fails if a registration whose path is an expression
-# reaches the committed file. That is why the `minimum` below is a number and
-# not zero: pantry's is 0 with a DECISION NEEDED attached, because the same
-# problem there could not be solved without a checker change. The committed file
-# is still in the stripped shape, which is what makes that floor 7 and not 0.
-#
-# `surface.minimum` WAS 14 and IS NOW 7, and it was NOT lowered to hide anything.
-# `14 = 7 + 7` was the same seven operations registered twice, once by each
-# implementation. A floor set below the truth is a floor that stops being a
-# floor, and `undeclared` is decided by the REGISTRATIONS in the source, never by
-# this file's row count — so lowering it would buy nothing and cost the only
-# decrease-detector this surface has. The drop to 7 happened in the same commit
-# that deleted the registrations rather than being left for the next reader,
-# because a floor that has to be lowered later is a floor somebody will forget.
-# The measurement that fixes it at 7 is in the comment on the number itself.
 surface:
   kind: http
   sources:

@@ -88,12 +88,6 @@ func run() error {
 		}
 	}()
 	if reason := telemetry.NoOpReason(); reason != "" {
-		// One line, and ONLY on the disabled path. Silence is the contract there: a
-		// warning per export attempt fills the service's own log store with the fact
-		// that telemetry is off, which is how a self-hoster discovers that turning it
-		// off is not supported — the opposite of the intent. One line at startup is
-		// not that, and it is the difference between "telemetry is off" and "telemetry
-		// is broken", which look identical from outside.
 		log.Printf("gateway: telemetry is off (%s)", reason)
 	}
 
