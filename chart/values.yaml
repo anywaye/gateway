@@ -161,7 +161,7 @@ env:
   # address this dials is a service name, and inside a cluster `localhost` is
   # gateway itself. Must match identity's own chart (release `identity` in
   # this namespace).
-  IDENTITY_URL: "http://identity:8080"
+  IDENTITY_URL: "http://identity.identity.svc.cluster.local:8080"
   # The `aud` every token must be addressed to — gateway's own client id.
   GATEWAY_CLIENT_ID: "gateway"
   GATEWAY_ERROR_REPORTING_DSN: "http://c5342cbf-5a88-464e-9576-cc8b40d0730b@glitchtip.default.svc.cluster.local:8095/1"

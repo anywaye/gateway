@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: oci://ghcr.io/anywaye/charts/gateway
     chart: gateway
-    targetRevision: 0.1.10
+    targetRevision: 0.1.12
   destination:
     server: https://kubernetes.default.svc
     namespace: gateway
