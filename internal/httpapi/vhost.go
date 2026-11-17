@@ -149,13 +149,13 @@ func vhostGate(table VHostTable, timeout time.Duration, assertion *AssertionMint
 				return
 			}
 
-			upstream, ok := UpstreamPath("", path)
+			upstream, ok := UpstreamPath("", path, true)
 			if !ok {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			route := ResolvedRoute{Prefix: "vhost:" + effectiveHost(r), BaseURL: target.BaseURL, Token: target.Token}
+			route := ResolvedRoute{Prefix: "vhost:" + effectiveHost(r), BaseURL: target.BaseURL, Token: target.Token, StripPrefix: true}
 			dest := route.BaseURL + upstream + searchOf(r.URL)
 			response := proxy.call(r, route, dest)
 
