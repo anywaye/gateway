@@ -15,6 +15,10 @@ import (
 type RouteTarget struct {
 	BaseURL string
 
+	// StripPrefix controls whether the matched prefix is removed from the
+	// path before forwarding. Defaults to true (backward compat with pantry).
+	StripPrefix *bool
+
 	Token string
 
 	Public bool
@@ -42,6 +46,7 @@ type ResolvedRoute struct {
 	Public  bool
 	Principal []string
 	Scopes []string
+	StripPrefix bool
 }
 
 // RouteMount is the prefix every routed path lives under.
@@ -125,7 +130,12 @@ func ValidateRouteTable(table RouteTable) (RouteTable, error) {
 			copy(scopes, target.Scopes)
 		}
 
-		checked[prefix] = RouteTarget{BaseURL: base, Token: target.Token, Public: target.Public, Principal: claims, Scopes: scopes}
+		strip := true
+		if target.StripPrefix != nil {
+			strip = *target.StripPrefix
+		}
+		sp := strip
+		checked[prefix] = RouteTarget{BaseURL: base, Token: target.Token, Public: target.Public, Principal: claims, Scopes: scopes, StripPrefix: &sp}
 	}
 
 	return checked, nil
@@ -174,11 +184,16 @@ func ResolveRoute(table RouteTable, path string) (ResolvedRoute, bool) {
 			continue
 		}
 
+		strip := true
+		if upstream.StripPrefix != nil {
+			strip = *upstream.StripPrefix
+		}
 		best = ResolvedRoute{
-			Prefix:  prefix,
-			BaseURL: upstream.BaseURL,
-			Token:   upstream.Token,
-			Public:  upstream.Public,
+			Prefix:      prefix,
+			BaseURL:     upstream.BaseURL,
+			Token:       upstream.Token,
+			Public:      upstream.Public,
+			StripPrefix: strip,
 		}
 		if upstream.Principal != nil {
 			best.Principal = make([]string, len(upstream.Principal))
@@ -464,12 +479,15 @@ func isSingleDotSegment(segment string) bool {
 // `Path` after decoding and a traversal before it, and decoding first would be
 // the traversal arriving already resolved. Callers pass `EscapedPath()`, which
 // returns the request line's own spelling.
-func UpstreamPath(prefix, path string) (string, bool) {
+func UpstreamPath(prefix, path string, stripPrefix bool) (string, bool) {
 	if !strings.HasPrefix(path, prefix) {
 		return "", false
 	}
 
 	rest := path[len(prefix):]
+	if !stripPrefix {
+		return path, true
+	}
 	if rest == "" {
 		return "/", true
 	}
@@ -541,7 +559,8 @@ func isURIComponentUnreserved(c byte) bool {
 
 
 type rawTarget struct {
-	BaseURL   string          `json:"baseUrl"`
+	BaseURL     string          `json:"baseUrl"`
+	StripPrefix *bool           `json:"stripPrefix"`
 	Token     *string         `json:"token"`
 	Public    json.RawMessage `json:"public"`
 	Principal json.RawMessage `json:"principal"`
@@ -589,7 +608,7 @@ func rawTargetOf(prefix string, raw json.RawMessage) (RouteTarget, error) {
 		return RouteTarget{}, fmt.Errorf("%w: routeTable: %s must be an object with a baseUrl, got %q", ErrNotConfigured, prefix, string(raw))
 	}
 
-	target := RouteTarget{BaseURL: decoded.BaseURL}
+	target := RouteTarget{BaseURL: decoded.BaseURL, StripPrefix: decoded.StripPrefix}
 
 	if decoded.Token != nil {
 		if *decoded.Token == "" {

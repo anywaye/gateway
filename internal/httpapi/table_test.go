@@ -220,7 +220,7 @@ func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testin
 
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			got, ok := UpstreamPath(tc.prefix, tc.path)
+			got, ok := UpstreamPath(tc.prefix, tc.path, true)
 
 			if ok != tc.ok {
 				t.Fatalf("UpstreamPath(%q, %q) ok=%v, want %v (got %q)", tc.prefix, tc.path, ok, tc.ok, got)
@@ -244,7 +244,7 @@ func TestUpstreamPathWouldBePathCleanIfItWereAFilter(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			if _, ok := UpstreamPath("/v1/pantry", tc.path); ok {
+			if _, ok := UpstreamPath("/v1/pantry", tc.path, true); ok {
 				t.Errorf("UpstreamPath(%q) accepted it, so %q would reach the upstream", tc.path, tc.cleansTo)
 			}
 		})

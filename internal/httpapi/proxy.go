@@ -83,7 +83,7 @@ func (p *routeProxy) handle(next http.Handler) http.Handler {
 		var upstream string
 		if ok {
 			var uok bool
-			upstream, uok = UpstreamPath(route.Prefix, path)
+			upstream, uok = UpstreamPath(route.Prefix, path, route.StripPrefix)
 			if !uok {
 				next.ServeHTTP(w, r)
 				return
@@ -124,11 +124,11 @@ func (p *routeProxy) identityRoute(r *http.Request, path string) (ResolvedRoute,
 		return ResolvedRoute{}, "", false
 	}
 
-	upstream, ok := UpstreamPath("", path)
+	upstream, ok := UpstreamPath("", path, true)
 	if !ok {
 		return ResolvedRoute{}, "", false
 	}
-	return ResolvedRoute{Prefix: path, BaseURL: p.identity, Public: true}, upstream, true
+	return ResolvedRoute{Prefix: path, BaseURL: p.identity, Public: true, StripPrefix: true}, upstream, true
 }
 
 func (p *routeProxy) call(r *http.Request, route ResolvedRoute, target string) *upstreamAnswer {
