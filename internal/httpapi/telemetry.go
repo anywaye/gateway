@@ -23,7 +23,7 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 		telemetry.Record(span, map[string]any{"http.request.method": r.Method})
 
 		tracked := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-	start := time.Now()
+		start := time.Now()
 
 		defer func() {
 			telemetry.Record(span, map[string]any{

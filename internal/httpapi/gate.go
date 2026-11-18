@@ -8,7 +8,6 @@ import (
 	"github.com/anywaye/gateway/internal/auth"
 )
 
-
 // Authenticate is the credential gate's contract: it establishes who a caller is,
 // or that it cannot.
 //

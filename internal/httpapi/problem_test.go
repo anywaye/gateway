@@ -13,7 +13,6 @@ import (
 	"github.com/anywaye/gateway/internal/api"
 )
 
-
 func write(t *testing.T, p Problem) *httptest.ResponseRecorder {
 	t.Helper()
 

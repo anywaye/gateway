@@ -65,7 +65,7 @@ func DefaultLimitTable() LimitTable {
 			"/auth/register": {Limit: 5, Window: minute, Policy: "gateway-auth-register"},
 			"/auth/logout":   {Limit: 30, Window: minute, Policy: "gateway-auth-logout"},
 			"/v1/":           {Limit: 600, Window: minute, Policy: "gateway-api"},
-			"/v1/api-keys": {Limit: 60, Window: minute, Policy: "gateway-api-keys"},
+			"/v1/api-keys":   {Limit: 60, Window: minute, Policy: "gateway-api-keys"},
 		},
 	}
 }

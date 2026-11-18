@@ -91,8 +91,8 @@ func count(tat, now float64, request Request) (float64, Verdict) {
 	return next, Verdict{
 		Allowed:   true,
 		Remaining: remaining,
-		ResetAt: at(next),
-		RetryAt: at(next - interval - windowMs),
+		ResetAt:   at(next),
+		RetryAt:   at(next - interval - windowMs),
 	}
 }
 

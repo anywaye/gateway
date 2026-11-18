@@ -17,7 +17,6 @@ import (
 	"github.com/anywaye/gateway/internal/session"
 )
 
-
 // SessionCookie is the session cookie's name.
 //
 // The `__Host-` prefix is a contract the BROWSER enforces — `Secure`, `Path=/`,

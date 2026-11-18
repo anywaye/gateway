@@ -53,7 +53,6 @@ func TestAValidationFailureKeepsFieldBeforeCodeAndIsLast(t *testing.T) {
 	}
 }
 
-
 const (
 	futureExpiry = "2031-03-04T05:06:07.000Z"
 
@@ -207,7 +206,6 @@ func loginIdentity(res testResponse) doerFunc {
 		}
 	}
 }
-
 
 func TestACrossOriginPostIsRefusedAndIdentityIsNeverAsked(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
@@ -403,7 +401,6 @@ func TestTheParameterRefusalIsUnreachableForTheDeclaredHeaders(t *testing.T) {
 	}
 }
 
-
 func TestTheSessionCookieIsTheHostPrefixedContract(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
 
@@ -461,7 +458,6 @@ func TestClearingTheCookieRepeatsEveryAttribute(t *testing.T) {
 		t.Errorf("the clearing cookie has MaxAge=%d and Expires=%s, and neither says this is over", cleared.MaxAge, cleared.Expires)
 	}
 }
-
 
 func TestTwoRefusalCausesProduceIdenticalResponses(t *testing.T) {
 	causes := map[string]string{
@@ -567,7 +563,6 @@ func TestALockedAccountIs423AndItsRetryAfterTravels(t *testing.T) {
 		})
 	}
 }
-
 
 func TestMeProxiesWithTheStoredTokenAndReturnsOnlyTheAccount(t *testing.T) {
 	h := build(t, loginIdentity(answer(http.StatusNoContent, "")))
@@ -854,7 +849,6 @@ func TestTheCookieIsTheKeyTheRecordIsStoredUnder(t *testing.T) {
 	}
 }
 
-
 func TestRegisterReturnsTheAccountAndNoCookie(t *testing.T) {
 	h := build(t, func(*http.Request) (*http.Response, error) {
 		return answer(http.StatusCreated, `{"id":"11111111-2222-3333-4444-555555555555","email":"a@example.test","password_digest":"sha256:deadbeef","role":"admin"}`).Response, nil
@@ -1067,7 +1061,6 @@ func TestTheLoginBodyCarriesTheExpiryAndNothingElse(t *testing.T) {
 	}
 	assertNoToken(t, "the login body", body)
 }
-
 
 func TestAMalformedIdentityURLIsARefusalToBuild(t *testing.T) {
 	cases := map[string]string{

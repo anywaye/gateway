@@ -292,7 +292,7 @@ func TestEndpointPrefersTheAnywayeName(t *testing.T) {
 		{name: "nothing set is the shipped collector", want: DefaultEndpoint},
 		{
 			name:     "the anywaye variable wins",
-			anywaye:   "http://otel.example:4317",
+			anywaye:  "http://otel.example:4317",
 			standard: "http://ignored:4317",
 			want:     "http://otel.example:4317",
 		},

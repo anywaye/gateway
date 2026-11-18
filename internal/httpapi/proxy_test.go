@@ -17,8 +17,6 @@ import (
 	"github.com/anywaye/gateway/internal/ratelimit"
 )
 
-
-
 type recordedRequest struct {
 	Method string
 	Path   string
@@ -105,7 +103,6 @@ func silenceLog(t *testing.T) *strings.Builder {
 	return captured
 }
 
-
 func TestTheCallersCredentialNeverReachesAnInternalService(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, nil)
@@ -152,7 +149,6 @@ func TestAnEntryWithNoTokenIsReachedWithNoAuthorizationAtAll(t *testing.T) {
 		t.Errorf("the upstream saw Authorization %q; an entry with no token must send no credential at all, not one this process invented", got)
 	}
 }
-
 
 func TestOnlyContentTypeAndAcceptCrossToTheService(t *testing.T) {
 	silenceLog(t)
@@ -261,7 +257,6 @@ func TestTheResponseAllowlistIsExactlyOneName(t *testing.T) {
 	}
 }
 
-
 func TestARedirectIsNeitherFollowedNorRelayed(t *testing.T) {
 	logged := silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -333,7 +328,6 @@ func TestAnUpstreamThatHangsIsA503AndNotAHungGateway(t *testing.T) {
 	}
 }
 
-
 func TestTheRelayDropsSetCookieAndSetsNoStore(t *testing.T) {
 	silenceLog(t)
 	service := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -387,7 +381,6 @@ func TestAnUpstreamsOwnCacheControlIsOverriddenNotForwarded(t *testing.T) {
 		}
 	}
 }
-
 
 func TestOnlyA2xxOrA4xxIsRelayed(t *testing.T) {
 	relayed := []int{200, 201, 202, 299, 400, 401, 403, 404, 409, 413, 422, 423, 429, 499}
@@ -544,7 +537,6 @@ func TestAResponseWithNoContentTypeIsRelayedAsOctetStreamNotSniffed(t *testing.T
 		t.Errorf("the body is %q", got)
 	}
 }
-
 
 func TestAnAnonymousCallerToAPrivateRouteGets401AndTheUpstreamIsNeverContacted(t *testing.T) {
 	silenceLog(t)
@@ -829,7 +821,6 @@ var errNoCredential = errCredential("no bearer token")
 type errCredential string
 
 func (e errCredential) Error() string { return string(e) }
-
 
 func TestARelayedNoContentKeepsItsEmptyBody(t *testing.T) {
 	silenceLog(t)

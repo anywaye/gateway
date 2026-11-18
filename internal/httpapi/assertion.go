@@ -19,7 +19,6 @@ import (
 	"github.com/anywaye/gateway/internal/auth"
 )
 
-
 // AssertionHeader is the header the assertion crosses in.
 //
 // A header of its own rather than a second `Authorization`, and the reason is the

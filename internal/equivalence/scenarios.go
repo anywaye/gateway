@@ -153,11 +153,10 @@ func alwaysUnavailable(context.Context) error { return errors.New("unavailable")
 
 var errNoCredential = errors.New("no bearer token")
 
-
 type upstreamAnswer struct {
 	Method string
-	Path  string
-	Query string
+	Path   string
+	Query  string
 
 	Header http.Header
 

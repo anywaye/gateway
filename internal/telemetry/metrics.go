@@ -10,9 +10,9 @@ import (
 )
 
 var (
-	requestCount   metric.Int64Counter
-	requestDur     metric.Float64Histogram
-	metricsInited  bool
+	requestCount  metric.Int64Counter
+	requestDur    metric.Float64Histogram
+	metricsInited bool
 )
 
 func initMetrics() {

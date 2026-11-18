@@ -15,7 +15,6 @@ import (
 
 var stderr io.Writer = os.Stderr
 
-
 // ForwardedRequestHeaders are the caller headers that cross to a service.
 //
 // Two, and the list is the control: `accept` so a service that answers

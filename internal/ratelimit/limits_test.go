@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-
 func TestTheShippedTableIsWholeAndStrict(t *testing.T) {
 	table := DefaultLimitTable()
 	entries := append([]Limit{table.Default}, routeLimits(table)...)
@@ -103,7 +102,6 @@ func TestTheShippedTableIsNotSharedBetweenCallers(t *testing.T) {
 		t.Error("a route inserted into one caller's table appeared in another's")
 	}
 }
-
 
 func TestLoginIsTheStrictestThingGatewayServes(t *testing.T) {
 	limit := ResolveLimit(DefaultLimitTable(), "/auth/login")
@@ -213,7 +211,6 @@ func TestASubpathUnderAPrefixDrawsThatPrefix(t *testing.T) {
 	}
 }
 
-
 func testTable() LimitTable {
 	return LimitTable{
 		Default: Limit{Limit: 100, Window: time.Second, Policy: "default"},
@@ -290,7 +287,6 @@ func TestAnEmptyTableIsTheDefaultAndDoesNotFail(t *testing.T) {
 		t.Error("a nil map returned an entry")
 	}
 }
-
 
 func TestValidationAcceptsTheShippedTable(t *testing.T) {
 	checked, err := ValidateLimitTable(DefaultLimitTable())
@@ -425,7 +421,6 @@ func TestValidationReturnsACopyRatherThanTheCallersMap(t *testing.T) {
 		t.Error("an empty table validated to a nil map; writing to it would panic")
 	}
 }
-
 
 func TestTheResolverGivesTheLimiterANameAndTheNumbersBehindIt(t *testing.T) {
 	policy, resolve, err := PolicyResolver(DefaultLimitTable())

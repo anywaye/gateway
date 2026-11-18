@@ -23,7 +23,7 @@ func TestTheHealthProbeAnswersForBothAnswers(t *testing.T) {
 			want:  0,
 		},
 		{
-			name: "a 503 is not, and it is what a refusing gateway would answer",
+			name:  "a 503 is not, and it is what a refusing gateway would answer",
 			serve: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
 			want:  1,
 		},

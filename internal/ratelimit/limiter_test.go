@@ -278,7 +278,7 @@ func TestEveryRateLimitFieldIsAnnouncedOnEveryAnsweredRequest(t *testing.T) {
 			"RateLimit-Reset":       "30",
 			"X-RateLimit-Limit":     "600",
 			"X-RateLimit-Remaining": "598",
-			"X-RateLimit-Reset": "1790000030000",
+			"X-RateLimit-Reset":     "1790000030000",
 		}
 
 		if len(RateLimitHeaders) != len(want) {
@@ -299,7 +299,7 @@ func TestEveryRateLimitFieldIsAnnouncedOnEveryAnsweredRequest(t *testing.T) {
 			Allowed:   false,
 			Remaining: 0,
 			ResetAt:   clock.now.Add(30 * time.Second),
-			RetryAt: clock.now.Add(4200 * time.Millisecond),
+			RetryAt:   clock.now.Add(4200 * time.Millisecond),
 		}
 		rec := &recorder{}
 

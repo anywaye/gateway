@@ -13,7 +13,6 @@ import (
 	"github.com/anywaye/gateway/internal/api"
 )
 
-
 const generatedFile = "../api/api.gen.go"
 
 var registration = regexp.MustCompile(`(?m)^\s*r\.(Get|Post|Put|Patch|Delete|Head)\("([^"]+)"`)

@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-
 func writeKeyFile(t *testing.T, name string) string {
 	t.Helper()
 

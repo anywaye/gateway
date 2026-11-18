@@ -2,7 +2,6 @@ package httpapi
 
 import "os"
 
-
 // Env reads one environment variable.
 //
 // An argument rather than a call to `os.Getenv` so that `RuntimeOptions` can be

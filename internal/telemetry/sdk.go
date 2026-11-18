@@ -1,6 +1,5 @@
 package telemetry
 
-
 import (
 	"context"
 	"fmt"
@@ -12,15 +11,15 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
-	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
@@ -54,7 +53,7 @@ const exportTimeout = 5 * time.Second
 func Resource(lookup func(string) string) *resource.Resource {
 	attributes := []attribute.KeyValue{
 		semconv.ServiceName(ServiceName),
-
+		semconv.ServiceNamespace(Namespace),
 	}
 	if version := lookup("OTEL_SERVICE_VERSION"); version != "" {
 		attributes = append(attributes, semconv.ServiceVersion(version))
@@ -178,7 +177,9 @@ func Install(ctx context.Context, options Options) (Shutdown, error) {
 		defer cancel()
 		err1 := provider.Shutdown(flushCtx)
 		err2 := meterProvider.Shutdown(flushCtx)
-		if err1 != nil { return err1 }
+		if err1 != nil {
+			return err1
+		}
 		return err2
 	}, nil
 }
