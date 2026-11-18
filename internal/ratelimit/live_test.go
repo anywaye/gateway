@@ -110,7 +110,6 @@ func liveStore(t *testing.T, connection *Connection, name string) *RedisStore {
 	return store
 }
 
-
 func TestARealServerAnswersPingWithPong(t *testing.T) {
 	a, b := liveTier(t)
 
@@ -275,7 +274,6 @@ func TestAnUnreachableServerThrowsRatherThanResolving(t *testing.T) {
 		}
 	}
 }
-
 
 func TestTheScriptAndTheMemoryStoreAnswerTheSameRequest(t *testing.T) {
 	a, _ := liveTier(t)
@@ -530,7 +528,6 @@ func TestTheBucketCharsetIsEnforcedAgainstARealServer(t *testing.T) {
 		}
 	}
 }
-
 
 func expectSameVerdict(t *testing.T, received Verdict, expected Verdict, label string) {
 	t.Helper()

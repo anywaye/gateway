@@ -39,7 +39,6 @@ func TestNoProductionFileImportsTheSessionDouble(t *testing.T) {
 		t.Fatalf("`go list -deps ./cmd/...` named %d package(s). The gateway binary links the standard library and three dependencies, so fewer than five means the module layout moved and this check has stopped checking anything", packages)
 	}
 
-
 	var scanned int
 	err = filepath.WalkDir(filepath.Join(module, "cmd"), func(path string, entry os.DirEntry, err error) error {
 		if err != nil {

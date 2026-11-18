@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-
 const apiKeyScheme = "apikey"
 
 const apiKeyPrefix = "caf_"

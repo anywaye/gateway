@@ -305,7 +305,6 @@ func TestTheInstantsAreWhereTheArithmeticPutsThem(t *testing.T) {
 	}
 }
 
-
 func sameDecision(received Verdict, expected Verdict) bool {
 	return received.Allowed == expected.Allowed && received.Remaining == expected.Remaining
 }

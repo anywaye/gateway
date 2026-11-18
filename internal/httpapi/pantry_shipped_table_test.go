@@ -12,10 +12,9 @@ import (
 	"testing"
 )
 
-
 var shippedTableFiles = []string{
 	"../../docker-compose.yml",
-	"../../charts/gateway/values.yaml",
+	"../../chart/values.yaml",
 }
 
 func shippedRouteTableDoc(t *testing.T, path string) string {

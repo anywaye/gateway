@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-
 // VHostTarget is one hostname's backend: a base URL and gateway's credential for it.
 type VHostTarget struct {
 	BaseURL string

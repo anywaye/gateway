@@ -18,6 +18,9 @@ services:
       GATEWAY_OTEL_ENDPOINT: "http://otel-collector:4317"
       IDENTITY_ISSUER: "https://identity.localhost"
       IDENTITY_URL: "http://identity:8080"
+      ROUTE_TABLE: '{"/v1/pantry":{"baseUrl":"https://pantry.anywaye.com","public":true},"/v1/pantry-writes":{"baseUrl":"https://pantry.anywaye.com","principal":["sub"]}}'
+      ASSERTION_TTL_MS: "120000"
+      ASSERTION_SIGNING_KEY_FILE: "/etc/gateway/assertion/signing.pem"
       TRUSTED_PROXIES: "0"
       REDIS_URL: "redis://redis:6379"
 

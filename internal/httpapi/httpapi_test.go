@@ -54,7 +54,6 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, into any) {
 	}
 }
 
-
 func TestLivenessAnswersOkWithTheDocumentsShape(t *testing.T) {
 	rec := ask(t, bare(t), http.MethodGet, "/healthz", nil)
 
@@ -188,7 +187,6 @@ func TestTheTimeoutIsOnlyEverLoweredInATest(t *testing.T) {
 	}
 }
 
-
 func TestEveryRouteRefusalIsTheV0NotFoundEnvelope(t *testing.T) {
 	const wantBody = `{"error":"not_found","message":"no such route"}`
 
@@ -251,14 +249,14 @@ func TestEveryOperationIsEitherServedOrDeclined(t *testing.T) {
 		"GET /readyz":  `{"deps":{}}`,
 	}
 	declined := map[string]string{
-		"GET /v1/me": `{"error":"not_found","message":"no such route"}`,
+		"GET /v1/me":               `{"error":"not_found","message":"no such route"}`,
 		"POST /v1/api-keys":        `{"error":"not_found","message":"no such route"}`,
 		"GET /v1/api-keys":         `{"error":"not_found","message":"no such route"}`,
 		"DELETE /v1/api-keys/{id}": `{"error":"not_found","message":"no such route"}`,
-		"POST /auth/register": `{"error":"not_found","message":"no such route"}`,
-		"POST /auth/login":    `{"error":"not_found","message":"no such route"}`,
-		"POST /auth/logout":   `{"error":"not_found","message":"no such route"}`,
-		"GET /auth/me":        `{"error":"not_found","message":"no such route"}`,
+		"POST /auth/register":      `{"error":"not_found","message":"no such route"}`,
+		"POST /auth/login":         `{"error":"not_found","message":"no such route"}`,
+		"POST /auth/logout":        `{"error":"not_found","message":"no such route"}`,
+		"GET /auth/me":             `{"error":"not_found","message":"no such route"}`,
 	}
 
 	routes := servedRoutes(t)
@@ -282,7 +280,6 @@ func TestEveryOperationIsEitherServedOrDeclined(t *testing.T) {
 		}
 	}
 }
-
 
 func TestTwoAppsCoexistInOneProcess(t *testing.T) {
 	healthy := Options{Probes: []NamedProbe{
@@ -375,7 +372,6 @@ func TestAnUnreadablePortIsARefusalToBoot(t *testing.T) {
 	}
 }
 
-
 func TestAConfigurationItCannotServeIsRefusedAtConstruction(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -431,7 +427,6 @@ func TestAValidConfigurationIsNotRefused(t *testing.T) {
 		}
 	}
 }
-
 
 func alwaysOK(context.Context) error          { return nil }
 func alwaysUnavailable(context.Context) error { return errors.New("unavailable") }

@@ -4,7 +4,7 @@ module github.com/anywaye/gateway
 // gate asserts all three copies against each other — see `bin/prime-go`. Nothing
 // makes the go command read `mise.toml`, so a toolchain pin that lives only
 // there is a comment.
-go 1.26.1
+go 1.26.6
 
 require (
 	github.com/go-chi/chi/v5 v5.3.2

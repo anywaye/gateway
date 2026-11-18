@@ -1,6 +1,5 @@
 package httpapi_test
 
-
 import (
 	"context"
 	"net/http"
@@ -92,7 +91,6 @@ func resourceString(span sdktrace.ReadOnlySpan, name string) (string, bool) {
 	return value.AsString(), true
 }
 
-
 func TestWithTelemetryOffARequestIsAnsweredAsBeforeAndNothingIsRecorded(t *testing.T) {
 	off := installTelemetry(t, true, func(string) string { return "" })
 	handler := aGateway(t, httpapi.Options{})
@@ -111,7 +109,6 @@ func TestWithTelemetryOffARequestIsAnsweredAsBeforeAndNothingIsRecorded(t *testi
 		t.Errorf("telemetry is off and %d span(s) were recorded. The disabled path installs the SDK's noop provider, which records nothing at all — a provider pointed at nowhere would still allocate a span and a batch timer per request.", len(*off.spans))
 	}
 }
-
 
 func TestTheRequestOpensOneServerSpanNamedByTheFleetsGrammar(t *testing.T) {
 	on := installTelemetry(t, false, func(string) string { return "" })
@@ -246,7 +243,6 @@ func TestAFailureCarriesCoreErrorVocabularyAndARefusalDoesNot(t *testing.T) {
 		t.Error("the span carries error.message. It is the one attribute every SDK adds by default and the one that could carry a token or a caller's path; a span that records only the class cannot carry the message at all.")
 	}
 }
-
 
 func TestAValidTraceparentIsContinuedAndAGarbageOneIsIgnored(t *testing.T) {
 	const callerTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"

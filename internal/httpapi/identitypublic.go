@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-
 type identityPublicRoute struct {
 	Method   string
 	Template string

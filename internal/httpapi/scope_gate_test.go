@@ -8,7 +8,6 @@ import (
 	"github.com/anywaye/gateway/internal/testkeys"
 )
 
-
 func TestARouteThatDeclaresAScopeRefusesACallerWithoutIt(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	verifier, err := authVerifierFor(t, fixture)

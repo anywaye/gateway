@@ -1,6 +1,5 @@
 package httpapi
 
-
 import (
 	"net/http"
 	"os"

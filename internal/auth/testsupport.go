@@ -2,7 +2,6 @@ package auth
 
 import "net/http"
 
-
 // WithPrincipalForTest attaches a verified principal to a request.
 //
 // It is the production writer with a name that says what it is. There is no way to

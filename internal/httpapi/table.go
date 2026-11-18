@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 )
 
-
 // RouteTarget is one upstream, and the credential gateway attaches when it calls.
 type RouteTarget struct {
 	BaseURL string
@@ -40,12 +39,12 @@ type RouteTable map[string]RouteTarget
 // destination from one match and the openness from another would be two answers to
 // "which prefix claimed this".
 type ResolvedRoute struct {
-	Prefix  string
-	BaseURL string
-	Token   string
-	Public  bool
-	Principal []string
-	Scopes []string
+	Prefix      string
+	BaseURL     string
+	Token       string
+	Public      bool
+	Principal   []string
+	Scopes      []string
 	StripPrefix bool
 }
 
@@ -334,7 +333,6 @@ func redactUserinfo(value string) string {
 	return value
 }
 
-
 // NormaliseRequestPath is the dot-segment removal a URL parser performs, applied
 // to the request line's own spelling of the path.
 //
@@ -441,7 +439,6 @@ func isDoubleDotSegment(segment string) bool {
 func isSingleDotSegment(segment string) bool {
 	return segment == "." || strings.EqualFold(segment, "%2e")
 }
-
 
 // UpstreamPath rebuilds the service's path from the caller's segments.
 //
@@ -557,14 +554,13 @@ func isURIComponentUnreserved(c byte) bool {
 	return false
 }
 
-
 type rawTarget struct {
 	BaseURL     string          `json:"baseUrl"`
 	StripPrefix *bool           `json:"stripPrefix"`
-	Token     *string         `json:"token"`
-	Public    json.RawMessage `json:"public"`
-	Principal json.RawMessage `json:"principal"`
-	Scopes    json.RawMessage `json:"scopes"`
+	Token       *string         `json:"token"`
+	Public      json.RawMessage `json:"public"`
+	Principal   json.RawMessage `json:"principal"`
+	Scopes      json.RawMessage `json:"scopes"`
 }
 
 // ParseRouteTable reads the table an operator wrote and validates it.

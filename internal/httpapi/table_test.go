@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-
-
 func TestABadRouteTableIsARefusalToConstructTheGateway(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -174,7 +172,6 @@ func TestAValidatedTableIsACopyTheCallerCannotReachInto(t *testing.T) {
 	}
 }
 
-
 func TestUpstreamPathRebuildsEverySegmentAndRefusesWhatItCannotExpress(t *testing.T) {
 	cases := []struct {
 		prefix string
@@ -297,7 +294,6 @@ func TestTheNormalisedPathIsTheURLParsersOwn(t *testing.T) {
 		})
 	}
 }
-
 
 func TestTheLongestPrefixWinsOnASegmentBoundary(t *testing.T) {
 	table := RouteTable{

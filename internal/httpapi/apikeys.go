@@ -10,7 +10,6 @@ import (
 	"github.com/anywaye/gateway/internal/auth"
 )
 
-
 func (s *server) requireApiKeyStore(w http.ResponseWriter, r *http.Request) auth.ApiKeyStore {
 	if s.apiKeys == nil || s.apiKeys.Store == nil {
 		notBuilt(w, r)

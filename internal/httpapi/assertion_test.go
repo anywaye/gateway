@@ -20,7 +20,6 @@ import (
 	"github.com/anywaye/gateway/internal/auth"
 )
 
-
 var fixedNow = time.Unix(1_700_000_000, 0)
 
 func testMinter(t *testing.T) *AssertionMinter {
@@ -113,7 +112,6 @@ func mintOne(t *testing.T, minter *AssertionMinter, table RouteTable, principal 
 
 	return service
 }
-
 
 func TestTheAssertionIsGatewaySignedAndNotTheCallersToken(t *testing.T) {
 	silenceLog(t)
@@ -212,7 +210,6 @@ func TestTheAssertionVerifiesAgainstThePublishedJWK(t *testing.T) {
 	}
 	decodeAssertion(t, compact).verify(t, rebuilt)
 }
-
 
 func TestTheAssertionIsBoundToTheUpstreamAndShortLived(t *testing.T) {
 	silenceLog(t)
@@ -318,7 +315,6 @@ func TestAnAssertionLifetimeNobodyMayExceedIsARefusalToBoot(t *testing.T) {
 		t.Errorf("NewAssertionMinter refused the ceiling itself: %v", err)
 	}
 }
-
 
 func TestTheAssertionCarriesOnlyTheDeclaredClaims(t *testing.T) {
 	silenceLog(t)
@@ -472,7 +468,6 @@ func TestNoAssertionIsMintedWithoutAMinterOrWithoutADeclaration(t *testing.T) {
 	}
 }
 
-
 func TestAPublicEntryIsRefusedAnAssertionEvenByATableThatBootWouldHaveRefused(t *testing.T) {
 	silenceLog(t)
 	minter := testMinter(t)
@@ -502,7 +497,6 @@ func TestAPublicEntryIsRefusedAnAssertionEvenByATableThatBootWouldHaveRefused(t 
 		t.Error("New accepted a table that is public AND declares claims")
 	}
 }
-
 
 func TestThePublishedJWKCarriesOnlyThePublicHalf(t *testing.T) {
 	minter := testMinter(t)
@@ -585,7 +579,6 @@ func TestAMinterWhoseTwoHalvesDisagreeIsARefusalToBoot(t *testing.T) {
 		t.Error("NewAssertionMinter accepted a configuration with no key")
 	}
 }
-
 
 func TestAMalformedAssertionKeyIsARefusalToBoot(t *testing.T) {
 	valid := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: mustMarshalPKCS8(t, testKey(t))})

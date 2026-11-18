@@ -12,7 +12,6 @@ import (
 	"github.com/anywaye/gateway/internal/api"
 )
 
-
 const problemTypeBase = "https://docs.anywaye.com/errors/"
 
 var titles = map[api.ProblemCode]string{
@@ -54,10 +53,10 @@ func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 	traceID := newTraceID()
 
 	body := api.Problem{
-		Type:   problemTypeBase + string(p.Code),
-		Title:  title,
-		Status: p.Status,
-		Detail: p.Detail,
+		Type:     problemTypeBase + string(p.Code),
+		Title:    title,
+		Status:   p.Status,
+		Detail:   p.Detail,
 		Instance: instanceOf(r),
 		Code:     p.Code,
 		TraceID:  traceID,
